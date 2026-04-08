@@ -21,11 +21,26 @@ When answering:
 async function buildContext(chat) {
   let system = SYSTEM_PROMPT;
 
-  // Add collection instructions if chat belongs to a collection
+  // Add collection context: instructions + summaries from all books in collection
   if (chat.collectionId) {
     const collection = await Collection.findById(chat.collectionId).lean();
-    if (collection && collection.instructions) {
-      system += `\n\nThe user has provided these research context instructions:\n${collection.instructions}`;
+    if (collection) {
+      if (collection.instructions) {
+        system += `\n\nThe user has provided these research context instructions:\n${collection.instructions}`;
+      }
+      // Include first-page text from all books in this collection
+      if (collection.bookIds && collection.bookIds.length > 0) {
+        const colBooks = await Book.find({ _id: { $in: collection.bookIds }, status: 'ready' }).select('_id title author').lean();
+        const bookSummaries = [];
+        for (const b of colBooks.slice(0, 10)) { // limit to 10 books
+          const firstPage = await Page.findOne({ bookId: b._id, pageNumber: 1 }).select('rawText').lean();
+          const snippet = firstPage?.rawText?.substring(0, 800) || '';
+          bookSummaries.push(`"${b.title}"${b.author ? ' by ' + b.author : ''}:\n${snippet}`);
+        }
+        if (bookSummaries.length > 0) {
+          system += `\n\nBooks in this collection (with first-page excerpts):\n\n${bookSummaries.join('\n\n---\n\n')}`;
+        }
+      }
     }
   }
 

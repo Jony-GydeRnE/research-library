@@ -34,9 +34,14 @@
     `;
     document.body.appendChild(popup);
 
-    popup.querySelector('.hl-highlight').addEventListener('click', () => {
+    popup.querySelector('.hl-highlight').addEventListener('click', (e) => {
       if (!pendingInfo) return;
-      if (pendingInfo._existingHlId) { hidePopup(); return; }
+      if (pendingInfo._existingHlId) {
+        // Show color picker for existing highlight
+        var btnRect = e.target.closest('.hl-btn').getBoundingClientRect();
+        showColorPicker(pendingInfo._existingHlId, pendingInfo._markEl, btnRect);
+        return;
+      }
       persistHighlight(pendingInfo);
     });
     popup.querySelector('.hl-note').addEventListener('click', () => {
@@ -44,14 +49,13 @@
       if (pendingInfo._existingHlId) {
         var hlId = pendingInfo._existingHlId;
         var text = pendingInfo.text;
+        var noteId = pendingInfo._noteId;
         hidePopup();
-        // Check if note exists for this highlight
-        fetch('/api/highlights/chat/' + hlId).then(r => r.json()).then(function(data) {
-          // For now, always open notes panel (future: load existing note)
-          if (window.__openNotesPanel) window.__openNotesPanel(text, hlId);
-        }).catch(function() {
-          if (window.__openNotesPanel) window.__openNotesPanel(text, hlId);
-        });
+        if (noteId && window.__openNotesPanelWithId) {
+          window.__openNotesPanelWithId(noteId, text, hlId);
+        } else if (window.__openNotesPanel) {
+          window.__openNotesPanel(text, hlId);
+        }
         return;
       }
       openNote(pendingInfo);
@@ -435,6 +439,53 @@
     document.body.appendChild(chatDropdown);
   }
 
+  // ─── COLOR PICKER ──────────────────────────────────────────────
+
+  const HL_COLORS = [
+    { name: 'Bondi Blue', value: 'rgba(0, 155, 189, 0.25)' },
+    { name: 'Grape', value: 'rgba(108, 52, 131, 0.25)' },
+    { name: 'Tangerine', value: 'rgba(255, 128, 0, 0.25)' },
+    { name: 'Strawberry', value: 'rgba(225, 44, 44, 0.25)' },
+    { name: 'Lime', value: 'rgba(99, 187, 62, 0.25)' },
+  ];
+
+  function showColorPicker(hlId, markEl, anchorRect) {
+    hidePopup();
+    removeChatDropdown();
+
+    chatDropdown = document.createElement('div');
+    chatDropdown.className = 'highlight-chat-dropdown hl-color-picker';
+    chatDropdown.style.position = 'fixed';
+    chatDropdown.style.left = Math.min(anchorRect.left, window.innerWidth - 200) + 'px';
+    chatDropdown.style.top = (anchorRect.bottom + 4) + 'px';
+    chatDropdown.style.display = 'flex';
+    chatDropdown.style.gap = '4px';
+    chatDropdown.style.padding = '6px 8px';
+
+    HL_COLORS.forEach(function(c) {
+      var swatch = document.createElement('button');
+      swatch.className = 'hl-color-swatch';
+      swatch.style.background = c.value.replace('0.25', '0.6');
+      swatch.title = c.name;
+      swatch.addEventListener('click', function() {
+        // Update in DB
+        fetch('/api/highlights/' + hlId, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ color: c.value }),
+        }).catch(function(){});
+
+        // Update visual
+        if (markEl) markEl.style.background = c.value;
+
+        removeChatDropdown();
+      });
+      chatDropdown.appendChild(swatch);
+    });
+
+    document.body.appendChild(chatDropdown);
+  }
+
   // ─── ASK AI ON EXISTING HIGHLIGHT ───────────────────────────────
 
   async function askAIExisting(hlId, text, anchorRect) {
@@ -476,21 +527,39 @@
     const hlId = mark.dataset.highlightId;
     if (!hlId) return;
 
-    // Show the standard popup on the persisted highlight
+    // Fetch highlight data (for noteId), then show popup
     const rect = mark.getBoundingClientRect();
     const hlText = mark.textContent || mark.getAttribute('aria-label') || '';
 
-    const persistedInfo = {
-      text: hlText,
-      startOffset: -1,
-      endOffset: -1,
-      range: null,
-      isEquation: mark.classList.contains('reader-highlight-eq'),
-      element: mark.classList.contains('reader-highlight-eq') ? mark : null,
-      _existingHlId: hlId, // flag: this is an already-persisted highlight
-    };
+    fetch('/api/highlights/chat/' + hlId).then(r => r.json()).then(function(data) {
+      // data may have noteId from the highlight doc — we need a separate fetch
+      // For now, construct info; noteId will be fetched separately when needed
+      const persistedInfo = {
+        text: hlText,
+        startOffset: -1,
+        endOffset: -1,
+        range: null,
+        isEquation: mark.classList.contains('reader-highlight-eq'),
+        element: mark.classList.contains('reader-highlight-eq') ? mark : null,
+        _existingHlId: hlId,
+        _markEl: mark,
+        _noteId: null, // will be populated below
+      };
 
-    showPopup(rect.left + rect.width / 2 - 120, rect.top + window.scrollY, persistedInfo);
+      // Fetch the highlight itself to get noteId
+      fetch('/api/highlights/detail/' + hlId).then(r2 => r2.json()).then(function(hlData) {
+        if (hlData.noteId) persistedInfo._noteId = hlData.noteId;
+        showPopup(rect.left + rect.width / 2 - 120, rect.top + window.scrollY, persistedInfo);
+      }).catch(function() {
+        showPopup(rect.left + rect.width / 2 - 120, rect.top + window.scrollY, persistedInfo);
+      });
+    }).catch(function() {
+      const persistedInfo = {
+        text: hlText, startOffset: -1, endOffset: -1, range: null,
+        isEquation: false, element: null, _existingHlId: hlId, _markEl: mark, _noteId: null,
+      };
+      showPopup(rect.left + rect.width / 2 - 120, rect.top + window.scrollY, persistedInfo);
+    });
   });
 
   // ─── LOAD EXISTING HIGHLIGHTS ──────────────────────────────────

@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const Book = require('../models/Book');
 const Job = require('../models/Job');
+const Collection = require('../models/Collection');
 const { uploadPdf } = require('../services/s3Service');
 const { getAgenda } = require('../services/jobService');
 const { getSidebarData } = require('../services/sidebarData');
@@ -61,6 +62,17 @@ exports.handleUpload = async (req, res) => {
 
     book.status = 'processing';
     await book.save();
+
+    // Add book to collections
+    const collectionId = req.body.collectionId;
+    if (collectionId) {
+      await Collection.findByIdAndUpdate(collectionId, { $addToSet: { bookIds: book._id } });
+    }
+    // Always add to "All Books" collection (first collection or create it)
+    let allBooks = await Collection.findOne({ title: 'All Books' });
+    if (allBooks) {
+      await Collection.findByIdAndUpdate(allBooks._id, { $addToSet: { bookIds: book._id } });
+    }
 
     res.status(201).json({ bookId: book._id, title: book.title, status: 'processing' });
   } catch (err) {

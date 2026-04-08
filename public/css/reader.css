@@ -1070,6 +1070,24 @@ mjx-container {
   color: var(--r-text, #e8e6e0);
 }
 
+.hl-color-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.hl-color-swatch:hover {
+  border-color: #fff;
+  transform: scale(1.15);
+}
+
+.hl-color-picker {
+  border-radius: 20px !important;
+}
+
 .hl-dropdown-new {
   color: var(--r-link, #6aabdb);
   border-bottom: 1px solid var(--r-border, #333);

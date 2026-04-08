@@ -26,6 +26,16 @@ exports.getHighlights = async (req, res) => {
   }
 };
 
+exports.getHighlightDetail = async (req, res) => {
+  try {
+    const highlight = await Highlight.findById(req.params.id).lean();
+    if (!highlight) return res.status(404).json({ error: 'Not found' });
+    res.json(highlight);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 exports.getHighlightChats = async (req, res) => {
   try {
     const highlight = await Highlight.findById(req.params.id).lean();
@@ -40,6 +50,18 @@ exports.getHighlightChats = async (req, res) => {
     res.json({ chatIds: [], chats: [] });
   } catch (err) {
     res.json({ chatIds: [], chats: [] });
+  }
+};
+
+exports.updateHighlight = async (req, res) => {
+  try {
+    const { color } = req.body;
+    const update = {};
+    if (color) update.color = color;
+    const highlight = await Highlight.findByIdAndUpdate(req.params.id, update, { new: true }).lean();
+    res.json(highlight);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 };
 

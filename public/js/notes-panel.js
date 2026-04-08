@@ -104,8 +104,33 @@
 
   document.getElementById('notesCloseBtn').addEventListener('click', closeNotesPanel);
 
+  // Open with an existing noteId — load its content
+  async function openNotesPanelWithId(noteId, hlText, hlId) {
+    openNotesPanel(hlText, hlId);
+    currentNoteId = noteId;
+    const editor = document.getElementById('notesEditor');
+    const status = document.getElementById('notesStatus');
+    editor.innerHTML = '<em style="color:var(--app-text-muted)">Loading...</em>';
+
+    try {
+      const res = await fetch('/api/notes/' + noteId);
+      const note = await res.json();
+      editor.innerHTML = note.content || '';
+      // Typeset any LaTeX in loaded content
+      if (window.MathJax && MathJax.typesetPromise) {
+        var preview = document.getElementById('notesPreview');
+        preview.innerHTML = editor.innerHTML;
+        MathJax.typesetPromise([preview]).catch(function(){});
+      }
+    } catch(e) {
+      editor.innerHTML = '';
+      status.textContent = 'Failed to load note';
+    }
+  }
+
   // Expose for highlights.js
   window.__openNotesPanel = openNotesPanel;
+  window.__openNotesPanelWithId = openNotesPanelWithId;
 
   // ─── DRAGGABLE DIVIDER ─────────────────────────────────────────
 

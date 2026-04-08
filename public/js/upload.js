@@ -80,6 +80,11 @@
 
     const formData = new FormData();
     formData.append('pdf', file);
+    // Pass collectionId if present in URL
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('collectionId')) {
+      formData.append('collectionId', urlParams.get('collectionId'));
+    }
 
     try {
       // Upload with XHR for progress tracking

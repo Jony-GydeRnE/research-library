@@ -11,7 +11,7 @@
         </button>
       <% } %>
       <button class="btn btn-secondary" id="newCollectionBtn">New Collection</button>
-      <a href="/upload" class="btn btn-primary">Upload</a>
+      <a href="/upload<%= activeCollection ? '?collectionId=' + activeCollection._id : '' %>" class="btn btn-primary">Upload</a>
     </div>
   </div>
 
