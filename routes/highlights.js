@@ -3,7 +3,8 @@ const router = express.Router();
 const c = require('../controllers/highlightsController');
 
 router.post('/', c.saveHighlight);
-router.get('/chat/:id', c.getHighlightChat);  // must be before /:bookId/:pageNumber
+router.post('/link-chat', c.linkChat);
+router.get('/chat/:id', c.getHighlightChats);
 router.get('/:bookId/:pageNumber', c.getHighlights);
 router.delete('/:id', c.deleteHighlight);
 

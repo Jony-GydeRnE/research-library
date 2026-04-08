@@ -19,13 +19,15 @@
   let isOpen = false;
   let chatId = null;
   let highlightContext = null;
+  let onChatCreatedCallback = null;
   let sending = false;
   let splitRatio = parseFloat(localStorage.getItem('gyde-split-ratio')) || 0.6;
 
   // ─── OPEN / CLOSE ─────────────────────────────────────────────
 
-  function openPanel(highlight) {
+  function openPanel(highlight, onChatCreated) {
     highlightContext = highlight || null;
+    onChatCreatedCallback = onChatCreated || null;
     chatId = null;
     messagesEl.innerHTML = '';
     sending = false;
@@ -198,6 +200,7 @@
         });
         var data = await res.json();
         chatId = data.chatId;
+        if (onChatCreatedCallback) onChatCreatedCallback(chatId);
       } catch (e) {
         addMsg('assistant', '<span style="color:#e55;">Failed to create chat</span>');
         sending = false;

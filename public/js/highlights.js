@@ -35,7 +35,7 @@
     document.body.appendChild(popup);
 
     popup.querySelector('.hl-highlight').addEventListener('click', () => { if (pendingInfo) persistHighlight(pendingInfo); });
-    popup.querySelector('.hl-note').addEventListener('click', () => { if (pendingInfo) persistHighlight(pendingInfo); });
+    popup.querySelector('.hl-note').addEventListener('click', () => { if (pendingInfo) openNote(pendingInfo); });
     popup.querySelector('.hl-ask').addEventListener('click', () => { if (pendingInfo) askAI(pendingInfo); });
 
     return popup;
@@ -267,6 +267,38 @@
     }
   }
 
+  // ─── OPEN NOTE ─────────────────────────────────────────────────
+
+  async function openNote(info) {
+    let hlId = null;
+
+    // Persist highlight
+    try {
+      const res = await fetch('/api/highlights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookId: R.bookId, pageNumber: R.currentPage,
+          startOffset: info.startOffset, endOffset: info.endOffset, text: info.text,
+        }),
+      });
+      const hl = await res.json();
+      hlId = hl._id;
+      if (info.isEquation && info.element) {
+        info.element.classList.add('reader-highlight-eq');
+        info.element.dataset.highlightId = hl._id;
+      } else if (info.range) {
+        applyHighlightToRange(info.range, hl._id);
+      }
+    } catch (e) {}
+
+    hidePopup();
+
+    if (window.__openNotesPanel) {
+      window.__openNotesPanel(info.text, hlId);
+    }
+  }
+
   // ─── ASK AI ────────────────────────────────────────────────────
 
   async function askAI(info) {
@@ -295,32 +327,69 @@
     hidePopup();
 
     if (window.__openSplitChat) {
-      window.__openSplitChat(info.text);
+      // Pass a callback to link the chat to the highlight after creation
+      var _hlId = hlId;
+      window.__openSplitChat(info.text, function(newChatId) {
+        if (_hlId && newChatId) {
+          fetch('/api/highlights/link-chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ highlightId: _hlId, chatId: newChatId }),
+          }).catch(function(){});
+        }
+      });
     }
   }
 
   // ─── CLICK ON PERSISTED HIGHLIGHTS ─────────────────────────────
 
+  let chatDropdown = null;
+
+  function removeChatDropdown() {
+    if (chatDropdown) { chatDropdown.remove(); chatDropdown = null; }
+  }
+
   document.addEventListener('click', (e) => {
+    // Close dropdown on outside click
+    if (chatDropdown && !chatDropdown.contains(e.target)) {
+      removeChatDropdown();
+    }
+
     const mark = e.target.closest('.reader-highlight[data-highlight-id], .reader-highlight-eq[data-highlight-id]');
     if (!mark) return;
 
     const hlId = mark.dataset.highlightId;
     if (!hlId) return;
 
-    // Fetch the highlight to check if it has an associated chat
     fetch(`/api/highlights/chat/${hlId}`).then(r => r.json()).then(data => {
-      if (data.chatId) {
-        // Open split chat with existing chat
-        if (window.__openSplitChatWithId) {
-          window.__openSplitChatWithId(data.chatId);
-        }
+      if (data.chats && data.chats.length === 1) {
+        // Single chat — open directly
+        if (window.__openSplitChatWithId) window.__openSplitChatWithId(data.chats[0]._id);
+      } else if (data.chats && data.chats.length > 1) {
+        // Multiple chats — show dropdown
+        removeChatDropdown();
+        chatDropdown = document.createElement('div');
+        chatDropdown.className = 'highlight-chat-dropdown';
+        const rect = mark.getBoundingClientRect();
+        chatDropdown.style.left = rect.left + 'px';
+        chatDropdown.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+
+        data.chats.forEach(chat => {
+          const item = document.createElement('button');
+          item.className = 'hl-dropdown-item';
+          item.textContent = chat.title || 'Untitled Chat';
+          item.addEventListener('click', () => {
+            removeChatDropdown();
+            if (window.__openSplitChatWithId) window.__openSplitChatWithId(chat._id);
+          });
+          chatDropdown.appendChild(item);
+        });
+
+        document.body.appendChild(chatDropdown);
       } else {
-        // Open split chat with the highlight text
+        // No chats — open new chat with highlight text
         const text = mark.textContent || mark.getAttribute('aria-label') || '';
-        if (text && window.__openSplitChat) {
-          window.__openSplitChat(text);
-        }
+        if (text && window.__openSplitChat) window.__openSplitChat(text);
       }
     }).catch(() => {});
   });

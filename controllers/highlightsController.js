@@ -1,14 +1,11 @@
 const Highlight = require('../models/Highlight');
+const Chat = require('../models/Chat');
 
 exports.saveHighlight = async (req, res) => {
   try {
     const { bookId, pageNumber, startOffset, endOffset, text, color } = req.body;
     const highlight = await Highlight.create({
-      bookId,
-      pageNumber,
-      startOffset,
-      endOffset,
-      text,
+      bookId, pageNumber, startOffset, endOffset, text,
       color: color || 'yellow',
     });
     res.status(201).json(highlight);
@@ -21,8 +18,7 @@ exports.getHighlights = async (req, res) => {
   try {
     const { bookId, pageNumber } = req.params;
     const highlights = await Highlight.find({
-      bookId,
-      pageNumber: parseInt(pageNumber, 10),
+      bookId, pageNumber: parseInt(pageNumber, 10),
     }).sort({ startOffset: 1 }).lean();
     res.json(highlights);
   } catch (err) {
@@ -30,13 +26,30 @@ exports.getHighlights = async (req, res) => {
   }
 };
 
-exports.getHighlightChat = async (req, res) => {
+exports.getHighlightChats = async (req, res) => {
   try {
     const highlight = await Highlight.findById(req.params.id).lean();
-    if (!highlight) return res.json({ chatId: null });
-    res.json({ chatId: highlight.chatId || null });
+    if (!highlight) return res.json({ chatIds: [], chats: [] });
+
+    if (highlight.chatIds && highlight.chatIds.length > 0) {
+      const chats = await Chat.find({ _id: { $in: highlight.chatIds } })
+        .select('_id title updatedAt').sort({ updatedAt: -1 }).lean();
+      return res.json({ chatIds: highlight.chatIds, chats });
+    }
+
+    res.json({ chatIds: [], chats: [] });
   } catch (err) {
-    res.json({ chatId: null });
+    res.json({ chatIds: [], chats: [] });
+  }
+};
+
+exports.linkChat = async (req, res) => {
+  try {
+    const { highlightId, chatId } = req.body;
+    await Highlight.findByIdAndUpdate(highlightId, { $addToSet: { chatIds: chatId } });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 };
 

@@ -497,17 +497,34 @@ Auto-triggers AI response when navigating to a newly created chat from the input
 
 ---
 
-## BUILD ORDER
+## PROCESSING SPEED
 
-1. Create all new models (Chat, Project, Collection, Highlight, Note)
-2. Create routes and controllers for Collections + Collection detail page
-3. Build the sidebar component (shared partial used on every page)
-4. Build the persistent input field component (shared partial)
-5. Build Projects page + Project detail
-6. Build Chats page + Chat view
-7. Build claudeService.js with streaming
-8. Add highlighting to reader (selection → popup → save)
-9. Add note panel to reader (slide from right)
-10. Add split screen toggle to reader
-11. Wire persistent input to create chats in correct context
-12. Update existing library page to be accessible from Collections
+Current: pages processed in parallel batches of 20 via Promise.all.
+Rate limit retry: 429 errors → 2s delay → retry.
+A 56-page book: ~3 batches = under 1 minute.
+A 1000-page book: ~50 batches = 5-8 minutes.
+
+Future optimization (not built yet): pre-render ALL page PNGs in parallel via Swift
+(no API call, instant), then send ALL vision requests through a rate limiter queue
+at 60 RPM. 1000 pages in ~15-20 minutes.
+
+## BUILD STATUS
+
+Done:
+1. Models: Chat, Collection (merged with Project), Highlight (chatIds array), Note
+2. Collections page + collection detail (default landing)
+3. Sidebar: Chats/Collections nav, tabs in reader (Contents/Collections)
+4. Persistent input bar on all pages including reader
+5. Chats page + Chat view with streaming Claude responses + MathJax
+6. claudeService.js with Anthropic SDK, context builder, streaming SSE
+7. Highlighting: text selection popup, right-click override, equation click,
+   cross-equation selection, temporary highlights, persist on action
+8. Notes panel: slide-from-right, contenteditable, LaTeX buttons, live MathJax, save
+9. Split screen: chat panel + notes panel with draggable dividers
+10. Highlight → chat linking: chatIds array, dropdown for multiple chats
+11. Parallel batch processing (20 pages at a time) with rate limit retry
+
+Remaining:
+- Drag to reorder books in collections
+- Stylus/canvas notes (future)
+- Vector embeddings and semantic search (Phase 3)

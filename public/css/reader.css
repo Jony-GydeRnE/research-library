@@ -1031,6 +1031,55 @@ mjx-container {
 .hl-highlight:hover { color: #f5d623; }
 .hl-ask:hover { color: var(--r-link, #6aabdb); }
 
+/* ─── NOTES PANEL ────────────────────────────────── */
+
+.notes-quote { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--r-border, #333); flex-shrink: 0; }
+.notes-quote blockquote { border-left: 3px solid var(--r-link, #6aabdb); padding-left: 0.6rem; color: var(--r-text-muted); font-style: italic; font-size: 0.78rem; line-height: 1.5; margin: 0; max-height: 60px; overflow-y: auto; }
+
+.notes-editor-wrap { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+.notes-editor { flex: 1; padding: 0.75rem; font-size: 0.85rem; line-height: 1.6; color: var(--r-text, #d4d2cc); outline: none; min-height: 100px; font-family: Georgia, serif; }
+.notes-editor:empty::before { content: attr(placeholder); color: var(--r-text-muted, #888); font-style: italic; }
+.notes-preview { padding: 0 0.75rem 0.5rem; font-size: 0.82rem; color: var(--r-text-muted); border-top: 1px dashed var(--r-border, #333); display: none; }
+
+.notes-footer { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border-top: 1px solid var(--r-border, #333); flex-shrink: 0; }
+.notes-status { font-size: 0.72rem; color: var(--r-text-muted); }
+.notes-latex-btn { font-family: 'Courier New', monospace !important; }
+
+/* ─── HIGHLIGHT CHAT DROPDOWN ────────────────────── */
+
+.highlight-chat-dropdown {
+  position: fixed;
+  z-index: 110;
+  background: var(--r-surface, #222);
+  border: 1px solid var(--r-border, #444);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  min-width: 200px;
+}
+
+.hl-dropdown-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.65rem;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--r-text-muted, #aaa);
+  font-size: 0.78rem;
+  cursor: pointer;
+  font-family: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hl-dropdown-item:hover {
+  background: var(--r-nav-btn-hover, #353538);
+  color: var(--r-text, #e8e6e0);
+}
+
 /* ─── RESPONSIVE ─────────────────────────────────── */
 
 @media (max-width: 768px) {
