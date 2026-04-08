@@ -34,9 +34,28 @@
     `;
     document.body.appendChild(popup);
 
-    popup.querySelector('.hl-highlight').addEventListener('click', () => { if (pendingInfo) persistHighlight(pendingInfo); });
-    popup.querySelector('.hl-note').addEventListener('click', () => { if (pendingInfo) openNote(pendingInfo); });
-    popup.querySelector('.hl-ask').addEventListener('click', () => { if (pendingInfo) askAI(pendingInfo); });
+    popup.querySelector('.hl-highlight').addEventListener('click', () => {
+      if (!pendingInfo) return;
+      if (pendingInfo._existingHlId) { hidePopup(); return; }
+      persistHighlight(pendingInfo);
+    });
+    popup.querySelector('.hl-note').addEventListener('click', () => {
+      if (!pendingInfo) return;
+      if (pendingInfo._existingHlId) {
+        hidePopup();
+        if (window.__openNotesPanel) window.__openNotesPanel(pendingInfo.text, pendingInfo._existingHlId);
+        return;
+      }
+      openNote(pendingInfo);
+    });
+    popup.querySelector('.hl-ask').addEventListener('click', () => {
+      if (!pendingInfo) return;
+      if (pendingInfo._existingHlId) {
+        askAIExisting(pendingInfo._existingHlId, pendingInfo.text);
+        return;
+      }
+      askAI(pendingInfo);
+    });
 
     return popup;
   }
@@ -392,6 +411,24 @@
     document.body.appendChild(chatDropdown);
   }
 
+  // ─── ASK AI ON EXISTING HIGHLIGHT ───────────────────────────────
+
+  async function askAIExisting(hlId, text) {
+    hidePopup();
+
+    try {
+      const res = await fetch('/api/highlights/chat/' + hlId);
+      const data = await res.json();
+      if (data.chats && data.chats.length > 0) {
+        showAskAIDropdown({ text }, hlId, data.chats);
+        return;
+      }
+    } catch(e) {}
+
+    // No existing chats — open fresh
+    openFreshChat(text, hlId);
+  }
+
   // ─── CLICK ON PERSISTED HIGHLIGHTS ─────────────────────────────
 
   let chatDropdown = null;
@@ -406,43 +443,30 @@
       removeChatDropdown();
     }
 
+    // Don't handle clicks inside the popup itself
+    if (popup && popup.contains(e.target)) return;
+
     const mark = e.target.closest('.reader-highlight[data-highlight-id], .reader-highlight-eq[data-highlight-id]');
     if (!mark) return;
 
     const hlId = mark.dataset.highlightId;
     if (!hlId) return;
 
-    fetch(`/api/highlights/chat/${hlId}`).then(r => r.json()).then(data => {
-      if (data.chats && data.chats.length === 1) {
-        // Single chat — open directly
-        if (window.__openSplitChatWithId) window.__openSplitChatWithId(data.chats[0]._id);
-      } else if (data.chats && data.chats.length > 1) {
-        // Multiple chats — show dropdown
-        removeChatDropdown();
-        chatDropdown = document.createElement('div');
-        chatDropdown.className = 'highlight-chat-dropdown';
-        const rect = mark.getBoundingClientRect();
-        chatDropdown.style.left = rect.left + 'px';
-        chatDropdown.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+    // Show the standard popup on the persisted highlight
+    const rect = mark.getBoundingClientRect();
+    const hlText = mark.textContent || mark.getAttribute('aria-label') || '';
 
-        data.chats.forEach(chat => {
-          const item = document.createElement('button');
-          item.className = 'hl-dropdown-item';
-          item.textContent = chat.title || 'Untitled Chat';
-          item.addEventListener('click', () => {
-            removeChatDropdown();
-            if (window.__openSplitChatWithId) window.__openSplitChatWithId(chat._id);
-          });
-          chatDropdown.appendChild(item);
-        });
+    const persistedInfo = {
+      text: hlText,
+      startOffset: -1,
+      endOffset: -1,
+      range: null,
+      isEquation: mark.classList.contains('reader-highlight-eq'),
+      element: mark.classList.contains('reader-highlight-eq') ? mark : null,
+      _existingHlId: hlId, // flag: this is an already-persisted highlight
+    };
 
-        document.body.appendChild(chatDropdown);
-      } else {
-        // No chats — open new chat with highlight text
-        const text = mark.textContent || mark.getAttribute('aria-label') || '';
-        if (text && window.__openSplitChat) window.__openSplitChat(text);
-      }
-    }).catch(() => {});
+    showPopup(rect.left + rect.width / 2 - 120, rect.top + window.scrollY, persistedInfo);
   });
 
   // ─── LOAD EXISTING HIGHLIGHTS ──────────────────────────────────

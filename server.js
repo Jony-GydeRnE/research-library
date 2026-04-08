@@ -72,11 +72,11 @@ app.post('/api/chat', async (req, res) => {
     if (context === 'collections' && contextId) {
       chatData.collectionId = contextId;
     }
-    if (context === 'reader' && bookId) {
+    if (bookId) {
       chatData.bookId = bookId;
       if (pageNumber) chatData.pageNumber = pageNumber;
-      if (highlightText) chatData.highlightText = highlightText;
     }
+    if (highlightText) chatData.highlightText = highlightText;
     const chat = await Chat.create(chatData);
     if (chatData.collectionId) {
       await Collection.findByIdAndUpdate(chatData.collectionId, { $addToSet: { chatIds: chat._id } });
