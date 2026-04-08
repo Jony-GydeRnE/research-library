@@ -132,6 +132,9 @@
       saveBookmark(num);
       readerMain.scrollTop = 0;
       history.replaceState(null, '', `/reader/${R.bookId}/page/${num}`);
+
+      // Reload highlights for new page
+      if (window.__readerAfterPageLoad) window.__readerAfterPageLoad();
     } catch (err) {
       console.error('Failed to load page:', err);
     }

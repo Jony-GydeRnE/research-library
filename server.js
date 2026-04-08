@@ -9,6 +9,7 @@ const uploadRoutes = require('./routes/upload');
 const libraryRoutes = require('./routes/library');
 const readerRoutes = require('./routes/reader');
 const collectionsRoutes = require('./routes/collections');
+const highlightsRoutes = require('./routes/highlights');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -27,6 +28,7 @@ app.use('/library', libraryRoutes);
 app.use('/reader', readerRoutes);
 app.use('/collections', collectionsRoutes);
 app.use('/collection', collectionsRoutes);
+app.use('/api/highlights', highlightsRoutes);
 
 // Chats
 const { getSidebarData } = require('./services/sidebarData');
@@ -51,7 +53,7 @@ app.post('/api/chat', async (req, res) => {
   try {
     const Chat = require('./models/Chat');
     const Collection = require('./models/Collection');
-    const { message, context, contextId, bookId, bookTitle, pageNumber } = req.body;
+    const { message, context, contextId, bookId, bookTitle, pageNumber, highlightText } = req.body;
     const chatData = { messages: [{ role: 'user', content: message }] };
     if (context === 'collections' && contextId) {
       chatData.collectionId = contextId;
@@ -59,6 +61,7 @@ app.post('/api/chat', async (req, res) => {
     if (context === 'reader' && bookId) {
       chatData.bookId = bookId;
       if (pageNumber) chatData.pageNumber = pageNumber;
+      if (highlightText) chatData.highlightText = highlightText;
     }
     const chat = await Chat.create(chatData);
     if (chatData.collectionId) {

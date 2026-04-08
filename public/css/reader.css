@@ -827,6 +827,56 @@ mjx-container *::selection {
   border-radius: 3px;
 }
 
+/* ─── HIGHLIGHTS ─────────────────────────────────── */
+
+.reader-highlight {
+  background: rgba(255, 230, 0, 0.25);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.reader-highlight:hover {
+  background: rgba(255, 230, 0, 0.4);
+}
+
+.highlight-popup {
+  display: none;
+  position: fixed;
+  z-index: 100;
+  background: var(--r-surface, #222);
+  border: 1px solid var(--r-border, #444);
+  border-radius: 10px;
+  padding: 4px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+  gap: 2px;
+}
+
+.hl-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.7rem;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--r-text-muted, #aaa);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: all 0.1s ease;
+}
+
+.hl-btn:hover {
+  background: var(--r-nav-btn-hover, #353538);
+  color: var(--r-text, #e8e6e0);
+}
+
+.hl-highlight:hover { color: #f5d623; }
+.hl-ask:hover { color: var(--r-link, #6aabdb); }
+
 /* ─── RESPONSIVE ─────────────────────────────────── */
 
 @media (max-width: 768px) {
