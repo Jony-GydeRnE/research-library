@@ -303,19 +303,18 @@
 
   async function askAI(info) {
     // Save highlight first
+    let savedHlId = null;
     try {
       const res = await fetch('/api/highlights', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          bookId: R.bookId,
-          pageNumber: R.currentPage,
-          startOffset: info.startOffset,
-          endOffset: info.endOffset,
-          text: info.text,
+          bookId: R.bookId, pageNumber: R.currentPage,
+          startOffset: info.startOffset, endOffset: info.endOffset, text: info.text,
         }),
       });
       const hl = await res.json();
+      savedHlId = hl._id;
       if (info.isEquation && info.element) {
         info.element.classList.add('reader-highlight-eq');
         info.element.dataset.highlightId = hl._id;
@@ -326,19 +325,71 @@
 
     hidePopup();
 
+    // Check if this highlight already has chats
+    if (savedHlId) {
+      try {
+        const chatsRes = await fetch('/api/highlights/chat/' + savedHlId);
+        const chatsData = await chatsRes.json();
+        if (chatsData.chats && chatsData.chats.length > 0) {
+          // Show dropdown with existing chats + "New Chat" option
+          showAskAIDropdown(info, savedHlId, chatsData.chats);
+          return;
+        }
+      } catch(e) {}
+    }
+
+    // No existing chats — open fresh split chat
+    openFreshChat(info.text, savedHlId);
+  }
+
+  function openFreshChat(text, hlId) {
     if (window.__openSplitChat) {
-      // Pass a callback to link the chat to the highlight after creation
-      var _hlId = hlId;
-      window.__openSplitChat(info.text, function(newChatId) {
-        if (_hlId && newChatId) {
+      window.__openSplitChat(text, function(newChatId) {
+        if (hlId && newChatId) {
           fetch('/api/highlights/link-chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ highlightId: _hlId, chatId: newChatId }),
+            body: JSON.stringify({ highlightId: hlId, chatId: newChatId }),
           }).catch(function(){});
         }
       });
     }
+  }
+
+  function showAskAIDropdown(info, hlId, existingChats) {
+    removeChatDropdown();
+    chatDropdown = document.createElement('div');
+    chatDropdown.className = 'highlight-chat-dropdown';
+
+    // Position near the highlight popup location or center
+    chatDropdown.style.left = '50%';
+    chatDropdown.style.top = '40%';
+    chatDropdown.style.transform = 'translate(-50%, -50%)';
+    chatDropdown.style.position = 'fixed';
+
+    // "New Chat" button
+    const newBtn = document.createElement('button');
+    newBtn.className = 'hl-dropdown-item hl-dropdown-new';
+    newBtn.textContent = '+ New Chat';
+    newBtn.addEventListener('click', function() {
+      removeChatDropdown();
+      openFreshChat(info.text, hlId);
+    });
+    chatDropdown.appendChild(newBtn);
+
+    // Existing chats
+    existingChats.forEach(function(chat) {
+      const item = document.createElement('button');
+      item.className = 'hl-dropdown-item';
+      item.textContent = chat.title || 'Untitled Chat';
+      item.addEventListener('click', function() {
+        removeChatDropdown();
+        if (window.__openSplitChatWithId) window.__openSplitChatWithId(chat._id);
+      });
+      chatDropdown.appendChild(item);
+    });
+
+    document.body.appendChild(chatDropdown);
   }
 
   // ─── CLICK ON PERSISTED HIGHLIGHTS ─────────────────────────────

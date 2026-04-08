@@ -13,6 +13,11 @@ window.MathJax = {
   <% if (chat.highlightText) { %>
     <div class="chat-source-quote">
       <blockquote><%= chat.highlightText %></blockquote>
+      <% if (chat.bookId) { %>
+        <a href="/reader/<%= chat.bookId %>/page/<%= chat.pageNumber || 1 %>" class="quote-source-link">
+          Page <%= chat.pageNumber || 1 %> — open in reader
+        </a>
+      <% } %>
     </div>
   <% } %>
 
@@ -255,6 +260,8 @@ window.MathJax = {
 .typing-indicator { color:var(--app-text-muted); font-style:italic; }
 .chat-source-quote { padding:0.75rem 1rem; border-bottom:1px solid var(--app-border); flex-shrink:0; }
 .chat-source-quote blockquote { border-left:3px solid var(--app-accent); padding-left:0.7rem; color:var(--app-text-muted); font-style:italic; font-size:0.8rem; margin:0; }
+.quote-source-link { display:block; font-size:0.7rem; color:var(--app-accent); text-decoration:none; margin-top:0.3rem; padding-left:0.7rem; }
+.quote-source-link:hover { text-decoration:underline; }
 </style>
 
 <%- include('partials/layout-end') %>

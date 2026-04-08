@@ -528,3 +528,17 @@ Remaining:
 - Drag to reorder books in collections
 - Stylus/canvas notes (future)
 - Vector embeddings and semantic search (Phase 3)
+
+---
+
+## KNOWN BUGS
+
+- Highlights persist visually even when user dismisses popup without choosing an action (should clear on dismiss — partial fix: hidePopup clears selection but DOM marks from previous saves remain)
+- Right-click in reader may show browser context menu in some browsers despite preventDefault (needs testing across browsers)
+- Highlight across MathJax equations can break paragraph layout when surroundContents fails on cross-element ranges
+- Multiple overlapping highlights on the same text range are not handled (later highlights may nest inside earlier ones)
+- No way to delete highlights, notes, or chats from the UI (API endpoints exist but no UI buttons)
+- Figure images not isolated from page (using fallback "View figure in original page" link for most figures)
+- Upload progress indicator does not live-update in the library/collection view (shows static progress, needs polling)
+- Notes panel live MathJax preview div is hidden (display:none) — needs toggle or always-visible approach
+- Existing highlights may fail to re-render after MathJax typesets (offsets shift when MathJax replaces DOM nodes)

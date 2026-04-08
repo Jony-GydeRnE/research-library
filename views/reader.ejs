@@ -16,12 +16,7 @@
       <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" title="Toggle sidebar">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
-    </div>
-
-    <!-- Tabs: Contents / Collections -->
-    <div class="sidebar-tabs">
-      <button class="sidebar-tab active" id="tabContents" data-tab="contents">Contents</button>
-      <button class="sidebar-tab" id="tabCollections" data-tab="nav">Collections</button>
+      <button class="sidebar-mode-btn" id="sidebarModeBtn">Collections</button>
     </div>
 
     <!-- Tab panel: Contents (TOC) -->
@@ -228,16 +223,24 @@
       localStorage.setItem(key, sidebar.classList.contains('collapsed') ? 'collapsed' : 'open');
     });
 
-    // Tabs
-    var tabs = document.querySelectorAll('.sidebar-tab');
-    var panels = { contents: document.getElementById('panelContents'), nav: document.getElementById('panelNav') };
-    tabs.forEach(function(tab) {
-      tab.addEventListener('click', function() {
-        tabs.forEach(function(t) { t.classList.remove('active'); });
-        tab.classList.add('active');
-        Object.values(panels).forEach(function(p) { p.style.display = 'none'; });
-        panels[tab.dataset.tab].style.display = '';
-      });
+    // Mode toggle: Contents / Collections
+    var modeBtn = document.getElementById('sidebarModeBtn');
+    var panelContents = document.getElementById('panelContents');
+    var panelNav = document.getElementById('panelNav');
+    var sidebarMode = 'contents'; // default to contents in reader
+
+    modeBtn.addEventListener('click', function() {
+      if (sidebarMode === 'contents') {
+        sidebarMode = 'nav';
+        panelContents.style.display = 'none';
+        panelNav.style.display = '';
+        modeBtn.textContent = 'Contents';
+      } else {
+        sidebarMode = 'contents';
+        panelContents.style.display = '';
+        panelNav.style.display = 'none';
+        modeBtn.textContent = 'Collections';
+      }
     });
   })();
   </script>

@@ -108,37 +108,27 @@
   color: var(--r-text);
 }
 
-/* Sidebar tabs (Contents / Collections) */
-.sidebar-tabs {
-  display: flex;
-  padding: 0 0.5rem;
-  border-bottom: 1px solid var(--app-border, #333);
-  margin-bottom: 0.5rem;
-}
-
-.sidebar-tab {
-  flex: 1;
-  padding: 0.5rem 0;
-  font-size: 0.75rem;
+/* Sidebar mode toggle button (inline with hamburger) */
+.sidebar-mode-btn {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.7rem;
   font-weight: 500;
+  border: 1px solid var(--app-border, #333);
+  border-radius: 5px;
+  background: transparent;
   color: var(--app-text-muted, #888);
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
   cursor: pointer;
   font-family: inherit;
-  text-align: center;
   transition: all 0.12s ease;
+  margin-left: 0.25rem;
 }
 
-.sidebar-tab:hover {
+.sidebar-mode-btn:hover {
+  background: var(--app-surface-hover, #2a2a2e);
   color: var(--app-text, #d4d2cc);
 }
 
-.sidebar-tab.active {
-  color: var(--app-accent, #6aabdb);
-  border-bottom-color: var(--app-accent, #6aabdb);
-}
+.app-sidebar.collapsed .sidebar-mode-btn { display: none; }
 
 .sidebar-tab-panel {
   flex: 1;
@@ -1078,6 +1068,13 @@ mjx-container {
 .hl-dropdown-item:hover {
   background: var(--r-nav-btn-hover, #353538);
   color: var(--r-text, #e8e6e0);
+}
+
+.hl-dropdown-new {
+  color: var(--r-link, #6aabdb);
+  border-bottom: 1px solid var(--r-border, #333);
+  margin-bottom: 2px;
+  padding-bottom: 0.5rem;
 }
 
 /* ─── RESPONSIVE ─────────────────────────────────── */
