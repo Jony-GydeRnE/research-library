@@ -37,24 +37,27 @@
     popup.querySelector('.hl-highlight').addEventListener('click', (e) => {
       if (!pendingInfo) return;
       if (pendingInfo._existingHlId) {
-        // Show color picker for existing highlight
         var btnRect = e.target.closest('.hl-btn').getBoundingClientRect();
-        showColorPicker(pendingInfo._existingHlId, pendingInfo._markEl, btnRect);
+        var hlId = pendingInfo._existingHlId;
+        var markEl = pendingInfo._markEl;
+        hidePopup();
+        showColorPicker(hlId, markEl, btnRect);
         return;
       }
       persistHighlight(pendingInfo);
     });
-    popup.querySelector('.hl-note').addEventListener('click', () => {
+    popup.querySelector('.hl-note').addEventListener('click', (e) => {
       if (!pendingInfo) return;
       if (pendingInfo._existingHlId) {
         var hlId = pendingInfo._existingHlId;
         var text = pendingInfo.text;
         var noteId = pendingInfo._noteId;
+        var btnRect = e.target.closest('.hl-btn').getBoundingClientRect();
         hidePopup();
-        if (noteId && window.__openNotesPanelWithId) {
-          window.__openNotesPanelWithId(noteId, text, hlId);
-        } else if (window.__openNotesPanel) {
-          window.__openNotesPanel(text, hlId);
+        if (noteId) {
+          showNotesDropdown(text, hlId, [noteId], btnRect);
+        } else {
+          if (window.__openNotesPanel) window.__openNotesPanel(text, hlId);
         }
         return;
       }
@@ -437,6 +440,7 @@
     });
 
     document.body.appendChild(chatDropdown);
+    setTimeout(function() { chatDropdown.dataset.ready = 'true'; }, 50);
   }
 
   // ─── COLOR PICKER ──────────────────────────────────────────────
@@ -450,17 +454,17 @@
   ];
 
   function showColorPicker(hlId, markEl, anchorRect) {
-    hidePopup();
     removeChatDropdown();
 
     chatDropdown = document.createElement('div');
     chatDropdown.className = 'highlight-chat-dropdown hl-color-picker';
     chatDropdown.style.position = 'fixed';
-    chatDropdown.style.left = Math.min(anchorRect.left, window.innerWidth - 200) + 'px';
+    chatDropdown.style.left = Math.min(anchorRect.left, window.innerWidth - 220) + 'px';
     chatDropdown.style.top = (anchorRect.bottom + 4) + 'px';
     chatDropdown.style.display = 'flex';
     chatDropdown.style.gap = '4px';
     chatDropdown.style.padding = '6px 8px';
+    chatDropdown.style.alignItems = 'center';
 
     HL_COLORS.forEach(function(c) {
       var swatch = document.createElement('button');
@@ -468,22 +472,79 @@
       swatch.style.background = c.value.replace('0.25', '0.6');
       swatch.title = c.name;
       swatch.addEventListener('click', function() {
-        // Update in DB
         fetch('/api/highlights/' + hlId, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ color: c.value }),
         }).catch(function(){});
-
-        // Update visual
         if (markEl) markEl.style.background = c.value;
-
         removeChatDropdown();
       });
       chatDropdown.appendChild(swatch);
     });
 
+    // Remove highlight swatch
+    var removeSwatch = document.createElement('button');
+    removeSwatch.className = 'hl-color-swatch hl-color-remove';
+    removeSwatch.title = 'Remove highlight';
+    removeSwatch.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+    removeSwatch.addEventListener('click', function() {
+      fetch('/api/highlights/' + hlId, { method: 'DELETE' }).catch(function(){});
+      if (markEl) {
+        // Unwrap the mark element, keeping its children
+        var parent = markEl.parentNode;
+        while (markEl.firstChild) parent.insertBefore(markEl.firstChild, markEl);
+        markEl.remove();
+      }
+      removeChatDropdown();
+    });
+    chatDropdown.appendChild(removeSwatch);
+
     document.body.appendChild(chatDropdown);
+    // Delay readiness so the same click doesn't immediately dismiss
+    setTimeout(function() { chatDropdown.dataset.ready = 'true'; }, 50);
+  }
+
+  // ─── NOTES DROPDOWN ─────────────────────────────────────────────
+
+  async function showNotesDropdown(text, hlId, noteIds, anchorRect) {
+    removeChatDropdown();
+    chatDropdown = document.createElement('div');
+    chatDropdown.className = 'highlight-chat-dropdown';
+    chatDropdown.style.position = 'fixed';
+    chatDropdown.style.left = Math.min(anchorRect.left, window.innerWidth - 240) + 'px';
+    chatDropdown.style.top = (anchorRect.bottom + 4) + 'px';
+
+    // "+ New Note" button
+    var newBtn = document.createElement('button');
+    newBtn.className = 'hl-dropdown-item hl-dropdown-new';
+    newBtn.textContent = '+ New Note';
+    newBtn.addEventListener('click', function() {
+      removeChatDropdown();
+      if (window.__openNotesPanel) window.__openNotesPanel(text, hlId);
+    });
+    chatDropdown.appendChild(newBtn);
+
+    // Load existing notes
+    for (var i = 0; i < noteIds.length; i++) {
+      try {
+        var res = await fetch('/api/notes/' + noteIds[i]);
+        var note = await res.json();
+        var item = document.createElement('button');
+        item.className = 'hl-dropdown-item';
+        item.textContent = note.title || 'Untitled Note';
+        (function(noteId) {
+          item.addEventListener('click', function() {
+            removeChatDropdown();
+            if (window.__openNotesPanelWithId) window.__openNotesPanelWithId(noteId, text, hlId);
+          });
+        })(noteIds[i]);
+        chatDropdown.appendChild(item);
+      } catch(e) {}
+    }
+
+    document.body.appendChild(chatDropdown);
+    setTimeout(function() { chatDropdown.dataset.ready = 'true'; }, 50);
   }
 
   // ─── ASK AI ON EXISTING HIGHLIGHT ───────────────────────────────
@@ -513,8 +574,8 @@
   }
 
   document.addEventListener('click', (e) => {
-    // Close dropdown on outside click
-    if (chatDropdown && !chatDropdown.contains(e.target)) {
+    // Close dropdown on outside click (only after it's ready)
+    if (chatDropdown && !chatDropdown.contains(e.target) && chatDropdown.dataset.ready) {
       removeChatDropdown();
     }
 
@@ -546,9 +607,9 @@
         _noteId: null, // will be populated below
       };
 
-      // Fetch the highlight itself to get noteId
-      fetch('/api/highlights/detail/' + hlId).then(r2 => r2.json()).then(function(hlData) {
-        if (hlData.noteId) persistedInfo._noteId = hlData.noteId;
+      // Fetch the highlight to get noteId
+      fetch('/api/highlights/detail/' + hlId).then(function(r2) { return r2.json(); }).then(function(hlData) {
+        persistedInfo._noteId = hlData.noteId || null;
         showPopup(rect.left + rect.width / 2 - 120, rect.top + window.scrollY, persistedInfo);
       }).catch(function() {
         showPopup(rect.left + rect.width / 2 - 120, rect.top + window.scrollY, persistedInfo);

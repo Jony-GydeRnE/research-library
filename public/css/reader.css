@@ -1084,6 +1084,21 @@ mjx-container {
   transform: scale(1.15);
 }
 
+.hl-color-remove {
+  background: transparent !important;
+  border: 2px dashed var(--r-text-muted, #666) !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--r-text-muted, #888);
+  margin-left: 4px;
+}
+
+.hl-color-remove:hover {
+  border-color: #e55 !important;
+  color: #e55;
+}
+
 .hl-color-picker {
   border-radius: 20px !important;
 }
