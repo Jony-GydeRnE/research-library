@@ -964,14 +964,34 @@ mjx-container *::selection {
 /* ─── HIGHLIGHTS ─────────────────────────────────── */
 
 .reader-highlight {
-  background: rgba(255, 230, 0, 0.25);
+  background: rgba(255, 213, 79, 0.2);
+  color: inherit;
   border-radius: 2px;
   cursor: pointer;
   transition: background 0.15s ease;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 
 .reader-highlight:hover {
-  background: rgba(255, 230, 0, 0.4);
+  background: rgba(255, 213, 79, 0.35);
+}
+
+/* Equation highlight (on mjx-container) */
+.reader-highlight-eq {
+  background: rgba(255, 213, 79, 0.12);
+  border-radius: 4px;
+  outline: 1px solid rgba(255, 213, 79, 0.3);
+  cursor: pointer;
+}
+
+.reader-highlight-eq:hover {
+  background: rgba(255, 213, 79, 0.22);
+}
+
+/* Make MathJax containers clickable */
+mjx-container {
+  cursor: pointer;
 }
 
 .highlight-popup {

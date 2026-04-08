@@ -1,14 +1,16 @@
 /**
  * Reader highlighting system.
- * Shows popup on text selection with Highlight / Add Note / Ask AI buttons.
- * Loads and renders existing highlights on page load/navigation.
+ * Works in both Pages and Scroll modes.
+ * Supports text selection AND clicking on MathJax equations.
  */
 (() => {
   const R = window.__READER__;
-  const content = document.getElementById('readerContent');
+  const pagesContent = document.getElementById('readerContent');
+  const scrollContent = document.getElementById('readerScrollContent');
   let popup = null;
+  let pendingInfo = null;
 
-  // ─── CREATE POPUP ──────────────────────────────────────────────
+  // ─── POPUP ─────────────────────────────────────────────────────
 
   function createPopup() {
     if (popup) return popup;
@@ -29,23 +31,42 @@
       </button>
     `;
     document.body.appendChild(popup);
+
+    popup.querySelector('.hl-highlight').addEventListener('click', () => {
+      if (pendingInfo) saveHighlight(pendingInfo);
+    });
+    popup.querySelector('.hl-note').addEventListener('click', () => {
+      if (pendingInfo) saveHighlight(pendingInfo);
+    });
+    popup.querySelector('.hl-ask').addEventListener('click', () => {
+      if (pendingInfo) askAI(pendingInfo);
+    });
+
     return popup;
   }
 
-  function showPopup(x, y) {
+  function showPopup(x, y, info) {
     createPopup();
+    pendingInfo = info;
     popup.style.display = 'flex';
     popup.style.left = Math.min(x, window.innerWidth - 260) + 'px';
-    popup.style.top = (y - 45) + 'px';
+    popup.style.top = Math.max(10, y - 50) + 'px';
   }
 
   function hidePopup() {
     if (popup) popup.style.display = 'none';
+    pendingInfo = null;
   }
 
-  // ─── SELECTION HANDLER ─────────────────────────────────────────
+  // ─── TEXT SELECTION (works in both pages + scroll content) ─────
 
-  function getSelectionInfo() {
+  function getActiveContentEl() {
+    // Return whichever content container is currently visible
+    if (scrollContent && scrollContent.style.display !== 'none') return scrollContent;
+    return pagesContent;
+  }
+
+  function getSelectionInfo(container) {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
 
@@ -53,51 +74,124 @@
     const text = sel.toString().trim();
     if (!text || text.length < 2) return null;
 
-    // Check selection is inside reader content
-    if (!content.contains(range.commonAncestorContainer)) return null;
+    if (!container.contains(range.commonAncestorContainer)) return null;
 
-    // Calculate offsets relative to the page content text
-    const pageContent = content.querySelector('.page-content');
+    // Find the closest .page-content ancestor for offset calculation
+    let pageContent = range.commonAncestorContainer;
+    while (pageContent && !pageContent.classList?.contains('page-content')) {
+      pageContent = pageContent.parentElement;
+    }
+    if (!pageContent) pageContent = container.querySelector('.page-content');
     if (!pageContent) return null;
 
-    // Use a TreeWalker to calculate character offsets
     const startOffset = getTextOffset(pageContent, range.startContainer, range.startOffset);
     const endOffset = getTextOffset(pageContent, range.endContainer, range.endOffset);
 
-    return { text, startOffset, endOffset, range };
+    return { text, startOffset, endOffset, range, isEquation: false };
   }
 
   function getTextOffset(root, node, offset) {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     let charCount = 0;
     while (walker.nextNode()) {
-      if (walker.currentNode === node) {
-        return charCount + offset;
-      }
+      if (walker.currentNode === node) return charCount + offset;
       charCount += walker.currentNode.textContent.length;
     }
     return charCount + offset;
   }
 
-  content.addEventListener('mouseup', (e) => {
+  // Listen on both content areas
+  function onMouseUp(e) {
     setTimeout(() => {
-      const info = getSelectionInfo();
+      const container = getActiveContentEl();
+      const info = getSelectionInfo(container);
       if (info) {
         const rect = info.range.getBoundingClientRect();
-        showPopup(rect.left + rect.width / 2 - 120, rect.top + window.scrollY);
-
-        // Wire buttons
-        popup.querySelector('.hl-highlight').onclick = () => saveHighlight(info);
-        popup.querySelector('.hl-ask').onclick = () => askAI(info);
-        popup.querySelector('.hl-note').onclick = () => { saveHighlight(info); /* TODO: open note panel */ };
+        showPopup(rect.left + rect.width / 2 - 120, rect.top + window.scrollY, info);
       } else {
         hidePopup();
       }
     }, 10);
-  });
+  }
 
+  pagesContent.addEventListener('mouseup', onMouseUp);
+  if (scrollContent) scrollContent.addEventListener('mouseup', onMouseUp);
+
+  // ─── MATHJAX EQUATION CLICK ────────────────────────────────────
+
+  function onMathClick(e) {
+    // Walk up to find the mjx-container
+    let el = e.target;
+    while (el && el.tagName !== 'MJX-CONTAINER') {
+      el = el.parentElement;
+    }
+    if (!el) return;
+
+    // Extract LaTeX source
+    let latex = '';
+
+    // MathJax 3 stores the original in aria-label or in the source element
+    // Try multiple methods
+    if (el.getAttribute('data-mjx-texclass')) {
+      // Search for the original TeX in a <script> or <annotation> inside
+      const annotation = el.querySelector('annotation');
+      if (annotation) latex = annotation.textContent;
+    }
+
+    // Fallback: reconstruct from the container's accessible text
+    if (!latex) {
+      latex = el.getAttribute('aria-label') || '';
+    }
+
+    // Fallback: get the alt text or textContent
+    if (!latex) {
+      latex = el.textContent || '';
+    }
+
+    if (!latex || latex.length < 2) return;
+
+    // Check if display or inline
+    const isDisplay = el.getAttribute('display') === 'true';
+    const displayText = isDisplay ? '\\[' + latex + '\\]' : '\\(' + latex + '\\)';
+
+    const rect = el.getBoundingClientRect();
+    const info = {
+      text: displayText,
+      startOffset: -1,  // equation highlights use text match, not offsets
+      endOffset: -1,
+      range: null,
+      isEquation: true,
+      element: el,
+    };
+
+    showPopup(rect.left + rect.width / 2 - 120, rect.top + window.scrollY, info);
+  }
+
+  // Delegate click on mjx-container elements
+  document.addEventListener('click', (e) => {
+    // Check if we clicked on or inside a MathJax container
+    let el = e.target;
+    while (el && el !== document.body) {
+      if (el.tagName === 'MJX-CONTAINER') {
+        e.preventDefault();
+        e.stopPropagation();
+        onMathClick(e);
+        return;
+      }
+      el = el.parentElement;
+    }
+  }, true);
+
+  // Close popup on outside click (but not on MathJax)
   document.addEventListener('mousedown', (e) => {
-    if (popup && !popup.contains(e.target)) hidePopup();
+    if (popup && !popup.contains(e.target)) {
+      let el = e.target;
+      while (el && el !== document.body) {
+        if (el.tagName === 'MJX-CONTAINER') return; // don't close for math clicks
+        el = el.parentElement;
+      }
+      hidePopup();
+    }
   });
 
   // ─── SAVE HIGHLIGHT ────────────────────────────────────────────
@@ -120,8 +214,12 @@
       });
       const hl = await res.json();
 
-      // Visually mark the text
-      applyHighlightToRange(info.range, hl._id);
+      // Visual highlight
+      if (info.isEquation && info.element) {
+        info.element.classList.add('reader-highlight-eq');
+      } else if (info.range) {
+        applyHighlightToRange(info.range, hl._id);
+      }
     } catch (err) {
       console.error('Failed to save highlight:', err);
     }
@@ -134,7 +232,6 @@
     try {
       range.surroundContents(mark);
     } catch (e) {
-      // surroundContents fails on partial element selections — use extractContents
       const fragment = range.extractContents();
       mark.appendChild(fragment);
       range.insertNode(mark);
@@ -161,10 +258,14 @@
         }),
       });
       const hl = await res.json();
-      applyHighlightToRange(info.range, hl._id);
-    } catch(e) {}
+      if (info.isEquation && info.element) {
+        info.element.classList.add('reader-highlight-eq');
+      } else if (info.range) {
+        applyHighlightToRange(info.range, hl._id);
+      }
+    } catch (e) {}
 
-    // Open split chat panel with the highlighted text as context
+    // Open split chat panel
     if (window.__openSplitChat) {
       window.__openSplitChat(info.text);
     }
@@ -177,22 +278,20 @@
       const res = await fetch(`/api/highlights/${R.bookId}/${R.currentPage}`);
       const highlights = await res.json();
       renderHighlights(highlights);
-    } catch (e) {
-      // Silently fail
-    }
+    } catch (e) {}
   }
 
   function renderHighlights(highlights) {
-    const pageContent = content.querySelector('.page-content');
+    const container = getActiveContentEl();
+    const pageContent = container.querySelector('.page-content');
     if (!pageContent || highlights.length === 0) return;
 
-    // Get all text nodes
     const walker = document.createTreeWalker(pageContent, NodeFilter.SHOW_TEXT);
     const textNodes = [];
     while (walker.nextNode()) textNodes.push(walker.currentNode);
 
-    // For each highlight, find the text range and wrap it
     highlights.forEach(hl => {
+      if (hl.startOffset < 0) return; // equation highlight, skip offset-based rendering
       try {
         const range = document.createRange();
         let charCount = 0;
@@ -200,7 +299,6 @@
 
         for (const node of textNodes) {
           const nodeEnd = charCount + node.textContent.length;
-
           if (!startSet && hl.startOffset >= charCount && hl.startOffset < nodeEnd) {
             range.setStart(node, hl.startOffset - charCount);
             startSet = true;
@@ -212,18 +310,13 @@
           }
           charCount = nodeEnd;
         }
-      } catch (e) {
-        // Skip highlights that can't be re-rendered (DOM changed)
-      }
+      } catch (e) {}
     });
   }
 
-  // Load highlights on page load
   loadHighlights();
 
-  // Re-load highlights when page changes (hook into reader.js goToPage)
-  const origGoToPage = window.__readerGoToPage;
-  window.__readerAfterPageLoad = function() {
+  window.__readerAfterPageLoad = function () {
     loadHighlights();
   };
 })();
