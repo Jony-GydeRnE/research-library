@@ -1026,14 +1026,59 @@ mjx-container {
 .notes-quote { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--r-border, #333); flex-shrink: 0; }
 .notes-quote blockquote { border-left: 3px solid var(--r-link, #6aabdb); padding-left: 0.6rem; color: var(--r-text-muted); font-style: italic; font-size: 0.78rem; line-height: 1.5; margin: 0; max-height: 60px; overflow-y: auto; }
 
-.notes-editor-wrap { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
-.notes-editor { flex: 1; padding: 0.75rem; font-size: 0.85rem; line-height: 1.6; color: var(--r-text, #d4d2cc); outline: none; min-height: 100px; font-family: Georgia, serif; }
-.notes-editor:empty::before { content: attr(placeholder); color: var(--r-text-muted, #888); font-style: italic; }
-.notes-preview { padding: 0 0.75rem 0.5rem; font-size: 0.82rem; color: var(--r-text-muted); border-top: 1px dashed var(--r-border, #333); display: none; }
+/* Note title input */
+.note-title-input {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  color: var(--r-text, #e8e6e0);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  width: 100%;
+  padding: 2px 0;
+  outline: none;
+  font-family: inherit;
+}
+.note-title-input:focus { border-bottom-color: var(--r-link, #6aabdb); }
+.note-title-input::placeholder { color: var(--r-text-muted, #888); font-weight: 400; }
+
+/* Editor wrap */
+.notes-editor-wrap { flex: 1; overflow-y: auto; display: flex; flex-direction: column; position: relative; }
+
+/* Textarea (edit mode) */
+.notes-textarea {
+  flex: 1;
+  width: 100%;
+  padding: 0.75rem;
+  font-size: 0.85rem;
+  line-height: 1.7;
+  color: var(--r-text, #d4d2cc);
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  min-height: 100px;
+}
+.notes-textarea::placeholder { color: var(--r-text-muted, #666); }
+
+/* Preview pane */
+.notes-preview-pane {
+  flex: 1;
+  padding: 0.75rem;
+  font-size: 0.85rem;
+  line-height: 1.7;
+  color: var(--r-text, #d4d2cc);
+  font-family: Georgia, serif;
+  overflow-y: auto;
+}
+.notes-preview-pane p { margin: 0 0 0.6em; }
+.notes-preview-pane mjx-container[display="true"] { margin: 0.5em 0 !important; overflow-x: auto; }
 
 .notes-footer { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border-top: 1px solid var(--r-border, #333); flex-shrink: 0; }
 .notes-status { font-size: 0.72rem; color: var(--r-text-muted); }
-.notes-latex-btn { font-family: 'Courier New', monospace !important; }
+.notes-latex-btn { font-family: Georgia, serif !important; }
 
 /* ─── HIGHLIGHT CHAT DROPDOWN ────────────────────── */
 

@@ -1,13 +1,12 @@
 /**
- * Notes panel — slides from right in the reader.
- * Rich text editor with live MathJax rendering.
+ * Notes panel — slide-from-right in the reader.
+ * Editable title, raw text editor with LaTeX, edit/preview toggle.
  */
 (() => {
   const R = window.__READER__;
   const readerMain = document.getElementById('readerMain');
   const inputBar = document.querySelector('.reader-wrapper > .input-bar');
 
-  // Create the panel DOM
   const divider = document.createElement('div');
   divider.className = 'split-divider notes-divider';
   divider.id = 'notesDivider';
@@ -19,13 +18,17 @@
   panel.style.display = 'none';
   panel.innerHTML = `
     <div class="split-chat-header">
-      <span class="split-chat-title">Note</span>
-      <div style="display:flex;gap:0.25rem;">
-        <button class="reader-btn notes-latex-btn" id="notesLatexInline" title="Wrap in inline math \\( \\)">
-          <span style="font-size:0.75rem;font-weight:600;">\\(x\\)</span>
+      <input type="text" class="note-title-input" id="noteTitleInput" placeholder="Untitled Note" spellcheck="false" />
+      <div style="display:flex;gap:0.25rem;flex-shrink:0;">
+        <button class="reader-btn" id="notesEditPreviewBtn" title="Toggle edit/preview">
+          <svg class="icon-preview" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          <svg class="icon-edit" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
         </button>
-        <button class="reader-btn notes-latex-btn" id="notesLatexDisplay" title="Wrap in display math \\[ \\]">
-          <span style="font-size:0.75rem;font-weight:600;">\\[x\\]</span>
+        <button class="reader-btn notes-latex-btn" id="notesLatexInline" title="Inline math \\( \\)">
+          <span style="font-size:0.7rem;font-weight:700;font-family:serif;">x²</span>
+        </button>
+        <button class="reader-btn notes-latex-btn" id="notesLatexDisplay" title="Display math \\[ \\]">
+          <span style="font-size:0.7rem;font-weight:700;font-family:serif;">∑</span>
         </button>
         <button class="reader-btn" id="notesCloseBtn" title="Close">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -36,16 +39,15 @@
       <blockquote id="notesQuoteText"></blockquote>
     </div>
     <div class="notes-editor-wrap">
-      <div class="notes-editor" id="notesEditor" contenteditable="true" placeholder="Write your note..."></div>
-      <div class="notes-preview" id="notesPreview"></div>
+      <textarea class="notes-textarea" id="notesTextarea" placeholder="Write your note... Use \\( x^2 \\) for inline math or \\[ E=mc^2 \\] for display math."></textarea>
+      <div class="notes-preview-pane" id="notesPreviewPane" style="display:none;"></div>
     </div>
     <div class="notes-footer">
-      <button class="btn btn-primary btn-sm" id="notesSaveBtn">Save Note</button>
+      <button class="btn btn-primary btn-sm" id="notesSaveBtn">Save</button>
       <span class="notes-status" id="notesStatus"></span>
     </div>
   `;
 
-  // Insert into reader-body-row (after readerMain)
   const bodyRow = readerMain.parentElement;
   bodyRow.appendChild(divider);
   bodyRow.appendChild(panel);
@@ -54,8 +56,13 @@
   let currentHighlightId = null;
   let currentNoteId = null;
   let highlightText = null;
-  let typesetTimer = null;
+  let editMode = true; // true = edit, false = preview
   let splitRatio = parseFloat(localStorage.getItem('gyde-notes-ratio')) || 0.6;
+
+  const titleInput = document.getElementById('noteTitleInput');
+  const textarea = document.getElementById('notesTextarea');
+  const previewPane = document.getElementById('notesPreviewPane');
+  const editPreviewBtn = document.getElementById('notesEditPreviewBtn');
 
   // ─── OPEN / CLOSE ─────────────────────────────────────────────
 
@@ -64,27 +71,41 @@
     currentHighlightId = hlId || null;
     currentNoteId = null;
 
-    const editor = document.getElementById('notesEditor');
-    const quote = document.getElementById('notesQuote');
-    const quoteText = document.getElementById('notesQuoteText');
-    const status = document.getElementById('notesStatus');
-
-    editor.innerHTML = '';
-    status.textContent = '';
+    titleInput.value = '';
+    textarea.value = '';
+    previewPane.innerHTML = '';
+    document.getElementById('notesStatus').textContent = '';
 
     if (highlightText) {
-      quoteText.textContent = highlightText;
-      quote.style.display = '';
+      document.getElementById('notesQuoteText').textContent = highlightText;
+      document.getElementById('notesQuote').style.display = '';
     } else {
-      quote.style.display = 'none';
+      document.getElementById('notesQuote').style.display = 'none';
     }
 
+    setEditMode(true);
     isOpen = true;
     panel.style.display = 'flex';
     divider.style.display = '';
     if (inputBar) inputBar.style.display = 'none';
     applyRatio();
-    editor.focus();
+    titleInput.focus();
+  }
+
+  async function openNotesPanelWithId(noteId, hlText, hlId) {
+    openNotesPanel(hlText, hlId);
+    currentNoteId = noteId;
+    textarea.value = 'Loading...';
+
+    try {
+      const res = await fetch('/api/notes/' + noteId);
+      const note = await res.json();
+      titleInput.value = note.title || '';
+      textarea.value = note.content || '';
+    } catch (e) {
+      textarea.value = '';
+      document.getElementById('notesStatus').textContent = 'Failed to load';
+    }
   }
 
   function closeNotesPanel() {
@@ -104,40 +125,57 @@
 
   document.getElementById('notesCloseBtn').addEventListener('click', closeNotesPanel);
 
-  // Open with an existing noteId — load its content
-  async function openNotesPanelWithId(noteId, hlText, hlId) {
-    openNotesPanel(hlText, hlId);
-    currentNoteId = noteId;
-    const editor = document.getElementById('notesEditor');
-    const status = document.getElementById('notesStatus');
-    editor.innerHTML = '<em style="color:var(--app-text-muted)">Loading...</em>';
+  window.__openNotesPanel = openNotesPanel;
+  window.__openNotesPanelWithId = openNotesPanelWithId;
 
-    try {
-      const res = await fetch('/api/notes/' + noteId);
-      const note = await res.json();
-      editor.innerHTML = note.content || '';
-      // Typeset any LaTeX in loaded content
-      if (window.MathJax && MathJax.typesetPromise) {
-        var preview = document.getElementById('notesPreview');
-        preview.innerHTML = editor.innerHTML;
-        MathJax.typesetPromise([preview]).catch(function(){});
-      }
-    } catch(e) {
-      editor.innerHTML = '';
-      status.textContent = 'Failed to load note';
+  // ─── EDIT / PREVIEW TOGGLE ─────────────────────────────────────
+
+  function setEditMode(isEdit) {
+    editMode = isEdit;
+    if (isEdit) {
+      textarea.style.display = '';
+      previewPane.style.display = 'none';
+      editPreviewBtn.querySelector('.icon-preview').style.display = '';
+      editPreviewBtn.querySelector('.icon-edit').style.display = 'none';
+      document.getElementById('notesLatexInline').style.display = '';
+      document.getElementById('notesLatexDisplay').style.display = '';
+    } else {
+      textarea.style.display = 'none';
+      previewPane.style.display = '';
+      editPreviewBtn.querySelector('.icon-preview').style.display = 'none';
+      editPreviewBtn.querySelector('.icon-edit').style.display = '';
+      document.getElementById('notesLatexInline').style.display = 'none';
+      document.getElementById('notesLatexDisplay').style.display = 'none';
+      renderPreview();
     }
   }
 
-  // Expose for highlights.js
-  window.__openNotesPanel = openNotesPanel;
-  window.__openNotesPanelWithId = openNotesPanelWithId;
+  function renderPreview() {
+    // Convert raw text to HTML with LaTeX preserved
+    var raw = textarea.value;
+    var html = raw
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\n\n+/g, '</p><p>')
+      .replace(/\n/g, '<br>');
+    // Restore LaTeX delimiters
+    html = html.replace(/\\&lt;/g, '\\<').replace(/\\&gt;/g, '\\>');
+    // Undo escaping inside \( \) and \[ \]
+    html = html.replace(/\\\(/g, '\\(').replace(/\\\)/g, '\\)');
+    html = html.replace(/\\\[/g, '\\[').replace(/\\\]/g, '\\]');
+
+    previewPane.innerHTML = '<p>' + html + '</p>';
+    if (window.MathJax && MathJax.typesetPromise) {
+      MathJax.typesetPromise([previewPane]).catch(function(){});
+    }
+  }
+
+  editPreviewBtn.addEventListener('click', () => setEditMode(!editMode));
 
   // ─── DRAGGABLE DIVIDER ─────────────────────────────────────────
 
   let dragging = false;
   divider.addEventListener('mousedown', (e) => {
-    dragging = true;
-    e.preventDefault();
+    dragging = true; e.preventDefault();
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
   });
@@ -157,71 +195,63 @@
   // ─── LATEX BUTTONS ─────────────────────────────────────────────
 
   document.getElementById('notesLatexInline').addEventListener('click', () => {
-    insertLatexWrap('\\(', '\\)');
+    insertAtCursor('\\( ', ' \\)');
   });
-
   document.getElementById('notesLatexDisplay').addEventListener('click', () => {
-    insertLatexWrap('\\[', '\\]');
+    insertAtCursor('\n\\[ ', ' \\]\n');
   });
 
-  function insertLatexWrap(open, close) {
-    const editor = document.getElementById('notesEditor');
-    const sel = window.getSelection();
-    if (!sel.rangeCount || !editor.contains(sel.anchorNode)) {
-      // No selection — insert at cursor
-      document.execCommand('insertText', false, open + ' ' + close);
-      return;
-    }
-    const text = sel.toString();
-    document.execCommand('insertText', false, open + (text || ' ') + close);
+  function insertAtCursor(before, after) {
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selected = textarea.value.substring(start, end);
+    const insert = before + (selected || 'x') + after;
+    textarea.setRangeText(insert, start, end, 'end');
+    textarea.focus();
   }
 
-  // ─── LIVE MATHJAX PREVIEW ──────────────────────────────────────
+  // ─── TITLE SAVE ON BLUR/ENTER ──────────────────────────────────
 
-  const editor = document.getElementById('notesEditor');
-  const preview = document.getElementById('notesPreview');
+  function saveTitle() {
+    if (!currentNoteId) return;
+    fetch('/api/notes/' + currentNoteId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: titleInput.value.trim() }),
+    }).catch(function(){});
+  }
 
-  editor.addEventListener('input', () => {
-    clearTimeout(typesetTimer);
-    typesetTimer = setTimeout(() => {
-      preview.innerHTML = editor.innerHTML;
-      if (window.MathJax && MathJax.typesetPromise) {
-        MathJax.typesetPromise([preview]).catch(() => {});
-      }
-    }, 500);
+  titleInput.addEventListener('blur', saveTitle);
+  titleInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveTitle(); textarea.focus(); }
   });
 
-  // ─── SAVE ──────────────────────────────────────────────────────
+  // ─── SAVE NOTE ─────────────────────────────────────────────────
 
   document.getElementById('notesSaveBtn').addEventListener('click', async () => {
-    const content = editor.innerHTML;
+    const content = textarea.value;
+    const title = titleInput.value.trim();
     const status = document.getElementById('notesStatus');
 
-    if (!content.trim()) {
-      status.textContent = 'Note is empty';
-      return;
-    }
+    if (!content.trim()) { status.textContent = 'Note is empty'; return; }
 
     try {
-      const body = {
-        bookId: R.bookId,
-        pageNumber: R.currentPage,
-        content,
-        highlightId: currentHighlightId || undefined,
-      };
-
       let res;
       if (currentNoteId) {
         res = await fetch('/api/notes/' + currentNoteId, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify({ content, title }),
         });
       } else {
         res = await fetch('/api/notes', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          body: JSON.stringify({
+            bookId: R.bookId, pageNumber: R.currentPage,
+            content, title: title || 'Untitled Note',
+            highlightId: currentHighlightId || undefined,
+          }),
         });
       }
 
@@ -229,7 +259,6 @@
       const isNew = !currentNoteId;
       currentNoteId = note._id;
 
-      // Link note to highlight if this is a new note
       if (isNew && currentHighlightId) {
         fetch('/api/highlights/link-note', {
           method: 'POST',

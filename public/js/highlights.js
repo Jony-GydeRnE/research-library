@@ -535,20 +535,21 @@
     });
     chatDropdown.appendChild(newBtn);
 
-    // Load existing notes
-    for (var i = 0; i < noteIds.length; i++) {
+    // Load existing notes — newest first
+    var reversedIds = noteIds.slice().reverse();
+    for (var i = 0; i < reversedIds.length; i++) {
       try {
-        var res = await fetch('/api/notes/' + noteIds[i]);
+        var res = await fetch('/api/notes/' + reversedIds[i]);
         var note = await res.json();
         var item = document.createElement('button');
         item.className = 'hl-dropdown-item';
-        item.textContent = note.title || 'Untitled Note';
+        item.textContent = note.title || (note.content ? note.content.substring(0, 40) + '...' : 'Untitled Note');
         (function(noteId) {
           item.addEventListener('click', function() {
             removeChatDropdown();
             if (window.__openNotesPanelWithId) window.__openNotesPanelWithId(noteId, text, hlId);
           });
-        })(noteIds[i]);
+        })(reversedIds[i]);
         chatDropdown.appendChild(item);
       } catch(e) {}
     }
