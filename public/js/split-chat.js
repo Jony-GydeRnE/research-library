@@ -67,8 +67,41 @@
 
   closeBtn.addEventListener('click', closePanel);
 
+  // Open with an existing chatId — load its messages
+  async function openPanelWithChat(existingChatId) {
+    openPanel(null);
+    chatId = existingChatId;
+    quoteBlock.style.display = 'none';
+    messagesEl.innerHTML = '<div style="color:var(--app-text-muted);font-style:italic;padding:0.5rem;">Loading...</div>';
+
+    try {
+      const res = await fetch('/chat/' + existingChatId + '/api/messages');
+      const data = await res.json();
+
+      messagesEl.innerHTML = '';
+      if (data.highlightText) {
+        quoteText.textContent = data.highlightText;
+        quoteBlock.style.display = '';
+      }
+      (data.messages || []).forEach(m => {
+        if (m.role === 'user') {
+          addMsg('user', escapeHtml(m.content));
+        } else {
+          addMsg('assistant', formatMsg(m.content));
+        }
+      });
+
+      if (window.MathJax && MathJax.typesetPromise) {
+        MathJax.typesetPromise([messagesEl]).catch(function(){});
+      }
+    } catch (e) {
+      messagesEl.innerHTML = '<div style="color:#e55;padding:0.5rem;">Failed to load chat</div>';
+    }
+  }
+
   // Expose for highlights.js
   window.__openSplitChat = openPanel;
+  window.__openSplitChatWithId = openPanelWithChat;
 
   // ─── DRAGGABLE DIVIDER ─────────────────────────────────────────
 

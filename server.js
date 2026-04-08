@@ -48,6 +48,18 @@ app.get('/chat/:chatId', async (req, res) => {
   res.render('chat', { title: chat.title || 'Chat', page: 'chats', chat, hideInputBar: true, ...sidebar });
 });
 
+// API: get chat messages (for split panel loading existing chats)
+app.get('/chat/:chatId/api/messages', async (req, res) => {
+  try {
+    const Chat = require('./models/Chat');
+    const chat = await Chat.findById(req.params.chatId).lean();
+    if (!chat) return res.status(404).json({ error: 'Not found' });
+    res.json({ messages: chat.messages, highlightText: chat.highlightText || null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // API: create chat from input bar
 app.post('/api/chat', async (req, res) => {
   try {

@@ -30,6 +30,16 @@ exports.getHighlights = async (req, res) => {
   }
 };
 
+exports.getHighlightChat = async (req, res) => {
+  try {
+    const highlight = await Highlight.findById(req.params.id).lean();
+    if (!highlight) return res.json({ chatId: null });
+    res.json({ chatId: highlight.chatId || null });
+  } catch (err) {
+    res.json({ chatId: null });
+  }
+};
+
 exports.deleteHighlight = async (req, res) => {
   try {
     await Highlight.findByIdAndDelete(req.params.id);
