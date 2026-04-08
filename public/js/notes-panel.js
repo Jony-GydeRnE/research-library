@@ -1,6 +1,6 @@
 /**
  * Notes panel — slide-from-right in the reader.
- * Editable title, raw text editor with LaTeX, edit/preview toggle.
+ * Textarea editor, MathJax preview on save, pencil to re-edit.
  */
 (() => {
   const R = window.__READER__;
@@ -20,9 +20,8 @@
     <div class="split-chat-header">
       <input type="text" class="note-title-input" id="noteTitleInput" placeholder="Untitled Note" spellcheck="false" />
       <div style="display:flex;gap:0.25rem;flex-shrink:0;">
-        <button class="reader-btn" id="notesEditPreviewBtn" title="Toggle edit/preview">
-          <svg class="icon-preview" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          <svg class="icon-edit" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        <button class="reader-btn" id="notesEditBtn" title="Edit note" style="display:none;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
         </button>
         <button class="reader-btn notes-latex-btn" id="notesLatexInline" title="Inline math \\( \\)">
           <span style="font-size:0.7rem;font-weight:700;font-family:serif;">x²</span>
@@ -55,19 +54,78 @@
   let isOpen = false;
   let currentHighlightId = null;
   let currentNoteId = null;
-  let highlightText = null;
-  let editMode = true; // true = edit, false = preview
   let splitRatio = parseFloat(localStorage.getItem('gyde-notes-ratio')) || 0.6;
 
   const titleInput = document.getElementById('noteTitleInput');
   const textarea = document.getElementById('notesTextarea');
   const previewPane = document.getElementById('notesPreviewPane');
-  const editPreviewBtn = document.getElementById('notesEditPreviewBtn');
+  const editBtn = document.getElementById('notesEditBtn');
+  const latexInline = document.getElementById('notesLatexInline');
+  const latexDisplay = document.getElementById('notesLatexDisplay');
+
+  // ─── MATHJAX RENDER ────────────────────────────────────────────
+
+  function renderNotePreview(content, el) {
+    if (!content) { el.innerHTML = '<em style="color:#888">Empty note</em>'; return; }
+
+    // Convert $$ ... $$ to \[ ... \] and $ ... $ to \( ... \)
+    var html = content
+      .replace(/\$\$([\s\S]*?)\$\$/g, '\\[$1\\]')
+      .replace(/(?<![\\$])\$(?!\$)(.+?)(?<![\\$])\$/g, '\\($1\\)');
+
+    // Escape HTML but preserve LaTeX delimiters
+    html = html
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    // Restore LaTeX delimiters that got escaped
+    html = html
+      .replace(/\\\(/g, '\\(').replace(/\\\)/g, '\\)')
+      .replace(/\\\[/g, '\\[').replace(/\\\]/g, '\\]');
+
+    // Newlines to <br>
+    html = html.replace(/\n/g, '<br>');
+
+    el.innerHTML = html;
+
+    if (window.MathJax && window.MathJax.typesetPromise) {
+      MathJax.typesetClear([el]);
+      MathJax.typesetPromise([el]).then(function() {
+        console.log('MathJax typeset SUCCESS on notes preview');
+      }).catch(function(err) {
+        console.error('MathJax typeset FAILED:', err);
+      });
+    } else {
+      console.error('MathJax not available! window.MathJax =', window.MathJax);
+    }
+  }
+
+  // ─── EDIT / PREVIEW MODE ───────────────────────────────────────
+
+  function showEditMode() {
+    textarea.style.display = '';
+    previewPane.style.display = 'none';
+    editBtn.style.display = 'none';
+    latexInline.style.display = '';
+    latexDisplay.style.display = '';
+    textarea.focus();
+  }
+
+  function showPreviewMode() {
+    renderNotePreview(textarea.value, previewPane);
+    textarea.style.display = 'none';
+    previewPane.style.display = '';
+    editBtn.style.display = '';
+    latexInline.style.display = 'none';
+    latexDisplay.style.display = 'none';
+  }
+
+  editBtn.addEventListener('click', showEditMode);
 
   // ─── OPEN / CLOSE ─────────────────────────────────────────────
 
   function openNotesPanel(hlText, hlId) {
-    highlightText = hlText;
     currentHighlightId = hlId || null;
     currentNoteId = null;
 
@@ -76,14 +134,14 @@
     previewPane.innerHTML = '';
     document.getElementById('notesStatus').textContent = '';
 
-    if (highlightText) {
-      document.getElementById('notesQuoteText').textContent = highlightText;
+    if (hlText) {
+      document.getElementById('notesQuoteText').textContent = hlText;
       document.getElementById('notesQuote').style.display = '';
     } else {
       document.getElementById('notesQuote').style.display = 'none';
     }
 
-    setEditMode(true);
+    showEditMode();
     isOpen = true;
     panel.style.display = 'flex';
     divider.style.display = '';
@@ -98,10 +156,12 @@
     textarea.value = 'Loading...';
 
     try {
-      const res = await fetch('/api/notes/' + noteId);
-      const note = await res.json();
+      var res = await fetch('/api/notes/' + noteId);
+      var note = await res.json();
       titleInput.value = note.title || '';
       textarea.value = note.content || '';
+      // Show rendered preview by default for existing notes
+      showPreviewMode();
     } catch (e) {
       textarea.value = '';
       document.getElementById('notesStatus').textContent = 'Failed to load';
@@ -124,52 +184,8 @@
   }
 
   document.getElementById('notesCloseBtn').addEventListener('click', closeNotesPanel);
-
   window.__openNotesPanel = openNotesPanel;
   window.__openNotesPanelWithId = openNotesPanelWithId;
-
-  // ─── EDIT / PREVIEW TOGGLE ─────────────────────────────────────
-
-  function setEditMode(isEdit) {
-    editMode = isEdit;
-    if (isEdit) {
-      textarea.style.display = '';
-      previewPane.style.display = 'none';
-      editPreviewBtn.querySelector('.icon-preview').style.display = '';
-      editPreviewBtn.querySelector('.icon-edit').style.display = 'none';
-      document.getElementById('notesLatexInline').style.display = '';
-      document.getElementById('notesLatexDisplay').style.display = '';
-    } else {
-      textarea.style.display = 'none';
-      previewPane.style.display = '';
-      editPreviewBtn.querySelector('.icon-preview').style.display = 'none';
-      editPreviewBtn.querySelector('.icon-edit').style.display = '';
-      document.getElementById('notesLatexInline').style.display = 'none';
-      document.getElementById('notesLatexDisplay').style.display = 'none';
-      renderPreview();
-    }
-  }
-
-  function renderPreview() {
-    // Convert raw text to HTML with LaTeX preserved
-    var raw = textarea.value;
-    var html = raw
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/\n\n+/g, '</p><p>')
-      .replace(/\n/g, '<br>');
-    // Restore LaTeX delimiters
-    html = html.replace(/\\&lt;/g, '\\<').replace(/\\&gt;/g, '\\>');
-    // Undo escaping inside \( \) and \[ \]
-    html = html.replace(/\\\(/g, '\\(').replace(/\\\)/g, '\\)');
-    html = html.replace(/\\\[/g, '\\[').replace(/\\\]/g, '\\]');
-
-    previewPane.innerHTML = '<p>' + html + '</p>';
-    if (window.MathJax && MathJax.typesetPromise) {
-      MathJax.typesetPromise([previewPane]).catch(function(){});
-    }
-  }
-
-  editPreviewBtn.addEventListener('click', () => setEditMode(!editMode));
 
   // ─── DRAGGABLE DIVIDER ─────────────────────────────────────────
 
@@ -181,9 +197,8 @@
   });
   document.addEventListener('mousemove', (e) => {
     if (!dragging) return;
-    const rect = bodyRow.getBoundingClientRect();
-    let ratio = (e.clientX - rect.left) / rect.width;
-    ratio = Math.max(0.3, Math.min(0.8, ratio));
+    var rect = bodyRow.getBoundingClientRect();
+    var ratio = Math.max(0.3, Math.min(0.8, (e.clientX - rect.left) / rect.width));
     splitRatio = ratio;
     localStorage.setItem('gyde-notes-ratio', ratio);
     applyRatio();
@@ -194,23 +209,18 @@
 
   // ─── LATEX BUTTONS ─────────────────────────────────────────────
 
-  document.getElementById('notesLatexInline').addEventListener('click', () => {
-    insertAtCursor('\\( ', ' \\)');
-  });
-  document.getElementById('notesLatexDisplay').addEventListener('click', () => {
-    insertAtCursor('\n\\[ ', ' \\]\n');
-  });
+  latexInline.addEventListener('click', () => insertAtCursor('\\( ', ' \\)'));
+  latexDisplay.addEventListener('click', () => insertAtCursor('\n\\[ ', ' \\]\n'));
 
   function insertAtCursor(before, after) {
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const selected = textarea.value.substring(start, end);
-    const insert = before + (selected || 'x') + after;
-    textarea.setRangeText(insert, start, end, 'end');
+    var start = textarea.selectionStart;
+    var end = textarea.selectionEnd;
+    var selected = textarea.value.substring(start, end);
+    textarea.setRangeText(before + (selected || 'x') + after, start, end, 'end');
     textarea.focus();
   }
 
-  // ─── TITLE SAVE ON BLUR/ENTER ──────────────────────────────────
+  // ─── TITLE SAVE ────────────────────────────────────────────────
 
   function saveTitle() {
     if (!currentNoteId) return;
@@ -229,19 +239,19 @@
   // ─── SAVE NOTE ─────────────────────────────────────────────────
 
   document.getElementById('notesSaveBtn').addEventListener('click', async () => {
-    const content = textarea.value;
-    const title = titleInput.value.trim();
-    const status = document.getElementById('notesStatus');
+    var content = textarea.value;
+    var title = titleInput.value.trim();
+    var status = document.getElementById('notesStatus');
 
     if (!content.trim()) { status.textContent = 'Note is empty'; return; }
 
     try {
-      let res;
+      var res;
       if (currentNoteId) {
         res = await fetch('/api/notes/' + currentNoteId, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content, title }),
+          body: JSON.stringify({ content: content, title: title }),
         });
       } else {
         res = await fetch('/api/notes', {
@@ -249,14 +259,14 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             bookId: R.bookId, pageNumber: R.currentPage,
-            content, title: title || 'Untitled Note',
+            content: content, title: title || 'Untitled Note',
             highlightId: currentHighlightId || undefined,
           }),
         });
       }
 
-      const note = await res.json();
-      const isNew = !currentNoteId;
+      var note = await res.json();
+      var isNew = !currentNoteId;
       currentNoteId = note._id;
 
       if (isNew && currentHighlightId) {
@@ -268,7 +278,10 @@
       }
 
       status.textContent = 'Saved';
-      setTimeout(() => { status.textContent = ''; }, 2000);
+      setTimeout(function() { status.textContent = ''; }, 2000);
+
+      // Switch to preview mode after saving
+      showPreviewMode();
     } catch (err) {
       status.textContent = 'Failed to save';
     }
