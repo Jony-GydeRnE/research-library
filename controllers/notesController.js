@@ -11,7 +11,7 @@ exports.saveNote = async (req, res) => {
 
     // Link note to highlight if provided
     if (highlightId) {
-      await Highlight.findByIdAndUpdate(highlightId, { noteId: note._id });
+      await Highlight.findByIdAndUpdate(highlightId, { $addToSet: { noteIds: note._id } });
     }
 
     res.status(201).json(note);

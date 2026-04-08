@@ -6,7 +6,7 @@ const highlightSchema = new mongoose.Schema({
   startOffset: Number,
   endOffset: Number,
   text: String,
-  noteId: { type: mongoose.Schema.Types.ObjectId, ref: 'Note' },
+  noteIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Note' }],
   chatIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Chat' }],
   color: { type: String, default: 'yellow' },
   createdAt: { type: Date, default: Date.now },

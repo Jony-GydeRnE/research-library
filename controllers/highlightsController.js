@@ -75,6 +75,18 @@ exports.linkChat = async (req, res) => {
   }
 };
 
+exports.linkNote = async (req, res) => {
+  try {
+    const { highlightId, noteId } = req.body;
+    await Highlight.findByIdAndUpdate(highlightId, { $addToSet: { noteIds: noteId } });
+    const Note = require('../models/Note');
+    await Note.findByIdAndUpdate(noteId, { highlightId });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 exports.deleteHighlight = async (req, res) => {
   try {
     await Highlight.findByIdAndDelete(req.params.id);

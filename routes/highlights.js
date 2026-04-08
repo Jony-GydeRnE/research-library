@@ -4,6 +4,7 @@ const c = require('../controllers/highlightsController');
 
 router.post('/', c.saveHighlight);
 router.post('/link-chat', c.linkChat);
+router.post('/link-note', c.linkNote);
 router.get('/detail/:id', c.getHighlightDetail);
 router.get('/chat/:id', c.getHighlightChats);
 router.get('/:bookId/:pageNumber', c.getHighlights);

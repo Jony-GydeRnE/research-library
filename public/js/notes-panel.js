@@ -226,7 +226,18 @@
       }
 
       const note = await res.json();
+      const isNew = !currentNoteId;
       currentNoteId = note._id;
+
+      // Link note to highlight if this is a new note
+      if (isNew && currentHighlightId) {
+        fetch('/api/highlights/link-note', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ highlightId: currentHighlightId, noteId: note._id }),
+        }).catch(function(){});
+      }
+
       status.textContent = 'Saved';
       setTimeout(() => { status.textContent = ''; }, 2000);
     } catch (err) {

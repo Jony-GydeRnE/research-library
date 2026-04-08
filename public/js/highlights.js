@@ -51,11 +51,11 @@
       if (pendingInfo._existingHlId) {
         var hlId = pendingInfo._existingHlId;
         var text = pendingInfo.text;
-        var noteId = pendingInfo._noteId;
+        var noteIds = pendingInfo._noteIds || [];
         var btnRect = e.target.closest('.hl-btn').getBoundingClientRect();
         hidePopup();
-        if (noteId) {
-          showNotesDropdown(text, hlId, [noteId], btnRect);
+        if (noteIds.length > 0) {
+          showNotesDropdown(text, hlId, noteIds, btnRect);
         } else {
           if (window.__openNotesPanel) window.__openNotesPanel(text, hlId);
         }
@@ -488,10 +488,20 @@
     removeSwatch.className = 'hl-color-swatch hl-color-remove';
     removeSwatch.title = 'Remove highlight';
     removeSwatch.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
-    removeSwatch.addEventListener('click', function() {
+    removeSwatch.addEventListener('click', async function() {
+      // Check for attached chats/notes before deleting
+      try {
+        var detail = await fetch('/api/highlights/detail/' + hlId).then(function(r) { return r.json(); });
+        var chatCount = (detail.chatIds || []).length;
+        var noteCount = (detail.noteIds || []).length;
+        if (chatCount > 0 || noteCount > 0) {
+          var msg = 'This highlight has ' + chatCount + ' chat(s) and ' + noteCount + ' note(s) attached. Remove anyway?';
+          if (!confirm(msg)) { removeChatDropdown(); return; }
+        }
+      } catch(e) {}
+
       fetch('/api/highlights/' + hlId, { method: 'DELETE' }).catch(function(){});
       if (markEl) {
-        // Unwrap the mark element, keeping its children
         var parent = markEl.parentNode;
         while (markEl.firstChild) parent.insertBefore(markEl.firstChild, markEl);
         markEl.remove();
@@ -604,12 +614,12 @@
         element: mark.classList.contains('reader-highlight-eq') ? mark : null,
         _existingHlId: hlId,
         _markEl: mark,
-        _noteId: null, // will be populated below
+        _noteIds: [],
       };
 
-      // Fetch the highlight to get noteId
+      // Fetch the highlight to get noteIds
       fetch('/api/highlights/detail/' + hlId).then(function(r2) { return r2.json(); }).then(function(hlData) {
-        persistedInfo._noteId = hlData.noteId || null;
+        persistedInfo._noteIds = hlData.noteIds || [];
         showPopup(rect.left + rect.width / 2 - 120, rect.top + window.scrollY, persistedInfo);
       }).catch(function() {
         showPopup(rect.left + rect.width / 2 - 120, rect.top + window.scrollY, persistedInfo);
