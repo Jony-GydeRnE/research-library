@@ -6,12 +6,10 @@
   const originalImg = document.getElementById('originalPageImg');
   const currentPageNum = document.getElementById('currentPageNum');
   const pageIndicator = document.getElementById('pageIndicator');
-  const prevBtn = document.getElementById('prevBtn');
-  const nextBtn = document.getElementById('nextBtn');
+  const headerPrevBtn = document.getElementById('headerPrevBtn');
+  const headerNextBtn = document.getElementById('headerNextBtn');
   const pageJump = document.getElementById('pageJump');
-  const pageNav = document.getElementById('readerPageNav');
   const readerMain = document.getElementById('readerMain');
-  const themeToggle = document.getElementById('themeToggle');
   const modePagesBtn = document.getElementById('modePagesBtn');
   const modeScrollBtn = document.getElementById('modeScrollBtn');
   const modePdfBtn = document.getElementById('modePdfBtn');
@@ -19,7 +17,7 @@
   let mode = localStorage.getItem('gyde-reader-mode') || 'pages';
   let scrollLoaded = false;
 
-  // ─── MODE TOGGLE (Pages / Scroll / PDF) ────────────────────────
+  // ─── MODE TOGGLE ───────────────────────────────────────────────
 
   function setMode(newMode) {
     mode = newMode;
@@ -33,31 +31,39 @@
     if (mode === 'pages') {
       modePagesBtn.classList.add('active');
       content.style.display = '';
-      pageNav.style.display = '';
       pageIndicator.style.display = '';
+      headerPrevBtn.style.display = '';
+      headerNextBtn.style.display = '';
     } else if (mode === 'scroll') {
       modeScrollBtn.classList.add('active');
       scrollContent.style.display = '';
-      pageNav.style.display = 'none';
       pageIndicator.style.display = 'none';
+      headerPrevBtn.style.display = 'none';
+      headerNextBtn.style.display = 'none';
       if (!scrollLoaded) loadAllPages();
     } else if (mode === 'pdf') {
       modePdfBtn.classList.add('active');
       originalView.style.display = '';
       originalImg.src = `/images/${R.bookId}/page-${R.currentPage}.png`;
-      pageNav.style.display = '';
       pageIndicator.style.display = '';
+      headerPrevBtn.style.display = '';
+      headerNextBtn.style.display = '';
     }
+
+    updateArrowState();
+  }
+
+  function updateArrowState() {
+    headerPrevBtn.disabled = R.currentPage <= 1;
+    headerNextBtn.disabled = R.currentPage >= R.totalPages;
   }
 
   modePagesBtn.addEventListener('click', () => setMode('pages'));
   modeScrollBtn.addEventListener('click', () => setMode('scroll'));
   modePdfBtn.addEventListener('click', () => setMode('pdf'));
-
-  // Init
   setMode(mode);
 
-  // ─── LOAD ALL PAGES (scroll mode) ─────────────────────────────
+  // ─── LOAD ALL PAGES (scroll) ───────────────────────────────────
 
   async function loadAllPages() {
     scrollLoaded = true;
@@ -67,8 +73,7 @@
     for (let i = 1; i <= R.totalPages; i++) {
       try {
         const res = await fetch(`/reader/${R.bookId}/api/page/${i}`);
-        const data = await res.json();
-        pages.push(data);
+        pages.push(await res.json());
       } catch (e) {
         pages.push({ pageNumber: i, htmlContent: '<div class="page-content"><p class="empty-page">Failed to load page ' + i + '</p></div>' });
       }
@@ -76,11 +81,11 @@
 
     scrollContent.innerHTML = '';
     pages.forEach(p => {
-      const section = document.createElement('div');
-      section.className = 'scroll-page-section';
-      section.id = `scroll-page-${p.pageNumber}`;
-      section.innerHTML = `<div class="scroll-page-number">Page ${p.pageNumber}</div>${p.htmlContent}`;
-      scrollContent.appendChild(section);
+      const s = document.createElement('div');
+      s.className = 'scroll-page-section';
+      s.id = `scroll-page-${p.pageNumber}`;
+      s.innerHTML = `<div class="scroll-page-number">Page ${p.pageNumber}</div>${p.htmlContent}`;
+      scrollContent.appendChild(s);
     });
 
     if (window.MathJax && MathJax.typesetPromise) {
@@ -95,8 +100,8 @@
     if (num === R.currentPage && mode !== 'scroll') return;
 
     if (mode === 'scroll') {
-      const section = document.getElementById(`scroll-page-${num}`);
-      if (section) section.scrollIntoView({ behavior: 'smooth' });
+      const el = document.getElementById(`scroll-page-${num}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth' });
       R.currentPage = num;
       return;
     }
@@ -109,8 +114,7 @@
       R.currentPage = num;
       currentPageNum.textContent = num;
       pageJump.value = num;
-      prevBtn.disabled = num <= 1;
-      nextBtn.disabled = num >= R.totalPages;
+      updateArrowState();
 
       if (mode === 'pages') {
         content.innerHTML = data.htmlContent || '<div class="page-content"><p class="empty-page">No content.</p></div>';
@@ -144,10 +148,8 @@
     });
   }
 
-  prevBtn.addEventListener('click', () => goToPage(R.currentPage - 1));
-  nextBtn.addEventListener('click', () => goToPage(R.currentPage + 1));
-  pageJump.addEventListener('keydown', (e) => { if (e.key === 'Enter') { goToPage(parseInt(pageJump.value, 10)); pageJump.blur(); } });
-  pageJump.addEventListener('change', () => goToPage(parseInt(pageJump.value, 10)));
+  headerPrevBtn.addEventListener('click', () => goToPage(R.currentPage - 1));
+  headerNextBtn.addEventListener('click', () => goToPage(R.currentPage + 1));
 
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
@@ -157,14 +159,6 @@
 
   document.querySelectorAll('.toc-link, .page-link').forEach(link => {
     link.addEventListener('click', (e) => { e.preventDefault(); goToPage(parseInt(link.dataset.page, 10)); });
-  });
-
-  // ─── DARK MODE ─────────────────────────────────────────────────
-
-  themeToggle.addEventListener('click', () => {
-    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', next);
-    localStorage.setItem('gyde-reader-theme', next);
   });
 
   // ─── BOOKMARK ──────────────────────────────────────────────────

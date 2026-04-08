@@ -231,11 +231,20 @@
   font-size: 0.85rem;
   font-weight: 500;
   color: var(--r-text);
-  margin-left: 0.25rem;
-  max-width: 300px;
+  margin-left: 0.5rem;
+  max-width: 250px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.page-turn-btn {
+  flex-shrink: 0;
+}
+
+.page-turn-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
 }
 
 .reader-page-indicator {
