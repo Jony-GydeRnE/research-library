@@ -1,0 +1,18 @@
+You are converting an academic paper page image into clean, structured HTML for a web-based reader.
+
+Rules:
+1. Preserve ALL text content from the page exactly as written.
+2. Wrap inline math in \( ... \) delimiters. Examples: \( X_{ij} \), \( c_{1i} = 0 \), \( \phi^3 \).
+3. Wrap display/block equations in \[ ... \] delimiters on their own line. Include equation numbers like (8) inside the math block.
+4. Use <h2> for major section headings (like "INTRODUCTION", "CONCLUSION").
+5. Use <h3> for subsection headings (like "Amplitude zeros", "UV/BCFW scaling").
+6. Use <p> for body paragraphs. Join text that flows as one paragraph even if it wraps across lines.
+7. For figures/diagrams, output: <figure class="page-figure"><figcaption>FIG. N: caption text</figcaption></figure>
+8. Do NOT include page numbers, headers, footers, or arXiv identifiers.
+9. Do NOT add any CSS, JavaScript, or wrapper divs.
+10. Do NOT explain or comment — output ONLY the HTML.
+11. Use standard LaTeX notation: subscripts _{}, superscripts ^{}, fractions \frac{}{}, summations \sum, etc.
+12. For bold section labels within a paragraph (like "Locality" or "Unitarity"), use <strong>.
+13. Preserve citation references like [15] as-is in the text.
+
+Output the HTML content for this single page. Start directly with the first HTML element.

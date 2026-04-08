@@ -1,0 +1,88 @@
+<%- include('partials/header') %>
+<%- include('partials/nav') %>
+
+<main class="upload-page">
+  <div class="upload-container">
+    <div class="upload-hero">
+      <h1>Add to Your Library</h1>
+      <p class="upload-subtitle">Upload academic books and papers in PDF format</p>
+    </div>
+
+    <!-- Drop Zone -->
+    <div class="drop-zone" id="dropZone">
+      <div class="drop-zone-content" id="dropContent">
+        <div class="drop-icon">
+          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </div>
+        <p class="drop-text">Drag and drop your PDF here</p>
+        <p class="drop-divider">or</p>
+        <label class="browse-btn" for="fileInput">Browse Files</label>
+        <input type="file" id="fileInput" accept=".pdf" hidden>
+        <p class="drop-hint">PDF files up to 200 MB</p>
+      </div>
+
+      <!-- Upload Progress (hidden by default) -->
+      <div class="upload-progress" id="uploadProgress" style="display: none;">
+        <div class="file-info">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+          <div class="file-details">
+            <span class="file-name" id="fileName"></span>
+            <span class="file-size" id="fileSize"></span>
+          </div>
+        </div>
+
+        <div class="progress-section">
+          <div class="progress-header">
+            <span class="progress-label" id="progressLabel">Uploading...</span>
+            <span class="progress-pct" id="progressPct">0%</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="progressFill"></div>
+          </div>
+          <p class="progress-detail" id="progressDetail"></p>
+        </div>
+      </div>
+
+      <!-- Success State -->
+      <div class="upload-success" id="uploadSuccess" style="display: none;">
+        <div class="success-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+            <polyline points="22 4 12 14.01 9 11.01"/>
+          </svg>
+        </div>
+        <h2 class="success-title" id="successTitle">Processing complete</h2>
+        <p class="success-detail" id="successDetail"></p>
+        <div class="success-actions">
+          <a class="btn btn-primary" id="openBookBtn" href="/library">Open in Reader</a>
+          <button class="btn btn-secondary" id="uploadAnotherBtn">Upload Another</button>
+        </div>
+      </div>
+
+      <!-- Error State -->
+      <div class="upload-error" id="uploadError" style="display: none;">
+        <div class="error-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="15" y1="9" x2="9" y2="15"/>
+            <line x1="9" y1="9" x2="15" y2="15"/>
+          </svg>
+        </div>
+        <h2 class="error-title">Upload Failed</h2>
+        <p class="error-detail" id="errorDetail"></p>
+        <button class="btn btn-secondary" id="retryBtn">Try Again</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="/js/upload.js"></script>
+</body>
+</html>

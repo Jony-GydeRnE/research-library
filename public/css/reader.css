@@ -1,0 +1,735 @@
+/* ═══════════════════════════════════════════════════
+   Gyde Reader — Clean, beautiful reading experience
+   ═══════════════════════════════════════════════════ */
+
+/* ─── THEME VARIABLES ────────────────────────────── */
+
+:root[data-theme="light"],
+:root:not([data-theme]) {
+  --r-bg: #faf9f6;
+  --r-surface: #ffffff;
+  --r-text: #2c2c2c;
+  --r-text-muted: #777;
+  --r-heading: #1a1a1a;
+  --r-border: #e8e6e2;
+  --r-sidebar-bg: #f5f4f0;
+  --r-sidebar-hover: #ebe9e4;
+  --r-header-bg: #ffffff;
+  --r-header-border: #e8e6e2;
+  --r-nav-btn-bg: #f0eeea;
+  --r-nav-btn-hover: #e4e2dd;
+  --r-link: #2d5a7b;
+  --r-active-bg: #e8f0f7;
+  --r-active-text: #1e4260;
+  --r-equation-bg: #f8f7f4;
+  --r-code-bg: #f3f2ee;
+  --r-selection: rgba(45, 90, 123, 0.15);
+}
+
+:root[data-theme="dark"] {
+  --r-bg: #1a1a1e;
+  --r-surface: #222226;
+  --r-text: #d4d2cc;
+  --r-text-muted: #888;
+  --r-heading: #e8e6e0;
+  --r-border: #333338;
+  --r-sidebar-bg: #1e1e22;
+  --r-sidebar-hover: #2a2a2e;
+  --r-header-bg: #1e1e22;
+  --r-header-border: #2a2a2e;
+  --r-nav-btn-bg: #2a2a2e;
+  --r-nav-btn-hover: #353538;
+  --r-link: #6aabdb;
+  --r-active-bg: rgba(106, 171, 219, 0.12);
+  --r-active-text: #8ac4f0;
+  --r-equation-bg: #252528;
+  --r-code-bg: #252528;
+  --r-selection: rgba(106, 171, 219, 0.2);
+}
+
+/* ─── BASE ───────────────────────────────────────── */
+
+.reader-body {
+  margin: 0;
+  padding: 0;
+  background: var(--r-bg);
+  color: var(--r-text);
+  overflow: hidden;
+  height: 100vh;
+}
+
+.reader-body ::selection {
+  background: var(--r-selection);
+}
+
+/* ─── HEADER ─────────────────────────────────────── */
+
+.reader-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 1rem;
+  background: var(--r-header-bg);
+  border-bottom: 1px solid var(--r-header-border);
+  z-index: 20;
+  position: relative;
+}
+
+.reader-header-left,
+.reader-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.reader-header-center {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.reader-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--r-text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-decoration: none;
+}
+
+.reader-btn:hover {
+  background: var(--r-nav-btn-bg);
+  color: var(--r-text);
+}
+
+.reader-book-title {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--r-text);
+  margin-left: 0.25rem;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reader-page-indicator {
+  font-size: 0.8rem;
+  color: var(--r-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Theme toggle icons */
+[data-theme="light"] .icon-moon,
+:root:not([data-theme]) .icon-moon { display: none; }
+[data-theme="light"] .icon-sun,
+:root:not([data-theme]) .icon-sun { display: block; }
+[data-theme="dark"] .icon-sun { display: none; }
+[data-theme="dark"] .icon-moon { display: block; }
+
+/* View Original toggle */
+.view-original-toggle {
+  margin-left: 0.5rem;
+}
+
+.view-original-toggle.active {
+  background: var(--r-active-bg);
+  color: var(--r-active-text);
+}
+
+/* Original page image view */
+.reader-original {
+  flex: 1;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem;
+  width: 100%;
+  text-align: center;
+}
+
+.reader-original img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+}
+
+/* MathJax error fallback */
+.mathjax-fallback {
+  color: var(--r-text-muted);
+  cursor: pointer;
+  font-style: italic;
+  font-size: 0.9em;
+  padding: 0.15em 0.3em;
+  border-radius: 3px;
+  transition: background 0.15s ease;
+}
+
+.mathjax-fallback:hover {
+  background: var(--r-active-bg);
+  color: var(--r-active-text);
+}
+
+/* ─── LAYOUT ─────────────────────────────────────── */
+
+.reader-layout {
+  display: flex;
+  height: calc(100vh - 48px);
+}
+
+/* ─── SIDEBAR ────────────────────────────────────── */
+
+.reader-sidebar {
+  width: 280px;
+  min-width: 280px;
+  background: var(--r-sidebar-bg);
+  border-right: 1px solid var(--r-border);
+  overflow-y: auto;
+  transition: margin-left 0.25s ease, opacity 0.25s ease;
+  z-index: 10;
+}
+
+.reader-sidebar.collapsed {
+  margin-left: -280px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sidebar-header {
+  padding: 1.25rem 1.25rem 0.75rem;
+  border-bottom: 1px solid var(--r-border);
+}
+
+.sidebar-header h2 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--r-text-muted);
+}
+
+.sidebar-nav {
+  padding: 0.5rem 0;
+}
+
+.sidebar-empty {
+  padding: 1rem 1.25rem;
+}
+
+.sidebar-empty p {
+  font-size: 0.8rem;
+  color: var(--r-text-muted);
+  margin-bottom: 0.75rem;
+}
+
+.page-link {
+  display: block;
+  padding: 0.35rem 1.25rem;
+  font-size: 0.825rem;
+  color: var(--r-text-muted);
+  text-decoration: none;
+  transition: all 0.1s ease;
+}
+
+.page-link:hover {
+  background: var(--r-sidebar-hover);
+  color: var(--r-text);
+}
+
+.page-link.active {
+  background: var(--r-active-bg);
+  color: var(--r-active-text);
+  font-weight: 500;
+}
+
+/* TOC */
+.toc-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.toc-chapter {
+  margin-bottom: 0.15rem;
+}
+
+.toc-link {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 1.25rem;
+  text-decoration: none;
+  color: var(--r-text);
+  transition: all 0.1s ease;
+  border-left: 3px solid transparent;
+}
+
+.toc-link:hover {
+  background: var(--r-sidebar-hover);
+}
+
+.toc-link.active {
+  background: var(--r-active-bg);
+  color: var(--r-active-text);
+  border-left-color: var(--r-link);
+  font-weight: 500;
+}
+
+.chapter-link {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.section-link {
+  font-size: 0.8rem;
+  padding-left: 2rem;
+  font-weight: 400;
+  color: var(--r-text-muted);
+}
+
+.section-link:hover,
+.section-link.active {
+  color: var(--r-active-text);
+}
+
+.toc-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toc-page {
+  font-size: 0.7rem;
+  color: var(--r-text-muted);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.toc-sections {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+/* ─── MAIN READING PANE ─────────────────────────── */
+
+.reader-main {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.reader-content {
+  flex: 1;
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 3rem 2rem 2rem;
+  width: 100%;
+}
+
+/* ─── TYPOGRAPHY — The Heart of the Reader ──────── */
+
+.page-content {
+  font-family: Georgia, 'Times New Roman', 'Palatino Linotype', Palatino, serif;
+  font-size: 1.1rem;
+  line-height: 1.8;
+  color: var(--r-text);
+}
+
+.page-content p {
+  margin-bottom: 1.15em;
+  text-align: justify;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+  text-indent: 0;
+}
+
+/* Paragraphs after another paragraph get a slight indent (academic style) */
+.page-content p + p {
+  text-indent: 1.5em;
+  margin-top: -0.3em; /* tighter when indented */
+}
+
+/* ─── PAPER TITLE / AUTHOR / ABSTRACT (Page 1) ──── */
+
+.paper-title {
+  font-size: 1.65rem;
+  font-weight: 700;
+  color: var(--r-heading);
+  text-align: center;
+  line-height: 1.35;
+  margin: 0 0 1rem;
+  letter-spacing: -0.01em;
+  font-family: Georgia, 'Times New Roman', serif;
+}
+
+.paper-authors {
+  text-align: center;
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: var(--r-text);
+  margin-bottom: 0.3rem;
+  font-family: Georgia, serif;
+}
+
+.paper-affiliations {
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--r-text-muted);
+  font-style: italic;
+  line-height: 1.5;
+  margin-bottom: 1.75rem;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.paper-abstract {
+  margin: 0 2rem 2rem;
+  padding: 1.25rem 1.5rem;
+  background: var(--r-equation-bg);
+  border-left: 3px solid var(--r-border);
+  border-radius: 0 6px 6px 0;
+  font-size: 0.95rem;
+  line-height: 1.7;
+  text-align: justify;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+}
+
+.abstract-label {
+  display: block;
+  font-weight: 700;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--r-text-muted);
+  margin-bottom: 0.5rem;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* Separator after abstract before body */
+.paper-abstract + * {
+  margin-top: 1.5rem;
+}
+
+/* ─── SECTION HEADINGS ───────────────────────────── */
+
+.page-content h1 {
+  font-size: 1.65rem;
+  font-weight: 700;
+  color: var(--r-heading);
+  margin: 0 0 1.25rem;
+  line-height: 1.3;
+}
+
+.page-content h2.section-heading {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--r-heading);
+  margin: 2.5rem 0 0.8rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--r-border);
+  line-height: 1.35;
+  letter-spacing: -0.005em;
+  text-transform: uppercase;
+  font-size: 1rem;
+}
+
+.page-content h3.section-heading {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--r-heading);
+  margin: 2rem 0 0.6rem;
+  line-height: 1.4;
+}
+
+.page-content h4.section-heading {
+  font-size: 1rem;
+  font-weight: 600;
+  font-style: italic;
+  color: var(--r-heading);
+  margin: 1.5rem 0 0.5rem;
+  line-height: 1.4;
+}
+
+/* First heading on page: no top margin */
+.page-content > h2:first-child,
+.page-content > h3:first-child,
+.page-content > h4:first-child {
+  margin-top: 0;
+}
+
+/* After heading, remove paragraph indent */
+.page-content h2 + p,
+.page-content h3 + p,
+.page-content h4 + p {
+  text-indent: 0;
+}
+
+/* ─── EQUATIONS ──────────────────────────────────── */
+
+.math-display {
+  margin: 1.4em 1rem;
+  padding: 1rem 1.5rem;
+  background: var(--r-equation-bg);
+  border-radius: 4px;
+  overflow-x: auto;
+  text-align: center;
+  font-size: 1rem;
+  line-height: 2;
+}
+
+/* MathJax display equations (rendered from \[ \] by vision) */
+mjx-container[display="true"] {
+  display: block !important;
+  margin: 1.4em 0 !important;
+  padding: 0.8rem 1rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+  text-align: center;
+}
+
+/* Tighter spacing when equations follow each other */
+.math-display + .math-display {
+  margin-top: -0.5em;
+}
+
+.math-inline {
+  padding: 0 0.1em;
+}
+
+/* Fix inline math appearing with highlighted/selected background */
+mjx-container {
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+}
+
+mjx-container[display="true"]::selection,
+mjx-container *::selection {
+  background: var(--r-selection);
+}
+
+/* Prevent MathJax from inheriting unexpected text-decoration or backgrounds */
+.page-content mjx-container {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ─── FIGURES AND IMAGES ─────────────────────────── */
+
+.page-figure {
+  margin: 1.5em 0;
+  text-align: center;
+}
+
+.page-figure img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+}
+
+.view-figure-link {
+  display: inline-block;
+  padding: 0.6rem 1.2rem;
+  color: var(--r-link);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-family: -apple-system, sans-serif;
+  border: 1px dashed var(--r-border);
+  border-radius: 6px;
+  margin: 0.5rem 0;
+}
+
+.view-figure-link:hover {
+  background: var(--r-active-bg);
+}
+
+.figure-caption,
+.page-figure figcaption {
+  margin: 0.6rem 1.5rem 1.5rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--r-text-muted);
+  border-top: 1px solid var(--r-border);
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  text-align: left;
+}
+
+/* ─── MISC CONTENT ───────────────────────────────── */
+
+.empty-page {
+  color: var(--r-text-muted);
+  font-style: italic;
+  text-align: center;
+  padding: 4rem 0;
+}
+
+.image-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  margin: 1.5em 0;
+  background: var(--r-equation-bg);
+  border: 1px dashed var(--r-border);
+  border-radius: 6px;
+  color: var(--r-text-muted);
+  font-size: 0.85rem;
+  font-family: -apple-system, sans-serif;
+}
+
+/* ─── REFERENCES ─────────────────────────────────── */
+
+.page-content p:last-child {
+  margin-bottom: 0;
+}
+
+/* ─── PAGE NAVIGATION ────────────────────────────── */
+
+.reader-page-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 700px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 1.5rem 2rem 2.5rem;
+  gap: 1rem;
+}
+
+.page-nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1.2rem;
+  background: var(--r-nav-btn-bg);
+  color: var(--r-text);
+  border: 1px solid var(--r-border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-weight: 500;
+}
+
+.page-nav-btn:hover:not(:disabled) {
+  background: var(--r-nav-btn-hover);
+  border-color: #bbb;
+}
+
+.page-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.page-nav-center {
+  display: flex;
+  align-items: center;
+}
+
+.page-jump {
+  width: 52px;
+  padding: 0.4rem 0.5rem;
+  text-align: center;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--r-border);
+  border-radius: 6px;
+  background: var(--r-surface);
+  color: var(--r-text);
+  font-family: -apple-system, sans-serif;
+}
+
+.page-jump:focus {
+  outline: none;
+  border-color: var(--r-link);
+  box-shadow: 0 0 0 2px rgba(45, 90, 123, 0.15);
+}
+
+/* Hide number input spinners */
+.page-jump::-webkit-inner-spin-button,
+.page-jump::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.page-jump { -moz-appearance: textfield; }
+
+/* ─── SCROLLBAR ──────────────────────────────────── */
+
+.reader-main::-webkit-scrollbar {
+  width: 8px;
+}
+
+.reader-main::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.reader-main::-webkit-scrollbar-thumb {
+  background: var(--r-border);
+  border-radius: 4px;
+}
+
+.reader-main::-webkit-scrollbar-thumb:hover {
+  background: var(--r-text-muted);
+}
+
+.reader-sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.reader-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.reader-sidebar::-webkit-scrollbar-thumb {
+  background: var(--r-border);
+  border-radius: 3px;
+}
+
+/* ─── RESPONSIVE ─────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .reader-sidebar {
+    position: fixed;
+    top: 48px;
+    left: 0;
+    bottom: 0;
+    z-index: 30;
+    box-shadow: 4px 0 20px rgba(0,0,0,0.15);
+  }
+
+  .reader-sidebar.collapsed {
+    margin-left: -280px;
+  }
+
+  .reader-content {
+    padding: 2rem 1.25rem 1.5rem;
+  }
+
+  .reader-page-nav {
+    padding: 1rem 1.25rem 2rem;
+  }
+
+  .reader-book-title {
+    max-width: 160px;
+  }
+
+  .page-content {
+    font-size: 1.05rem;
+    line-height: 1.75;
+  }
+}
