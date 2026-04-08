@@ -9,28 +9,103 @@
   <link rel="stylesheet" href="/css/reader.css">
 </head>
 <body class="app-body">
-  <% var page = 'reader'; %>
-  <%- include('partials/sidebar') %>
+
+  <!-- Single app sidebar with tabs when in reader -->
+  <aside class="app-sidebar" id="appSidebar">
+    <div class="sidebar-top">
+      <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" title="Toggle sidebar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+    </div>
+
+    <!-- Tabs: Contents / Collections -->
+    <div class="sidebar-tabs">
+      <button class="sidebar-tab active" id="tabContents" data-tab="contents">Contents</button>
+      <button class="sidebar-tab" id="tabCollections" data-tab="nav">Collections</button>
+    </div>
+
+    <!-- Tab panel: Contents (TOC) -->
+    <div class="sidebar-tab-panel" id="panelContents">
+      <nav class="sidebar-nav">
+        <% if (toc.length === 0) { %>
+          <div class="sidebar-empty" style="padding:0.5rem 0.75rem;">
+            <div class="sidebar-pages">
+              <% for (let i = 1; i <= (book.pageCount || 1); i++) { %>
+                <a href="#" class="page-link <%= i === pageNumber ? 'active' : '' %>" data-page="<%= i %>">Page <%= i %></a>
+              <% } %>
+            </div>
+          </div>
+        <% } else { %>
+          <ul class="toc-list">
+            <% toc.forEach(function(chapter) { %>
+              <li class="toc-chapter">
+                <a href="#" class="toc-link chapter-link <%= chapter.page === pageNumber ? 'active' : '' %>" data-page="<%= chapter.page %>">
+                  <span class="toc-title"><%= chapter.title %></span>
+                  <span class="toc-page"><%= chapter.page %></span>
+                </a>
+                <% if (chapter.sections && chapter.sections.length > 0) { %>
+                  <ul class="toc-sections">
+                    <% chapter.sections.forEach(function(section) { %>
+                      <li><a href="#" class="toc-link section-link <%= section.page === pageNumber ? 'active' : '' %>" data-page="<%= section.page %>"><span class="toc-title"><%= section.title %></span><span class="toc-page"><%= section.page %></span></a></li>
+                    <% }); %>
+                  </ul>
+                <% } %>
+              </li>
+            <% }); %>
+          </ul>
+        <% } %>
+      </nav>
+    </div>
+
+    <!-- Tab panel: Collections/Chats nav -->
+    <div class="sidebar-tab-panel" id="panelNav" style="display:none;">
+      <nav class="sidebar-nav-main" style="padding:0 0.4rem;">
+        <a href="/chats" class="sidebar-nav-item">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <span class="nav-label">Chats</span>
+        </a>
+        <a href="/collections" class="sidebar-nav-item">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          <span class="nav-label">Collections</span>
+        </a>
+      </nav>
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-context" style="padding:0 0.4rem;">
+        <div class="sidebar-section-label"><span class="nav-label">Collections</span></div>
+        <% (collections || []).forEach(function(col) { %>
+          <a href="/collection/<%= col._id %>" class="sidebar-context-item">
+            <span class="col-dot" style="background:<%= col.color %>"></span>
+            <span class="nav-label"><%= col.title %></span>
+          </a>
+        <% }); %>
+      </div>
+    </div>
+
+    <div class="sidebar-bottom">
+      <div class="sidebar-user">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span class="nav-label">Jonathan Valenzuela</span>
+      </div>
+    </div>
+  </aside>
 
   <div class="reader-wrapper">
     <header class="reader-header">
       <div class="reader-header-left">
-        <button class="reader-btn" id="sidebarSwapBtn" title="Toggle between app sidebar and contents">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-        </button>
+        <a href="/collections" class="reader-btn" title="Back to library">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+        </a>
         <span class="reader-book-title"><%= book.title || 'Untitled' %></span>
       </div>
       <div class="reader-header-center">
         <div class="reader-mode-toggle" id="modeToggle">
           <button class="mode-btn active" id="modePagesBtn" data-mode="pages">Pages</button>
           <button class="mode-btn" id="modeScrollBtn" data-mode="scroll">Scroll</button>
+          <button class="mode-btn" id="modePdfBtn" data-mode="pdf">PDF</button>
         </div>
         <span class="reader-page-indicator" id="pageIndicator">
           Page <span id="currentPageNum"><%= pageNumber %></span> of <span id="totalPages"><%= book.pageCount || '?' %></span>
         </span>
-        <button class="reader-btn view-original-toggle" id="viewOriginalToggle" title="View original page image">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-        </button>
       </div>
       <div class="reader-header-right">
         <button class="reader-btn theme-toggle" id="themeToggle" title="Toggle dark mode">
@@ -40,80 +115,44 @@
       </div>
     </header>
 
-    <div class="reader-layout">
-      <aside class="reader-sidebar" id="readerSidebar">
-        <div class="sidebar-header"><h2>Contents</h2></div>
-        <nav class="sidebar-nav">
-          <% if (toc.length === 0) { %>
-            <div class="sidebar-empty">
-              <p>No chapters detected</p>
-              <div class="sidebar-pages">
-                <% for (let i = 1; i <= (book.pageCount || 1); i++) { %>
-                  <a href="#" class="page-link <%= i === pageNumber ? 'active' : '' %>" data-page="<%= i %>">Page <%= i %></a>
-                <% } %>
-              </div>
-            </div>
-          <% } else { %>
-            <ul class="toc-list">
-              <% toc.forEach(function(chapter) { %>
-                <li class="toc-chapter">
-                  <a href="#" class="toc-link chapter-link <%= chapter.page === pageNumber ? 'active' : '' %>" data-page="<%= chapter.page %>">
-                    <span class="toc-title"><%= chapter.title %></span>
-                    <span class="toc-page"><%= chapter.page %></span>
-                  </a>
-                  <% if (chapter.sections && chapter.sections.length > 0) { %>
-                    <ul class="toc-sections">
-                      <% chapter.sections.forEach(function(section) { %>
-                        <li><a href="#" class="toc-link section-link <%= section.page === pageNumber ? 'active' : '' %>" data-page="<%= section.page %>"><span class="toc-title"><%= section.title %></span><span class="toc-page"><%= section.page %></span></a></li>
-                      <% }); %>
-                    </ul>
-                  <% } %>
-                </li>
-              <% }); %>
-            </ul>
-          <% } %>
-        </nav>
-      </aside>
+    <main class="reader-main" id="readerMain">
+      <!-- Pages mode -->
+      <div class="reader-content" id="readerContent">
+        <% if (page && page.htmlContent) { %>
+          <%- page.htmlContent %>
+        <% } else { %>
+          <div class="page-content"><p class="empty-page">No content available for this page.</p></div>
+        <% } %>
+      </div>
 
-      <main class="reader-main" id="readerMain">
-        <!-- Pages mode: single page -->
-        <div class="reader-content" id="readerContent">
-          <% if (page && page.htmlContent) { %>
-            <%- page.htmlContent %>
-          <% } else { %>
-            <div class="page-content"><p class="empty-page">No content available for this page.</p></div>
-          <% } %>
+      <!-- Scroll mode -->
+      <div class="reader-scroll-content" id="readerScrollContent" style="display:none;"></div>
+
+      <!-- PDF mode (original page image) -->
+      <div class="reader-original" id="readerOriginal" style="display:none;">
+        <img id="originalPageImg" src="/images/<%= book._id %>/page-<%= pageNumber %>.png" alt="Page original">
+      </div>
+
+      <!-- Page nav (pages + pdf modes) -->
+      <div class="reader-page-nav" id="readerPageNav">
+        <button class="page-nav-btn prev-btn" id="prevBtn" <%= pageNumber <= 1 ? 'disabled' : '' %>>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+          Previous
+        </button>
+        <div class="page-nav-center">
+          <input type="number" class="page-jump" id="pageJump" value="<%= pageNumber %>" min="1" max="<%= book.pageCount || 1 %>">
         </div>
+        <button class="page-nav-btn next-btn" id="nextBtn" <%= pageNumber >= (book.pageCount || 1) ? 'disabled' : '' %>>
+          Next
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      </div>
+    </main>
 
-        <!-- Scroll mode: all pages (loaded dynamically) -->
-        <div class="reader-scroll-content" id="readerScrollContent" style="display:none;"></div>
-
-        <!-- Original page image view -->
-        <div class="reader-original" id="readerOriginal" style="display:none;">
-          <img id="originalPageImg" src="/images/<%= book._id %>/page-<%= pageNumber %>.png" alt="Page original">
-        </div>
-
-        <!-- Page navigation (pages mode only) -->
-        <div class="reader-page-nav" id="readerPageNav">
-          <button class="page-nav-btn prev-btn" id="prevBtn" <%= pageNumber <= 1 ? 'disabled' : '' %>>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
-            Previous
-          </button>
-          <div class="page-nav-center">
-            <input type="number" class="page-jump" id="pageJump" value="<%= pageNumber %>" min="1" max="<%= book.pageCount || 1 %>">
-          </div>
-          <button class="page-nav-btn next-btn" id="nextBtn" <%= pageNumber >= (book.pageCount || 1) ? 'disabled' : '' %>>
-            Next
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-          </button>
-        </div>
-      </main>
-    </div>
-
-    <!-- Input bar for reader context -->
-    <div class="input-bar" id="readerInputBar">
+    <!-- Input bar -->
+    <div class="input-bar">
       <div class="input-bar-inner">
-        <button class="input-attach-btn" disabled title="Attach files (coming soon)">
+        <button class="input-attach-btn" disabled title="Attach (coming soon)">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
         </button>
         <input type="text" class="input-field" id="readerInputField" placeholder="Ask about this page..." autocomplete="off">
@@ -143,8 +182,9 @@
             document.querySelectorAll('mjx-container[data-mjx-error]').forEach(function(el) {
               var fb = document.createElement('span');
               fb.className = 'mathjax-fallback';
-              fb.textContent = '[equation \u2014 view original page]';
-              fb.addEventListener('click', function() { document.getElementById('viewOriginalToggle')?.click(); });
+              fb.textContent = '[equation \u2014 view original]';
+              fb.style.cssText = 'color:var(--r-text-muted);cursor:pointer;font-style:italic;font-size:0.85em;';
+              fb.addEventListener('click', function() { document.getElementById('modePdfBtn')?.click(); });
               el.replaceWith(fb);
             });
           });
@@ -155,48 +195,33 @@
   <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
   <script src="/js/reader.js"></script>
 
-  <!-- Sidebar swap: hamburger cycles between app sidebar, TOC sidebar, and none -->
+  <!-- Sidebar toggle + tabs -->
   <script>
   (function() {
-    var appSidebar = document.getElementById('appSidebar');
-    var tocSidebar = document.getElementById('readerSidebar');
-    var swapBtn = document.getElementById('sidebarSwapBtn');
-    var collapseBtn = document.getElementById('sidebarCollapseBtn');
-    // States: 'toc' (default in reader), 'app', 'none'
-    var state = localStorage.getItem('gyde-reader-sidebar-state') || 'toc';
+    var sidebar = document.getElementById('appSidebar');
+    var btn = document.getElementById('sidebarCollapseBtn');
+    var key = 'gyde-sidebar-state';
+    if (localStorage.getItem(key) === 'collapsed') sidebar.classList.add('collapsed');
+    btn.addEventListener('click', function() {
+      sidebar.classList.toggle('collapsed');
+      localStorage.setItem(key, sidebar.classList.contains('collapsed') ? 'collapsed' : 'open');
+    });
 
-    function apply() {
-      if (state === 'app') {
-        appSidebar.classList.remove('collapsed');
-        tocSidebar.classList.add('collapsed');
-      } else if (state === 'toc') {
-        appSidebar.classList.add('collapsed');
-        tocSidebar.classList.remove('collapsed');
-      } else {
-        appSidebar.classList.add('collapsed');
-        tocSidebar.classList.add('collapsed');
-      }
-    }
-
-    function cycle() {
-      if (state === 'toc') state = 'app';
-      else if (state === 'app') state = 'none';
-      else state = 'toc';
-      localStorage.setItem('gyde-reader-sidebar-state', state);
-      apply();
-    }
-
-    apply();
-    swapBtn.addEventListener('click', cycle);
-    // The app sidebar's own collapse button also cycles
-    collapseBtn.addEventListener('click', function(e) {
-      e.stopPropagation();
-      cycle();
+    // Tabs
+    var tabs = document.querySelectorAll('.sidebar-tab');
+    var panels = { contents: document.getElementById('panelContents'), nav: document.getElementById('panelNav') };
+    tabs.forEach(function(tab) {
+      tab.addEventListener('click', function() {
+        tabs.forEach(function(t) { t.classList.remove('active'); });
+        tab.classList.add('active');
+        Object.values(panels).forEach(function(p) { p.style.display = 'none'; });
+        panels[tab.dataset.tab].style.display = '';
+      });
     });
   })();
   </script>
 
-  <!-- Reader input bar (context-aware) -->
+  <!-- Reader input bar -->
   <script>
   (function() {
     var R = window.__READER__;
@@ -208,23 +233,11 @@
       fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: text,
-          context: 'reader',
-          bookId: R.bookId,
-          bookTitle: R.bookTitle,
-          pageNumber: R.currentPage,
-        }),
-      })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.chatId) window.location.href = '/chat/' + data.chatId;
-      });
+        body: JSON.stringify({ message: text, context: 'reader', bookId: R.bookId, bookTitle: R.bookTitle, pageNumber: R.currentPage }),
+      }).then(function(r) { return r.json(); }).then(function(d) { if (d.chatId) window.location.href = '/chat/' + d.chatId; });
     }
     btn.addEventListener('click', send);
-    field.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-    });
+    field.addEventListener('keydown', function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
   })();
   </script>
 </body>
