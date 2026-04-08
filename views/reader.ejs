@@ -108,12 +108,16 @@
         </div>
       </div>
       <div class="reader-header-right">
+        <button class="reader-btn" id="splitToggleBtn" title="Toggle chat panel">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
+        </button>
         <button class="reader-btn page-turn-btn" id="headerNextBtn" title="Next page">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
         </button>
       </div>
     </header>
 
+    <div class="reader-body-row">
     <main class="reader-main" id="readerMain">
       <!-- Pages mode -->
       <div class="reader-content" id="readerContent">
@@ -136,7 +140,34 @@
       <input type="hidden" id="pageJump" value="<%= pageNumber %>">
     </main>
 
-    <!-- Input bar -->
+    <!-- Draggable divider -->
+    <div class="split-divider" id="splitDivider" style="display:none;"></div>
+
+    <!-- Split chat panel -->
+    <div class="split-chat-panel" id="splitChatPanel" style="display:none;">
+      <div class="split-chat-header">
+        <span class="split-chat-title">Chat</span>
+        <button class="reader-btn" id="splitCloseBtn" title="Close chat panel">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="split-chat-quote" id="splitChatQuote" style="display:none;">
+        <blockquote id="splitQuoteText"></blockquote>
+      </div>
+      <div class="split-chat-messages" id="splitChatMessages"></div>
+      <div class="split-chat-input">
+        <div class="chat-input-wrap">
+          <input type="text" class="chat-input" id="splitChatInput" placeholder="Ask about this text..." autocomplete="off">
+          <button class="chat-send-btn" id="splitChatSendBtn" title="Send">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    </div><!-- .reader-body-row -->
+
+    <!-- Input bar (hidden when split is open) -->
     <div class="input-bar">
       <div class="input-bar-inner">
         <button class="input-attach-btn" disabled title="Attach (coming soon)">
@@ -182,6 +213,7 @@
   <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
   <script src="/js/reader.js"></script>
   <script src="/js/highlights.js"></script>
+  <script src="/js/split-chat.js"></script>
 
   <!-- Sidebar toggle + tabs -->
   <script>

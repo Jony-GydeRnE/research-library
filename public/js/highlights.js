@@ -147,33 +147,27 @@
     hidePopup();
     window.getSelection().removeAllRanges();
 
-    // Save highlight first
-    await fetch('/api/highlights', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        bookId: R.bookId,
-        pageNumber: R.currentPage,
-        startOffset: info.startOffset,
-        endOffset: info.endOffset,
-        text: info.text,
-      }),
-    });
+    // Save highlight
+    try {
+      const res = await fetch('/api/highlights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookId: R.bookId,
+          pageNumber: R.currentPage,
+          startOffset: info.startOffset,
+          endOffset: info.endOffset,
+          text: info.text,
+        }),
+      });
+      const hl = await res.json();
+      applyHighlightToRange(info.range, hl._id);
+    } catch(e) {}
 
-    // Create chat with highlight context
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: 'Explain this passage: "' + info.text.substring(0, 500) + '"',
-        context: 'reader',
-        bookId: R.bookId,
-        pageNumber: R.currentPage,
-        highlightText: info.text,
-      }),
-    });
-    const data = await res.json();
-    if (data.chatId) window.location.href = '/chat/' + data.chatId;
+    // Open split chat panel with the highlighted text as context
+    if (window.__openSplitChat) {
+      window.__openSplitChat(info.text);
+    }
   }
 
   // ─── LOAD EXISTING HIGHLIGHTS ──────────────────────────────────
