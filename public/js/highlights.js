@@ -42,16 +42,29 @@
     popup.querySelector('.hl-note').addEventListener('click', () => {
       if (!pendingInfo) return;
       if (pendingInfo._existingHlId) {
+        var hlId = pendingInfo._existingHlId;
+        var text = pendingInfo.text;
         hidePopup();
-        if (window.__openNotesPanel) window.__openNotesPanel(pendingInfo.text, pendingInfo._existingHlId);
+        // Check if note exists for this highlight
+        fetch('/api/highlights/chat/' + hlId).then(r => r.json()).then(function(data) {
+          // For now, always open notes panel (future: load existing note)
+          if (window.__openNotesPanel) window.__openNotesPanel(text, hlId);
+        }).catch(function() {
+          if (window.__openNotesPanel) window.__openNotesPanel(text, hlId);
+        });
         return;
       }
       openNote(pendingInfo);
     });
-    popup.querySelector('.hl-ask').addEventListener('click', () => {
+    popup.querySelector('.hl-ask').addEventListener('click', (e) => {
       if (!pendingInfo) return;
       if (pendingInfo._existingHlId) {
-        askAIExisting(pendingInfo._existingHlId, pendingInfo.text);
+        // Existing highlight: fetch chats BEFORE doing anything
+        var hlId = pendingInfo._existingHlId;
+        var text = pendingInfo.text;
+        var btnRect = e.target.closest('.hl-btn').getBoundingClientRect();
+        hidePopup();
+        askAIExisting(hlId, text, btnRect);
         return;
       }
       askAI(pendingInfo);
@@ -212,16 +225,21 @@
     }
   }, true);
 
-  // Close popup on outside click
+  // Close popup and dropdown on outside click
   document.addEventListener('mousedown', (e) => {
-    if (popup && !popup.contains(e.target)) {
-      let el = e.target;
-      while (el && el !== document.body) {
-        if (el.tagName === 'MJX-CONTAINER') return;
-        el = el.parentElement;
-      }
-      hidePopup();
+    // Don't close if clicking inside popup or dropdown
+    if (popup && popup.contains(e.target)) return;
+    if (chatDropdown && chatDropdown.contains(e.target)) return;
+
+    // Don't close for MathJax clicks (handled separately)
+    let el = e.target;
+    while (el && el !== document.body) {
+      if (el.tagName === 'MJX-CONTAINER') return;
+      el = el.parentElement;
     }
+
+    if (popup && popup.style.display !== 'none') hidePopup();
+    removeChatDropdown();
   });
 
   // ─── PERSIST HIGHLIGHT ─────────────────────────────────────────
@@ -351,7 +369,7 @@
         const chatsData = await chatsRes.json();
         if (chatsData.chats && chatsData.chats.length > 0) {
           // Show dropdown with existing chats + "New Chat" option
-          showAskAIDropdown(info, savedHlId, chatsData.chats);
+          showAskAIDropdown(info.text, savedHlId, chatsData.chats);
           return;
         }
       } catch(e) {}
@@ -375,16 +393,22 @@
     }
   }
 
-  function showAskAIDropdown(info, hlId, existingChats) {
+  function showAskAIDropdown(text, hlId, existingChats, anchorRect) {
     removeChatDropdown();
     chatDropdown = document.createElement('div');
     chatDropdown.className = 'highlight-chat-dropdown';
 
-    // Position near the highlight popup location or center
-    chatDropdown.style.left = '50%';
-    chatDropdown.style.top = '40%';
-    chatDropdown.style.transform = 'translate(-50%, -50%)';
-    chatDropdown.style.position = 'fixed';
+    // Position below the anchor (the Ask AI button or the highlight mark)
+    if (anchorRect) {
+      chatDropdown.style.position = 'fixed';
+      chatDropdown.style.left = Math.min(anchorRect.left, window.innerWidth - 240) + 'px';
+      chatDropdown.style.top = (anchorRect.bottom + 4) + 'px';
+    } else {
+      chatDropdown.style.position = 'fixed';
+      chatDropdown.style.left = '50%';
+      chatDropdown.style.top = '50%';
+      chatDropdown.style.transform = 'translate(-50%, -50%)';
+    }
 
     // "New Chat" button
     const newBtn = document.createElement('button');
@@ -392,7 +416,7 @@
     newBtn.textContent = '+ New Chat';
     newBtn.addEventListener('click', function() {
       removeChatDropdown();
-      openFreshChat(info.text, hlId);
+      openFreshChat(text, hlId);
     });
     chatDropdown.appendChild(newBtn);
 
@@ -413,19 +437,19 @@
 
   // ─── ASK AI ON EXISTING HIGHLIGHT ───────────────────────────────
 
-  async function askAIExisting(hlId, text) {
-    hidePopup();
-
+  async function askAIExisting(hlId, text, anchorRect) {
+    // Do NOT open split panel yet — check for existing chats first
     try {
       const res = await fetch('/api/highlights/chat/' + hlId);
       const data = await res.json();
       if (data.chats && data.chats.length > 0) {
-        showAskAIDropdown({ text }, hlId, data.chats);
+        // Show dropdown with existing chats + New Chat
+        showAskAIDropdown(text, hlId, data.chats, anchorRect);
         return;
       }
     } catch(e) {}
 
-    // No existing chats — open fresh
+    // No existing chats — open fresh split chat directly
     openFreshChat(text, hlId);
   }
 
