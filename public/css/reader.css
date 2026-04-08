@@ -58,6 +58,15 @@
   height: 100vh;
 }
 
+/* Reader inside the app shell */
+.reader-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
 .reader-body ::selection {
   background: var(--r-selection);
 }

@@ -358,3 +358,148 @@ These come in later phases. The schemas for them are defined now so they never n
 ## When Phase 1 is done
 
 The founder can upload Hartshorne, open it, and read it. Equations render. Chapters are navigable. It feels like a product worth using every day. That is the success condition for Phase 1.
+
+---
+
+# Phase 2 — Full App UI Spec
+
+## DATABASE — Models (Projects merged into Collections)
+
+### Chat.js
+```
+title, messages: [{ role, content, timestamp }], collectionId (ref Collection), bookId (optional), pageNumber (optional), highlightText (optional), createdAt, updatedAt
+```
+
+### Collection.js (absorbs Project fields)
+```
+title, description, instructions (AI context), bookIds: [ref Book], chatIds: [ref Chat], color, createdAt, updatedAt
+```
+
+### Highlight.js
+```
+bookId (ref Book), pageNumber, startOffset: Number, endOffset: Number, text: String, noteId (optional ref Note), chatId (optional ref Chat), color (default yellow), createdAt
+```
+
+### Note.js
+```
+bookId (optional ref Book), pageNumber (optional), highlightId (optional ref Highlight), collectionId (optional ref Collection), title, content (rich text/LaTeX), createdAt, updatedAt
+```
+
+---
+
+## SIDEBAR — Persistent Left Panel (All Pages)
+
+Top section — two nav items with icons:
+- **Chats** — orphan chats not in any collection
+- **Collections** — nested list with chats under each collection, collapsible
+
+Below the nav, show collections list with nested chats under each.
+In Reader: show current book's notes and highlights.
+
+At bottom of sidebar: user name "Jonathan Valenzuela" with settings gear icon.
+
+Sidebar should be collapsible (hamburger menu toggle).
+
+---
+
+## PAGES
+
+### 1. Chats Page (`/chats`)
+- List of all chats, most recent first
+- Each shows: title, first line preview, timestamp, collection badge if linked
+- Click opens full chat view
+- "New Chat" button top right
+
+### 2. Chat View (`/chat/:chatId`)
+- Full screen chat interface
+- Messages displayed with user/assistant styling
+- Input field at bottom with send button
+- AI uses Claude via claudeService — send current chat history as context
+- If chat is linked to a collection, AI also receives collection instructions and book metadata
+- If chat was started from a reader highlight, show the source quote at the top
+
+### 3. Collections Page (`/collections`)
+- Grid of collections in sidebar, main area shows selected collection's books
+- Book covers in a grid with title, author, progress % below each
+- Click a book opens it in reader
+- "New Collection" button, "Add Book" button within each collection
+
+### 4. Collection Detail (`/collection/:collectionId`)
+- Book grid view (covers, titles, progress)
+- Default landing page — first collection shown on app load
+
+### 5. Reader Additions
+
+**Highlighting:**
+- User selects text → popup with: "Add Note", "Ask AI", "Highlight"
+- Saves Highlight record, visually marks text
+- On page load, re-render highlights by wrapping stored offsets
+
+**Note Panel (slides from right):**
+- Rich text editor (contenteditable)
+- LaTeX support via MathJax
+- Highlighted text as blockquote at top
+
+**Split Screen:**
+- Toggle in reader toolbar
+- Reader left 50%, chat/notes panel right 50%
+
+---
+
+## PERSISTENT INPUT FIELD
+
+Fixed at bottom of every page. Context-aware:
+- Chats page → new chat
+- Collection page → new chat in collection (inherits instructions)
+- Collection page → new chat with collection books as context
+- Reader → new chat anchored to book + page + selection
+- Other → general new chat
+
+---
+
+## ROUTES
+
+```
+GET  /                    → redirect to /collections
+GET  /chats               → chats list
+GET  /chat/:chatId        → chat view
+POST /api/chat            → send message (streaming)
+GET  /collections         → collections page
+GET  /collection/:id      → collection detail
+POST /api/collections     → create collection
+PUT  /api/collections/:id → update collection
+POST /api/highlights      → save highlight
+GET  /api/highlights/:bookId/:pageNum → get highlights
+POST /api/notes           → save note
+GET  /api/notes/:bookId   → get notes for book
+```
+
+---
+
+## AI CHAT — claudeService.js
+
+Call Claude API via Anthropic SDK. Context builder sends:
+- System prompt for research assistant
+- Collection instructions (if in collection)
+- Current page text + book metadata (if in reader)
+- Highlight text (if from selection)
+- Chat history
+- Book metadata for library
+- Use streaming (SSE)
+
+---
+
+## BUILD ORDER
+
+1. Create all new models (Chat, Project, Collection, Highlight, Note)
+2. Create routes and controllers for Collections + Collection detail page
+3. Build the sidebar component (shared partial used on every page)
+4. Build the persistent input field component (shared partial)
+5. Build Projects page + Project detail
+6. Build Chats page + Chat view
+7. Build claudeService.js with streaming
+8. Add highlighting to reader (selection → popup → save)
+9. Add note panel to reader (slide from right)
+10. Add split screen toggle to reader
+11. Wire persistent input to create chats in correct context
+12. Update existing library page to be accessible from Collections

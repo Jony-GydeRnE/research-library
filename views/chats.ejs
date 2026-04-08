@@ -1,0 +1,26 @@
+<%- include('partials/layout-start') %>
+
+<div class="chats-page">
+  <div class="collection-topbar">
+    <h1>Chats</h1>
+  </div>
+
+  <% if (chats.length === 0) { %>
+    <div class="empty-state">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <h2>No chats yet</h2>
+      <p>Start a conversation using the input bar below.</p>
+    </div>
+  <% } else { %>
+    <div class="chat-list">
+      <% chats.forEach(function(chat) { %>
+        <a href="/chat/<%= chat._id %>" class="chat-list-item">
+          <div class="chat-item-title"><%= chat.title || 'Untitled Chat' %></div>
+          <div class="chat-item-preview"><%= chat.messages && chat.messages.length > 0 ? chat.messages[chat.messages.length-1].content.substring(0, 100) : '' %></div>
+        </a>
+      <% }); %>
+    </div>
+  <% } %>
+</div>
+
+<%- include('partials/layout-end') %>

@@ -1,120 +1,74 @@
-<%- include('partials/header') %>
-<%- include('partials/nav') %>
+<%- include('partials/layout-start') %>
 
-<main class="library-page">
-  <div class="library-header">
+<div class="collection-page">
+  <div class="collection-topbar">
     <div>
       <h1>Library</h1>
-      <p class="library-count"><%= books.length %> book<%= books.length !== 1 ? 's' : '' %></p>
+      <p style="font-size:0.8rem;color:var(--app-text-muted);margin-top:0.15rem"><%= books.length %> book<%= books.length !== 1 ? 's' : '' %></p>
     </div>
-    <a href="/upload" class="btn btn-primary">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      Upload
-    </a>
+    <div class="topbar-actions">
+      <% if (activeStatus) { %>
+        <a href="/library" class="btn btn-ghost">Clear filter</a>
+      <% } %>
+      <a href="/library?status=processing" class="btn btn-ghost <%= activeStatus === 'processing' ? 'active' : '' %>">Processing</a>
+      <a href="/upload" class="btn btn-primary">Upload</a>
+    </div>
   </div>
 
-  <% if (collections.length > 0 || activeStatus) { %>
-    <div class="library-filters">
-      <a href="/library" class="filter-chip <%= !activeStatus && !activeCollection ? 'active' : '' %>">All</a>
-      <a href="/library?status=ready" class="filter-chip <%= activeStatus === 'ready' ? 'active' : '' %>">Ready</a>
-      <a href="/library?status=processing" class="filter-chip <%= activeStatus === 'processing' ? 'active' : '' %>">Processing</a>
-      <% collections.forEach(function(c) { %>
-        <a href="/library?collection=<%= encodeURIComponent(c) %>" class="filter-chip <%= activeCollection === c ? 'active' : '' %>"><%= c %></a>
-      <% }); %>
-    </div>
-  <% } %>
-
   <% if (books.length === 0) { %>
-    <div class="empty-library">
-      <div class="empty-icon">
-        <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
-          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
-        </svg>
-      </div>
+    <div class="empty-state">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
       <h2>Your library is empty</h2>
       <p>Upload your first book or paper to get started.</p>
       <a href="/upload" class="btn btn-primary">Upload a PDF</a>
     </div>
   <% } else { %>
-    <div class="book-grid">
+    <div class="book-grid collection-grid">
       <% books.forEach(function(book) { %>
-        <% const isReady = book.status === 'ready'; %>
-        <a href="<%= isReady ? '/reader/' + book._id : '#' %>"
-           class="book-card <%= !isReady ? 'disabled' : '' %>"
-           data-book-id="<%= book._id %>"
-           data-status="<%= book.status %>">
+        <a href="<%= book.status === 'ready' ? '/reader/' + book._id : '#' %>" class="book-card" data-book-id="<%= book._id %>" data-status="<%= book.status %>">
           <div class="book-cover">
-            <% if (book.coverUrl) { %>
-              <img src="<%= book.coverUrl %>" alt="<%= book.title %>">
-            <% } else { %>
-              <div class="cover-placeholder">
-                <div class="cover-spine"></div>
-                <div class="cover-front">
-                  <span class="cover-title"><%= book.title || 'Untitled' %></span>
-                  <% if (book.author) { %>
-                    <span class="cover-author"><%= book.author %></span>
-                  <% } %>
-                </div>
+            <div class="cover-placeholder">
+              <div class="cover-spine"></div>
+              <div class="cover-front">
+                <span class="cover-title"><%= book.title || 'Untitled' %></span>
+                <% if (book.author) { %><span class="cover-author"><%= book.author %></span><% } %>
               </div>
-            <% } %>
+            </div>
             <% if (book.status === 'processing' || book.status === 'uploading') { %>
-              <div class="processing-overlay">
-                <div class="processing-spinner"></div>
-                <span class="processing-pct"><%= book.processingProgress %>%</span>
-              </div>
-            <% } %>
-            <% if (book.status === 'error') { %>
-              <div class="error-overlay">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="10"/>
-                  <line x1="15" y1="9" x2="9" y2="15"/>
-                  <line x1="9" y1="9" x2="15" y2="15"/>
-                </svg>
-              </div>
+              <div class="processing-overlay"><div class="processing-spinner"></div><span class="processing-pct"><%= book.processingProgress %>%</span></div>
             <% } %>
           </div>
           <div class="book-info">
             <h3 class="book-title"><%= book.title || 'Untitled' %></h3>
-            <% if (book.author) { %>
-              <p class="book-author"><%= book.author %></p>
+            <% if (book.author) { %><p class="book-author"><%= book.author %></p><% } %>
+            <% if (book.status === 'ready' && book.pageCount) { %>
+              <span class="book-pages"><%= book.pageCount %> pages</span>
+            <% } else if (book.status === 'processing') { %>
+              <span class="book-pages" style="color:var(--app-accent)">Processing...</span>
             <% } %>
-            <div class="book-meta">
-              <% if (book.status === 'ready' && book.pageCount) { %>
-                <span class="book-pages"><%= book.pageCount %> pages</span>
-              <% } else if (book.status === 'processing') { %>
-                <span class="book-status processing">Processing...</span>
-              <% } else if (book.status === 'error') { %>
-                <span class="book-status error">Error</span>
-              <% } else { %>
-                <span class="book-status uploading">Uploading...</span>
-              <% } %>
-            </div>
           </div>
         </a>
       <% }); %>
     </div>
   <% } %>
-</main>
+</div>
 
 <script>
 (function() {
-  const cards = document.querySelectorAll('.book-card[data-status="processing"], .book-card[data-status="uploading"]');
+  var cards = document.querySelectorAll('.book-card[data-status="processing"], .book-card[data-status="uploading"]');
   if (cards.length === 0) return;
-  const poll = setInterval(async () => {
+  var poll = setInterval(async function() {
     try {
-      const res = await fetch('/library/status');
-      const books = await res.json();
+      var res = await fetch('/library/status');
+      var books = await res.json();
       if (books.length === 0) { clearInterval(poll); location.reload(); return; }
-      books.forEach(book => {
-        const card = document.querySelector('.book-card[data-book-id="' + book._id + '"]');
-        if (!card) return;
-        const pct = card.querySelector('.processing-pct');
-        if (pct) pct.textContent = book.processingProgress + '%';
+      books.forEach(function(book) {
+        var card = document.querySelector('.book-card[data-book-id="' + book._id + '"]');
+        if (card) { var pct = card.querySelector('.processing-pct'); if (pct) pct.textContent = book.processingProgress + '%'; }
       });
     } catch (e) {}
   }, 2000);
 })();
 </script>
-</body>
-</html>
+
+<%- include('partials/layout-end') %>

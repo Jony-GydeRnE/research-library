@@ -1,0 +1,147 @@
+<%- include('partials/layout-start') %>
+
+<div class="collection-page">
+  <div class="collection-topbar">
+    <h1 class="collection-title" contenteditable="true" data-id="<%= activeCollection ? activeCollection._id : '' %>"><%= activeCollection ? activeCollection.title : 'Collections' %></h1>
+    <div class="topbar-actions">
+      <% if (activeCollection) { %>
+        <button class="btn btn-ghost" id="instructionsToggleBtn" title="AI Instructions">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          <span>Instructions</span>
+        </button>
+      <% } %>
+      <button class="btn btn-secondary" id="newCollectionBtn">New Collection</button>
+      <a href="/upload" class="btn btn-primary">Upload</a>
+    </div>
+  </div>
+
+  <% if (activeCollection) { %>
+    <!-- Instructions Panel (hidden by default) -->
+    <div class="instructions-panel" id="instructionsPanel" style="display:none">
+      <textarea class="instructions-textarea" id="instructionsTextarea" placeholder="Write AI context instructions for this collection. These will be included as system context in all chats within this collection."><%= activeCollection.instructions || '' %></textarea>
+      <div class="instructions-actions">
+        <button class="btn btn-primary btn-sm" id="saveInstructionsBtn">Save</button>
+      </div>
+    </div>
+  <% } %>
+
+  <% if (books.length === 0) { %>
+    <div class="empty-state">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      <h2>No books yet</h2>
+      <p>Upload a PDF to get started.</p>
+      <a href="/upload" class="btn btn-primary">Upload a PDF</a>
+    </div>
+  <% } else { %>
+    <div class="book-grid collection-grid">
+      <% books.forEach(function(book) { %>
+        <a href="/reader/<%= book._id %>" class="book-card">
+          <div class="book-cover">
+            <div class="cover-placeholder">
+              <div class="cover-spine"></div>
+              <div class="cover-front">
+                <span class="cover-title"><%= book.title || 'Untitled' %></span>
+                <% if (book.author) { %>
+                  <span class="cover-author"><%= book.author %></span>
+                <% } %>
+              </div>
+            </div>
+            <% if (book.status === 'processing') { %>
+              <div class="processing-overlay">
+                <div class="processing-spinner"></div>
+                <span class="processing-pct"><%= book.processingProgress %>%</span>
+              </div>
+            <% } %>
+          </div>
+          <div class="book-info">
+            <h3 class="book-title"><%= book.title || 'Untitled' %></h3>
+            <% if (book.author) { %>
+              <p class="book-author"><%= book.author %></p>
+            <% } %>
+            <% if (book.pageCount) { %>
+              <span class="book-pages"><%= book.pageCount %> pages</span>
+            <% } %>
+          </div>
+        </a>
+      <% }); %>
+    </div>
+
+    <% if (activeCollection && activeCollection.chats && activeCollection.chats.length > 0) { %>
+      <div class="collection-chats-section">
+        <h3>Chats</h3>
+        <div class="chat-list">
+          <% activeCollection.chats.forEach(function(chat) { %>
+            <a href="/chat/<%= chat._id %>" class="chat-list-item">
+              <div class="chat-item-title"><%= chat.title || 'Untitled Chat' %></div>
+              <div class="chat-item-preview"><%= chat.messages && chat.messages.length > 0 ? chat.messages[chat.messages.length-1].content.substring(0, 80) : '' %></div>
+            </a>
+          <% }); %>
+        </div>
+      </div>
+    <% } %>
+  <% } %>
+</div>
+
+<!-- New Collection Modal -->
+<div class="modal-overlay" id="newCollectionModal" style="display:none">
+  <div class="modal">
+    <h2>New Collection</h2>
+    <input type="text" class="modal-input" id="newCollectionTitle" placeholder="Collection name">
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="document.getElementById('newCollectionModal').style.display='none'">Cancel</button>
+      <button class="btn btn-primary" id="createCollectionBtn">Create</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  // New Collection
+  document.getElementById('newCollectionBtn')?.addEventListener('click', function() {
+    document.getElementById('newCollectionModal').style.display = '';
+    document.getElementById('newCollectionTitle').focus();
+  });
+  document.getElementById('sidebarNewCollectionBtn')?.addEventListener('click', function() {
+    document.getElementById('newCollectionModal').style.display = '';
+    document.getElementById('newCollectionTitle').focus();
+  });
+  document.getElementById('createCollectionBtn')?.addEventListener('click', function() {
+    var title = document.getElementById('newCollectionTitle').value.trim();
+    if (!title) return;
+    fetch('/collections/api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title }) })
+      .then(function(r) { return r.json(); })
+      .then(function(data) { window.location.href = '/collection/' + data._id; });
+  });
+  document.getElementById('newCollectionTitle')?.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') document.getElementById('createCollectionBtn').click();
+  });
+
+  // Inline title editing
+  var titleEl = document.querySelector('.collection-title[contenteditable]');
+  if (titleEl) {
+    titleEl.addEventListener('blur', function() {
+      var id = titleEl.dataset.id;
+      if (!id) return;
+      fetch('/collections/api/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: titleEl.textContent.trim() }) });
+    });
+    titleEl.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); titleEl.blur(); }
+    });
+  }
+
+  // Instructions toggle
+  document.getElementById('instructionsToggleBtn')?.addEventListener('click', function() {
+    var panel = document.getElementById('instructionsPanel');
+    panel.style.display = panel.style.display === 'none' ? '' : 'none';
+  });
+  document.getElementById('saveInstructionsBtn')?.addEventListener('click', function() {
+    var id = titleEl?.dataset.id;
+    if (!id) return;
+    var text = document.getElementById('instructionsTextarea').value;
+    fetch('/collections/api/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ instructions: text }) })
+      .then(function() { document.getElementById('instructionsPanel').style.display = 'none'; });
+  });
+})();
+</script>
+
+<%- include('partials/layout-end') %>

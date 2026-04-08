@@ -1,119 +1,117 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title><%= title %> — Gyde Reader</title>
   <link rel="stylesheet" href="/css/main.css">
+  <link rel="stylesheet" href="/css/app.css">
   <link rel="stylesheet" href="/css/reader.css">
   <script>
     (function() {
-      var theme = localStorage.getItem('gyde-reader-theme') || 'light';
+      var theme = localStorage.getItem('gyde-reader-theme') || 'dark';
       document.documentElement.setAttribute('data-theme', theme);
     })();
   </script>
 </head>
-<body class="reader-body">
+<body class="app-body">
+  <%- include('partials/sidebar', { page: 'reader' }) %>
 
-  <header class="reader-header">
-    <div class="reader-header-left">
-      <button class="reader-btn sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-      </button>
-      <a href="/library" class="reader-btn back-btn" title="Back to library">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
-      </a>
-      <span class="reader-book-title"><%= book.title || 'Untitled' %></span>
-    </div>
-    <div class="reader-header-center">
-      <span class="reader-page-indicator">
-        Page <span id="currentPageNum"><%= pageNumber %></span> of <span id="totalPages"><%= book.pageCount || '?' %></span>
-      </span>
-      <button class="reader-btn view-original-toggle" id="viewOriginalToggle" title="Toggle original page image">
-        <svg class="icon-img" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-      </button>
-    </div>
-    <div class="reader-header-right">
-      <button class="reader-btn theme-toggle" id="themeToggle" title="Toggle dark mode">
-        <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-        <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      </button>
-    </div>
-  </header>
-
-  <div class="reader-layout">
-    <aside class="reader-sidebar" id="readerSidebar">
-      <div class="sidebar-header">
-        <h2>Contents</h2>
+  <div class="reader-wrapper">
+    <header class="reader-header">
+      <div class="reader-header-left">
+        <button class="reader-btn sidebar-toggle" id="readerSidebarToggle" title="Toggle contents">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <a href="/collections" class="reader-btn back-btn" title="Back to library">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+        </a>
+        <span class="reader-book-title"><%= book.title || 'Untitled' %></span>
       </div>
-      <nav class="sidebar-nav" id="sidebarNav">
-        <% if (toc.length === 0) { %>
-          <div class="sidebar-empty">
-            <p>No chapters detected</p>
-            <div class="sidebar-pages">
-              <% for (let i = 1; i <= (book.pageCount || 1); i++) { %>
-                <a href="#" class="page-link <%= i === pageNumber ? 'active' : '' %>" data-page="<%= i %>">Page <%= i %></a>
-              <% } %>
-            </div>
-          </div>
-        <% } else { %>
-          <ul class="toc-list">
-            <% toc.forEach(function(chapter) { %>
-              <li class="toc-chapter">
-                <a href="#" class="toc-link chapter-link <%= chapter.page === pageNumber ? 'active' : '' %>" data-page="<%= chapter.page %>">
-                  <span class="toc-title"><%= chapter.title %></span>
-                  <span class="toc-page"><%= chapter.page %></span>
-                </a>
-                <% if (chapter.sections && chapter.sections.length > 0) { %>
-                  <ul class="toc-sections">
-                    <% chapter.sections.forEach(function(section) { %>
-                      <li>
-                        <a href="#" class="toc-link section-link <%= section.page === pageNumber ? 'active' : '' %>" data-page="<%= section.page %>">
-                          <span class="toc-title"><%= section.title %></span>
-                          <span class="toc-page"><%= section.page %></span>
-                        </a>
-                      </li>
-                    <% }); %>
-                  </ul>
+      <div class="reader-header-center">
+        <span class="reader-page-indicator">
+          Page <span id="currentPageNum"><%= pageNumber %></span> of <span id="totalPages"><%= book.pageCount || '?' %></span>
+        </span>
+        <button class="reader-btn view-original-toggle" id="viewOriginalToggle" title="Toggle original page image">
+          <svg class="icon-img" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        </button>
+      </div>
+      <div class="reader-header-right">
+        <button class="reader-btn theme-toggle" id="themeToggle" title="Toggle dark mode">
+          <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="reader-layout">
+      <aside class="reader-sidebar" id="readerSidebar">
+        <div class="sidebar-header"><h2>Contents</h2></div>
+        <nav class="sidebar-nav" id="sidebarNav">
+          <% if (toc.length === 0) { %>
+            <div class="sidebar-empty">
+              <p>No chapters detected</p>
+              <div class="sidebar-pages">
+                <% for (let i = 1; i <= (book.pageCount || 1); i++) { %>
+                  <a href="#" class="page-link <%= i === pageNumber ? 'active' : '' %>" data-page="<%= i %>">Page <%= i %></a>
                 <% } %>
-              </li>
-            <% }); %>
-          </ul>
-        <% } %>
-      </nav>
-    </aside>
+              </div>
+            </div>
+          <% } else { %>
+            <ul class="toc-list">
+              <% toc.forEach(function(chapter) { %>
+                <li class="toc-chapter">
+                  <a href="#" class="toc-link chapter-link <%= chapter.page === pageNumber ? 'active' : '' %>" data-page="<%= chapter.page %>">
+                    <span class="toc-title"><%= chapter.title %></span>
+                    <span class="toc-page"><%= chapter.page %></span>
+                  </a>
+                  <% if (chapter.sections && chapter.sections.length > 0) { %>
+                    <ul class="toc-sections">
+                      <% chapter.sections.forEach(function(section) { %>
+                        <li>
+                          <a href="#" class="toc-link section-link <%= section.page === pageNumber ? 'active' : '' %>" data-page="<%= section.page %>">
+                            <span class="toc-title"><%= section.title %></span>
+                            <span class="toc-page"><%= section.page %></span>
+                          </a>
+                        </li>
+                      <% }); %>
+                    </ul>
+                  <% } %>
+                </li>
+              <% }); %>
+            </ul>
+          <% } %>
+        </nav>
+      </aside>
 
-    <main class="reader-main">
-      <!-- HTML + MathJax view -->
-      <div class="reader-content" id="readerContent">
-        <% if (page && page.htmlContent) { %>
-          <%- page.htmlContent %>
-        <% } else { %>
-          <div class="page-content">
-            <p class="empty-page">No content available for this page.</p>
-          </div>
-        <% } %>
-      </div>
-
-      <!-- Original page image view (hidden by default) -->
-      <div class="reader-original" id="readerOriginal" style="display: none;">
-        <img id="originalPageImg" src="/images/<%= book._id %>/page-<%= pageNumber %>.png" alt="Page <%= pageNumber %> original">
-      </div>
-
-      <div class="reader-page-nav">
-        <button class="page-nav-btn prev-btn" id="prevBtn" <%= pageNumber <= 1 ? 'disabled' : '' %>>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
-          Previous
-        </button>
-        <div class="page-nav-center">
-          <input type="number" class="page-jump" id="pageJump" value="<%= pageNumber %>" min="1" max="<%= book.pageCount || 1 %>">
+      <main class="reader-main">
+        <div class="reader-content" id="readerContent">
+          <% if (page && page.htmlContent) { %>
+            <%- page.htmlContent %>
+          <% } else { %>
+            <div class="page-content"><p class="empty-page">No content available for this page.</p></div>
+          <% } %>
         </div>
-        <button class="page-nav-btn next-btn" id="nextBtn" <%= pageNumber >= (book.pageCount || 1) ? 'disabled' : '' %>>
-          Next
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-        </button>
-      </div>
-    </main>
+
+        <div class="reader-original" id="readerOriginal" style="display: none;">
+          <img id="originalPageImg" src="/images/<%= book._id %>/page-<%= pageNumber %>.png" alt="Page <%= pageNumber %> original">
+        </div>
+
+        <div class="reader-page-nav">
+          <button class="page-nav-btn prev-btn" id="prevBtn" <%= pageNumber <= 1 ? 'disabled' : '' %>>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+            Previous
+          </button>
+          <div class="page-nav-center">
+            <input type="number" class="page-jump" id="pageJump" value="<%= pageNumber %>" min="1" max="<%= book.pageCount || 1 %>">
+          </div>
+          <button class="page-nav-btn next-btn" id="nextBtn" <%= pageNumber >= (book.pageCount || 1) ? 'disabled' : '' %>>
+            Next
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </div>
+      </main>
+    </div>
   </div>
 
   <script>
@@ -124,28 +122,18 @@
     };
   </script>
 
-  <!-- MathJax 3 -->
   <script>
     window.MathJax = {
-      tex: {
-        inlineMath: [['\\(', '\\)'], ['$', '$']],
-        displayMath: [['\\[', '\\]'], ['$$', '$$']],
-      },
-      options: {
-        skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'],
-      },
+      tex: { inlineMath: [['\\(', '\\)'], ['$', '$']], displayMath: [['\\[', '\\]'], ['$$', '$$']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] },
       startup: {
         pageReady: function () {
           return MathJax.startup.defaultPageReady().then(function() {
-            // MathJax error fallback: replace broken equations with clickable link
             document.querySelectorAll('mjx-container[data-mjx-error]').forEach(function(el) {
               var fallback = document.createElement('span');
               fallback.className = 'mathjax-fallback';
               fallback.textContent = '[equation \u2014 view original page]';
-              fallback.addEventListener('click', function() {
-                var toggle = document.getElementById('viewOriginalToggle');
-                if (toggle) toggle.click();
-              });
+              fallback.addEventListener('click', function() { document.getElementById('viewOriginalToggle')?.click(); });
               el.replaceWith(fallback);
             });
           });
@@ -154,7 +142,20 @@
     };
   </script>
   <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
-
   <script src="/js/reader.js"></script>
+
+  <!-- App sidebar toggle -->
+  <script>
+  (function() {
+    var sidebar = document.getElementById('appSidebar');
+    var btn = document.getElementById('sidebarCollapseBtn');
+    var key = 'gyde-sidebar-state';
+    if (localStorage.getItem(key) === 'collapsed') sidebar.classList.add('collapsed');
+    btn.addEventListener('click', function() {
+      sidebar.classList.toggle('collapsed');
+      localStorage.setItem(key, sidebar.classList.contains('collapsed') ? 'collapsed' : 'open');
+    });
+  })();
+  </script>
 </body>
 </html>

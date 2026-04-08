@@ -1,0 +1,58 @@
+<aside class="app-sidebar" id="appSidebar">
+  <div class="sidebar-top">
+    <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" title="Toggle sidebar">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+  </div>
+
+  <nav class="sidebar-nav-main">
+    <a href="/chats" class="sidebar-nav-item <%= page === 'chats' ? 'active' : '' %>">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <span class="nav-label">Chats</span>
+    </a>
+    <a href="/collections" class="sidebar-nav-item <%= page === 'collections' ? 'active' : '' %>">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      <span class="nav-label">Collections</span>
+    </a>
+  </nav>
+
+  <div class="sidebar-divider"></div>
+
+  <div class="sidebar-context" id="sidebarContext">
+    <div class="sidebar-section-label"><span class="nav-label">Collections</span></div>
+
+    <% if (typeof collections !== 'undefined') { %>
+      <% (collections || []).forEach(function(col) { %>
+        <div class="sidebar-collection-group">
+          <a href="/collection/<%= col._id %>"
+             class="sidebar-context-item collection-item <%= (typeof activeCollection !== 'undefined' && activeCollection && activeCollection._id.toString() === col._id.toString()) ? 'active' : '' %>">
+            <span class="col-dot" style="background:<%= col.color %>"></span>
+            <span class="nav-label"><%= col.title %></span>
+            <svg class="collection-toggle nav-label" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </a>
+          <% if (col.chats && col.chats.length > 0) { %>
+            <div class="sidebar-collection-chats">
+              <% col.chats.slice(0, 5).forEach(function(chat) { %>
+                <a href="/chat/<%= chat._id %>" class="sidebar-chat-item">
+                  <span class="nav-label"><%= chat.title || 'Untitled' %></span>
+                </a>
+              <% }); %>
+            </div>
+          <% } %>
+        </div>
+      <% }); %>
+    <% } %>
+
+    <button class="sidebar-new-btn" id="sidebarNewCollectionBtn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      <span class="nav-label">New Collection</span>
+    </button>
+  </div>
+
+  <div class="sidebar-bottom">
+    <div class="sidebar-user">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="nav-label">Jonathan Valenzuela</span>
+    </div>
+  </div>
+</aside>

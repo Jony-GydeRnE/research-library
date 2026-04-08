@@ -1,0 +1,23 @@
+<%- include('partials/layout-start') %>
+
+<div class="chat-view">
+  <div class="chat-messages" id="chatMessages">
+    <% if (chat.highlightText) { %>
+      <div class="chat-source-quote">
+        <blockquote><%= chat.highlightText %></blockquote>
+      </div>
+    <% } %>
+    <% (chat.messages || []).forEach(function(msg) { %>
+      <div class="chat-message chat-message-<%= msg.role %>">
+        <div class="chat-message-content"><%= msg.content %></div>
+      </div>
+    <% }); %>
+  </div>
+</div>
+
+<script>
+  var msgs = document.getElementById('chatMessages');
+  if (msgs) msgs.scrollTop = msgs.scrollHeight;
+</script>
+
+<%- include('partials/layout-end') %>

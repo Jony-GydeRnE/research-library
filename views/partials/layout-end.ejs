@@ -1,0 +1,16 @@
+    <%- include('input-bar') %>
+  </div><!-- .app-main -->
+  <script>
+  (function() {
+    var sidebar = document.getElementById('appSidebar');
+    var btn = document.getElementById('sidebarCollapseBtn');
+    var key = 'gyde-sidebar-state';
+    if (localStorage.getItem(key) === 'collapsed') sidebar.classList.add('collapsed');
+    btn.addEventListener('click', function() {
+      sidebar.classList.toggle('collapsed');
+      localStorage.setItem(key, sidebar.classList.contains('collapsed') ? 'collapsed' : 'open');
+    });
+  })();
+  </script>
+</body>
+</html>

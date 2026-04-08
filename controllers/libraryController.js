@@ -1,39 +1,33 @@
 const Book = require('../models/Book');
+const { getSidebarData } = require('../services/sidebarData');
 
 exports.showLibrary = async (req, res) => {
   try {
-    const { status, collection } = req.query;
+    const { status } = req.query;
     const filter = {};
     if (status && ['uploading', 'processing', 'ready', 'error'].includes(status)) {
       filter.status = status;
     }
-    if (collection) {
-      filter.collections = collection;
-    }
 
-    const books = await Book.find(filter)
-      .sort({ uploadedAt: -1 })
-      .lean();
-
-    // Gather unique collections for filter UI
-    const allBooks = await Book.find().select('collections').lean();
-    const collections = [...new Set(allBooks.flatMap(b => b.collections || []))].sort();
+    const books = await Book.find(filter).sort({ uploadedAt: -1 }).lean();
+    const sidebar = await getSidebarData();
 
     res.render('library', {
       title: 'Library',
       books,
-      collections,
       activeStatus: status || '',
-      activeCollection: collection || '',
+      page: 'library',
+      ...sidebar,
     });
   } catch (err) {
     console.error('Library error:', err);
     res.render('library', {
       title: 'Library',
       books: [],
-      collections: [],
       activeStatus: '',
-      activeCollection: '',
+      page: 'library',
+      collections: [],
+      orphanChats: [],
     });
   }
 };
