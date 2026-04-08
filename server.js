@@ -51,10 +51,14 @@ app.post('/api/chat', async (req, res) => {
   try {
     const Chat = require('./models/Chat');
     const Collection = require('./models/Collection');
-    const { message, context, contextId } = req.body;
+    const { message, context, contextId, bookId, bookTitle, pageNumber } = req.body;
     const chatData = { messages: [{ role: 'user', content: message }] };
     if (context === 'collections' && contextId) {
       chatData.collectionId = contextId;
+    }
+    if (context === 'reader' && bookId) {
+      chatData.bookId = bookId;
+      if (pageNumber) chatData.pageNumber = pageNumber;
     }
     const chat = await Chat.create(chatData);
     if (chatData.collectionId) {

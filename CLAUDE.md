@@ -428,31 +428,32 @@ Sidebar should be collapsible (hamburger menu toggle).
 - Book grid view (covers, titles, progress)
 - Default landing page — first collection shown on app load
 
-### 5. Reader Additions
+### 5. Reader (`/reader/:bookId`)
 
-**Highlighting:**
-- User selects text → popup with: "Add Note", "Ask AI", "Highlight"
-- Saves Highlight record, visually marks text
-- On page load, re-render highlights by wrapping stored offsets
+**Current features (built):**
+- GPT-4o vision pipeline: every page rendered to PNG then sent through vision for HTML+LaTeX
+- MathJax 3 renders equations inline and display
+- View Original toggle: swap between HTML+MathJax and full-page PNG
+- Pages/Scroll mode toggle: single page or continuous scroll of all pages
+- Sidebar swap: hamburger cycles between app sidebar (Chats/Collections), TOC sidebar, and none
+- Dark mode toggle
+- Keyboard navigation (left/right arrows)
+- Page jump input
+- Bookmark saved to localStorage
 
-**Note Panel (slides from right):**
-- Rich text editor (contenteditable)
-- LaTeX support via MathJax
-- Highlighted text as blockquote at top
-
-**Split Screen:**
-- Toggle in reader toolbar
-- Reader left 50%, chat/notes panel right 50%
+**Future (not yet built):**
+- Highlighting: select text → popup → save Highlight record
+- Note Panel: slide-from-right editor
+- Split Screen: reader left 50%, chat/notes right 50%
 
 ---
 
 ## PERSISTENT INPUT FIELD
 
-Fixed at bottom of every page. Context-aware:
+Fixed at bottom of every page including reader. Context-aware:
 - Chats page → new chat
 - Collection page → new chat in collection (inherits instructions)
-- Collection page → new chat with collection books as context
-- Reader → new chat anchored to book + page + selection
+- Reader → new chat anchored to book + page (bookId, pageNumber passed as context)
 - Other → general new chat
 
 ---
@@ -463,7 +464,9 @@ Fixed at bottom of every page. Context-aware:
 GET  /                    → redirect to /collections
 GET  /chats               → chats list
 GET  /chat/:chatId        → chat view
-POST /api/chat            → send message (streaming)
+POST /api/chat            → create new chat
+POST /api/chat/:id/message → send message + stream Claude response (SSE)
+POST /api/chat/:id/respond → stream Claude response for existing messages (SSE)
 GET  /collections         → collections page
 GET  /collection/:id      → collection detail
 POST /api/collections     → create collection
@@ -478,14 +481,19 @@ GET  /api/notes/:bookId   → get notes for book
 
 ## AI CHAT — claudeService.js
 
-Call Claude API via Anthropic SDK. Context builder sends:
-- System prompt for research assistant
-- Collection instructions (if in collection)
-- Current page text + book metadata (if in reader)
-- Highlight text (if from selection)
-- Chat history
-- Book metadata for library
-- Use streaming (SSE)
+Built in `services/claudeService.js`. Uses `@anthropic-ai/sdk` with `claude-sonnet-4-20250514`.
+
+Context builder sends:
+- System prompt (research assistant persona)
+- Collection instructions (if chat belongs to a collection)
+- Current page rawText + book title/author (if chat anchored to reader)
+- Highlighted text (if from selection)
+- Full chat message history
+- Library book list (titles, authors)
+
+Streaming via Anthropic SDK's `.stream()` method, piped as SSE events to the client.
+Chat view: real-time streaming display with "Thinking..." → live chunks → final render.
+Auto-triggers AI response when navigating to a newly created chat from the input bar.
 
 ---
 
