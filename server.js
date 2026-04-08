@@ -43,27 +43,109 @@ app.get('/chat/:chatId', async (req, res) => {
   const chat = await Chat.findById(req.params.chatId).lean();
   if (!chat) return res.redirect('/chats');
   const sidebar = await getSidebarData();
-  res.render('chat', { title: chat.title || 'Chat', page: 'chats', chat, ...sidebar });
+  res.render('chat', { title: chat.title || 'Chat', page: 'chats', chat, hideInputBar: true, ...sidebar });
 });
 
 // API: create chat from input bar
 app.post('/api/chat', async (req, res) => {
   try {
     const Chat = require('./models/Chat');
+    const Collection = require('./models/Collection');
     const { message, context, contextId } = req.body;
     const chatData = { messages: [{ role: 'user', content: message }] };
     if (context === 'collections' && contextId) {
       chatData.collectionId = contextId;
     }
     const chat = await Chat.create(chatData);
-    // Add to collection's chatIds if applicable
     if (chatData.collectionId) {
-      const Collection = require('./models/Collection');
       await Collection.findByIdAndUpdate(chatData.collectionId, { $addToSet: { chatIds: chat._id } });
     }
     res.json({ chatId: chat._id });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// API: send message to existing chat — streaming SSE response
+app.post('/api/chat/:chatId/message', async (req, res) => {
+  try {
+    const Chat = require('./models/Chat');
+    const { streamResponse } = require('./services/claudeService');
+    const { message } = req.body;
+
+    const chat = await Chat.findById(req.params.chatId);
+    if (!chat) return res.status(404).json({ error: 'Chat not found' });
+
+    // Add user message
+    chat.messages.push({ role: 'user', content: message });
+    await chat.save();
+
+    // Stream response via SSE
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+
+    await streamResponse(
+      chat.toObject(),
+      (chunk) => {
+        res.write(`data: ${JSON.stringify({ type: 'chunk', text: chunk })}\n\n`);
+      },
+      async (fullText) => {
+        // Save assistant message
+        chat.messages.push({ role: 'assistant', content: fullText });
+        await chat.save();
+        res.write(`data: ${JSON.stringify({ type: 'done', text: fullText })}\n\n`);
+        res.end();
+      }
+    );
+  } catch (err) {
+    console.error('Chat message error:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    } else {
+      res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
+      res.end();
+    }
+  }
+});
+
+// API: trigger AI response for existing chat (no new user message)
+app.post('/api/chat/:chatId/respond', async (req, res) => {
+  try {
+    const Chat = require('./models/Chat');
+    const { streamResponse } = require('./services/claudeService');
+
+    const chat = await Chat.findById(req.params.chatId);
+    if (!chat) return res.status(404).json({ error: 'Chat not found' });
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+
+    await streamResponse(
+      chat.toObject(),
+      (chunk) => {
+        res.write(`data: ${JSON.stringify({ type: 'chunk', text: chunk })}\n\n`);
+      },
+      async (fullText) => {
+        chat.messages.push({ role: 'assistant', content: fullText });
+        await chat.save();
+        res.write(`data: ${JSON.stringify({ type: 'done', text: fullText })}\n\n`);
+        res.end();
+      }
+    );
+  } catch (err) {
+    console.error('Respond error:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    } else {
+      res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
+      res.end();
+    }
   }
 });
 

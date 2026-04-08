@@ -1,4 +1,6 @@
-    <%- include('input-bar') %>
+    <% if (typeof hideInputBar === 'undefined' || !hideInputBar) { %>
+      <%- include('input-bar') %>
+    <% } %>
   </div><!-- .app-main -->
   <script>
   (function() {
