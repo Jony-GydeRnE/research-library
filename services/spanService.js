@@ -85,9 +85,17 @@ function parseSpanOutput(dslOutput, bookId, pageNumber) {
 
     if (isNaN(sentenceStart)) continue;
 
+    // Known role tags
+    const ROLE_TAGS = new Set([
+      'claim', 'background', 'conjecture', 'result', 'review',
+      'definition', 'equation', 'application', 'citation', 'preview',
+      'proof', 'remark',
+    ]);
+
     // Parse remaining tokens
     const contextTags = [];
     const declarativeTags = [];
+    let role = null;
     let searchClass = 'N';
     let searchConfidence = null;
     const regexFlags = [];
@@ -119,7 +127,13 @@ function parseSpanOutput(dslOutput, bookId, pageNumber) {
         continue;
       }
 
-      // Context tag: lowercase with underscores
+      // Role tag: known single word
+      if (ROLE_TAGS.has(token)) {
+        role = token;
+        continue;
+      }
+
+      // Context tag: lowercase with underscores (not a role)
       if (/^[a-z][a-z0-9_]*$/.test(token)) {
         contextTags.push(token);
         continue;
@@ -132,6 +146,7 @@ function parseSpanOutput(dslOutput, bookId, pageNumber) {
       sentenceStart,
       sentenceEnd,
       contextTags,
+      role,
       declarativeTags,
       searchClass,
       searchConfidence,

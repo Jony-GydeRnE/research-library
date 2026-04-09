@@ -8,7 +8,8 @@ const spanSchema = new mongoose.Schema({
   // Phase 2 span annotation fields
   sentenceStart: { type: Number, required: true },
   sentenceEnd: { type: Number, required: true },
-  contextTags: [String],                    // e.g. ["free_propagator", "definition"]
+  contextTags: [String],                    // e.g. ["free_propagator", "amplitude_zeros"]
+  role: String,                             // claim, background, result, proof, citation, definition, etc.
   declarativeTags: [{
     kind: String,                           // p/a/c/e/r/q/s/k/x/d/v
     targetChunk: Number,

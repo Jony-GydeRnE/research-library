@@ -1107,6 +1107,15 @@ mjx-container {
   gap: 0.4rem;
 }
 
+.span-role-badge {
+  font-size: 0.65rem;
+  background: rgba(99, 187, 62, 0.15);
+  color: #63bb3e;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
 .span-chunk-badge {
   font-size: 0.65rem;
   background: rgba(106,171,219,0.12);

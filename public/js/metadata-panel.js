@@ -146,6 +146,7 @@
         card.className = 'metadata-span-card';
 
         let html = `<div class="span-header">Sentences ${span.sentenceStart}–${span.sentenceEnd}`;
+        if (span.role) html += ` <span class="span-role-badge">${span.role}</span>`;
         if (span.chunk) html += ` <span class="span-chunk-badge">#${span.chunk.chunkIndex} ${span.chunk.structuralType || ''}</span>`;
         html += `</div>`;
 
