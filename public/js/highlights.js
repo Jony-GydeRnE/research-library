@@ -86,7 +86,7 @@
         var text = pendingInfo.text;
         hidePopup();
         if (window.__openMetadataPanel) {
-          window.__openMetadataPanel(text, R.bookId, R.currentPage, pendingInfo._existingHlId);
+          window.__openMetadataPanel(text, R.bookId, R.currentPage, pendingInfo._existingHlId, pendingInfo.startOffset, pendingInfo.endOffset);
         }
         return;
       }
@@ -380,7 +380,7 @@
 
     hidePopup();
     if (window.__openMetadataPanel) {
-      window.__openMetadataPanel(info.text, R.bookId, R.currentPage, hlId);
+      window.__openMetadataPanel(info.text, R.bookId, R.currentPage, hlId, info.startOffset, info.endOffset);
     }
   }
 

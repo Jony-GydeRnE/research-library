@@ -54,7 +54,7 @@
 
   // ─── OPEN / CLOSE ─────────────────────────────────────────────
 
-  function openMetadataPanel(highlightText, bookId, pageNumber, hlId) {
+  function openMetadataPanel(highlightText, bookId, pageNumber, hlId, startOffset, endOffset) {
     const quoteEl = panel.querySelector('.metadata-quote');
     const quoteText = document.getElementById('metadataQuoteText');
     const contentEl = document.getElementById('metadataContent');
@@ -74,8 +74,7 @@
     if (inputBar) inputBar.style.display = 'none';
     applyRatio();
 
-    // Fetch spans
-    fetchAndRender(bookId, pageNumber, highlightText);
+    fetchAndRender(bookId, pageNumber, highlightText, startOffset, endOffset);
   }
 
   function closeMetadataPanel() {
@@ -119,11 +118,15 @@
 
   // ─── FETCH AND RENDER ──────────────────────────────────────────
 
-  async function fetchAndRender(bookId, pageNumber, highlightText) {
+  async function fetchAndRender(bookId, pageNumber, highlightText, startOffset, endOffset) {
     const contentEl = document.getElementById('metadataContent');
 
     try {
-      const res = await fetch(`/api/spans/intersecting?bookId=${bookId}&pageNumber=${pageNumber}`);
+      let url = `/api/spans/intersecting?bookId=${bookId}&pageNumber=${pageNumber}`;
+      if (startOffset !== undefined && endOffset !== undefined) {
+        url += `&startOffset=${startOffset}&endOffset=${endOffset}`;
+      }
+      const res = await fetch(url);
       const spans = await res.json();
 
       if (!spans || spans.length === 0) {
@@ -135,24 +138,20 @@
         return;
       }
 
-      // Filter to spans whose text overlaps with the highlight
-      // For now show all spans on the page (user can scroll)
       contentEl.innerHTML = '';
-
       const hlLower = (highlightText || '').toLowerCase();
 
       for (const span of spans) {
         const card = document.createElement('div');
         card.className = 'metadata-span-card';
 
-        // Sentence range
         let html = `<div class="span-header">Sentences ${span.sentenceStart}–${span.sentenceEnd}`;
         if (span.chunk) html += ` <span class="span-chunk-badge">#${span.chunk.chunkIndex} ${span.chunk.structuralType || ''}</span>`;
         html += `</div>`;
 
-        // Source text from chunk
-        if (span.chunk?.sourceText) {
-          let text = span.chunk.sourceText.substring(0, 300);
+        // Show the span's own text (extracted server-side from sentence range)
+        if (span.spanText) {
+          let text = span.spanText;
           // Bold the highlight portion if found
           if (hlLower && text.toLowerCase().includes(hlLower.substring(0, 40))) {
             const idx = text.toLowerCase().indexOf(hlLower.substring(0, 40));
@@ -163,7 +162,7 @@
           } else {
             text = escapeHtml(text);
           }
-          html += `<div class="span-text">${text}${span.chunk.sourceText.length > 300 ? '...' : ''}</div>`;
+          html += `<div class="span-text">${text}</div>`;
         }
 
         // Context tags
