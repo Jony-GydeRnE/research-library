@@ -70,6 +70,17 @@ app.post('/api/books/:bookId/reprocess-vision', async (req, res) => {
   }
 });
 
+// API: generate embeddings for a book
+app.post('/api/books/:bookId/generate-embeddings', async (req, res) => {
+  try {
+    const { generateEmbeddingsForBook } = require('./services/embeddingService');
+    const result = await generateEmbeddingsForBook(req.params.bookId);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // API: generate chunks for a book
 app.post('/api/books/:bookId/generate-chunks', async (req, res) => {
   try {
