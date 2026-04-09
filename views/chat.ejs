@@ -9,12 +9,16 @@ window.MathJax = {
 </script>
 <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
 
+<%
+  var _chatCollection = (typeof chatCollection !== 'undefined') ? chatCollection : null;
+  var _booksMap = (typeof booksMap !== 'undefined') ? booksMap : {};
+%>
 <div class="chat-view">
   <!-- Breadcrumb header: Collection / Chat ▾ -->
   <div class="chat-breadcrumb-bar">
     <div class="chat-breadcrumb">
-      <% if (chatCollection) { %>
-        <a class="crumb crumb-collection" href="/collection/<%= chatCollection._id %>"><%= chatCollection.title %></a>
+      <% if (_chatCollection) { %>
+        <a class="crumb crumb-collection" href="/collection/<%= _chatCollection._id %>"><%= _chatCollection.title %></a>
         <span class="crumb-sep">/</span>
       <% } else { %>
         <a class="crumb crumb-collection" href="/chats">Chats</a>
@@ -87,7 +91,7 @@ window.MathJax = {
 (function() {
   var chatId = '<%= chat._id %>';
   var collectionIdAtLoad = '<%= chat.collectionId || "" %>';
-  var booksMap = <%- JSON.stringify(typeof booksMap !== 'undefined' ? booksMap : {}) %>;
+  var booksMap = <%- JSON.stringify(_booksMap) %>;
   var messagesEl = document.getElementById('chatMessages');
   var input = document.getElementById('chatInput');
   var sendBtn = document.getElementById('chatSendBtn');
