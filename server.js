@@ -70,6 +70,17 @@ app.post('/api/books/:bookId/reprocess-vision', async (req, res) => {
   }
 });
 
+// API: reprocess regex annotations
+app.post('/api/books/:bookId/reprocess-regex', async (req, res) => {
+  try {
+    const { annotateBook } = require('./services/regexService');
+    const count = await annotateBook(req.params.bookId);
+    res.json({ ok: true, pagesAnnotated: count });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // API: get chat messages (for split panel loading existing chats)
 app.get('/chat/:chatId/api/messages', async (req, res) => {
   try {

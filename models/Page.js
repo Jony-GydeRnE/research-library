@@ -17,7 +17,7 @@ const pageSchema = new mongoose.Schema({
   rawTextLegacy: String,                    // Original pdf-parse text, preserved for highlight re-mapping
   visionProcessed: { type: Boolean, default: false },
   structuralAnnotations: [{                 // Regex-detected signals
-    type: String,                           // "theorem", "definition", "missing_proof", "citation", "equation"
+    kind: String,                           // "theorem", "definition", "missing_proof", "citation", "equation"
     sentenceRange: [Number],
     value: String,                          // e.g. "it is obvious that" or "[AM, Ch. 3]"
   }],

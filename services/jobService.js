@@ -12,6 +12,7 @@ const { extractPages } = require('./pdfService');
 const { getPdfBuffer } = require('./s3Service');
 const { renderPageToImage, convertPageWithVision, isVisionAvailable } = require('./visionService');
 const { detectAndCropFigures } = require('./figureService');
+const { annotateBook } = require('./regexService');
 const pipeline = require('../config/pipeline');
 
 let agenda;
@@ -231,6 +232,10 @@ function defineJobs() {
 
       // Clean up temp PDF
       if (fs.existsSync(pdfTmpPath)) fs.unlinkSync(pdfTmpPath);
+
+      // Run regex pre-annotation (Step 2 — zero cost)
+      console.log(`  Running regex pre-annotation...`);
+      await annotateBook(bookId);
 
       book.status = 'ready';
       book.processingProgress = 100;
