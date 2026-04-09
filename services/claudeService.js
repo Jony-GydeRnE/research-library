@@ -147,6 +147,32 @@ async function buildContext(chat) {
     });
   }
 
+  // ─── ADDITIVE FALLBACKS ────────────────────────────────────────
+  // Scope chooses the PRIMARY framing, but collection and per-book
+  // chunk/span metadata are additive — they should be present even
+  // when a narrower scope was selected.
+
+  // Always include the anchored book's full chunk/span dump if there is one.
+  // Skip when scope === 'collection' because getCollectionContext already
+  // dumps every book in the collection (including this one).
+  if (chat.bookId && scope !== 'collection') {
+    const anchoredBook = await Book.findById(chat.bookId)
+      .select('_id title author summary keyConcepts pageCount')
+      .lean();
+    if (anchoredBook) {
+      const bookMeta = await renderBookMetadata(anchoredBook);
+      if (bookMeta) sections.push({ priority: 5, text: bookMeta });
+    }
+  }
+
+  // Always include collection context (which itself dumps every book's
+  // chunks/spans) if the chat belongs to a collection and we didn't
+  // already build collection scope as the primary.
+  if (chat.collectionId && scope !== 'collection') {
+    const colCtx = await getCollectionContext(chat.collectionId);
+    if (colCtx) sections.push({ priority: 6, text: colCtx });
+  }
+
   // ─── LIBRARY OVERVIEW (always included at lowest priority) ─────
   const libraryCtx = await getLibraryOverview();
   if (libraryCtx) sections.push({ priority: 10, text: libraryCtx });
@@ -166,16 +192,6 @@ async function buildContext(chat) {
   }
 
   console.log(`[claudeService] Final context: ~${totalTokens} tokens, ${sections.length} sections`);
-
-  // ─── TEMPORARY DEBUG ─────────────────────────────────────────
-  console.log('[claudeService] FULL SYSTEM PROMPT LENGTH:', system.length, 'chars, ~' + Math.ceil(system.length/4) + ' tokens');
-  console.log('[claudeService] FIRST 500 CHARS OF CONTEXT:', system.substring(0, 500));
-  console.log('[claudeService] LAST 500 CHARS OF CONTEXT:', system.substring(system.length - 500));
-  console.log('[claudeService] Context includes "spans"?', system.includes('span'));
-  console.log('[claudeService] Context includes "chunk"?', system.includes('chunk'));
-  console.log('[claudeService] Context includes "contextTags"?', system.includes('contextTags'));
-  // ─────────────────────────────────────────────────────────────
-
   return system;
 }
 
