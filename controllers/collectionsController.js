@@ -6,6 +6,11 @@ const { getSidebarData } = require('../services/sidebarData');
 exports.listCollections = async (req, res) => {
   try {
     let collections = await Collection.find().sort({ updatedAt: -1 }).lean();
+    collections.sort((a, b) => {
+      if (a.title === 'All Books') return -1;
+      if (b.title === 'All Books') return 1;
+      return new Date(b.updatedAt) - new Date(a.updatedAt);
+    });
     const allBooks = await Book.find().sort({ uploadedAt: -1 }).lean();
 
     if (collections.length === 0) {
@@ -41,7 +46,12 @@ exports.listCollections = async (req, res) => {
 
 exports.showCollection = async (req, res) => {
   try {
-    const collections = await Collection.find().sort({ updatedAt: -1 }).lean();
+    let collections = await Collection.find().sort({ updatedAt: -1 }).lean();
+    collections.sort((a, b) => {
+      if (a.title === 'All Books') return -1;
+      if (b.title === 'All Books') return 1;
+      return new Date(b.updatedAt) - new Date(a.updatedAt);
+    });
     const collection = await Collection.findById(req.params.id).lean();
     if (!collection) return res.redirect('/collections');
 
@@ -98,6 +108,27 @@ exports.addBookToCollection = async (req, res) => {
     const { bookId } = req.body;
     await Collection.findByIdAndUpdate(req.params.id, { $addToSet: { bookIds: bookId } });
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Remove a book from this collection only (does not delete the book)
+exports.removeBookFromCollection = async (req, res) => {
+  try {
+    const { bookId } = req.body;
+    await Collection.findByIdAndUpdate(req.params.id, { $pull: { bookIds: bookId } });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// List all collections (for picker UIs)
+exports.listAll = async (req, res) => {
+  try {
+    const cols = await Collection.find().select('_id title color').sort({ title: 1 }).lean();
+    res.json(cols);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
