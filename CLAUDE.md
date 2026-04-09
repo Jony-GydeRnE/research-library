@@ -547,27 +547,32 @@ Remaining:
 
 ## FUTURE PHASES
 
-### Phase 3: Vector Embeddings & Semantic Search
-- Embed all chunks and spans using text-embedding-3-small
-- Search bar finds passages by concept across the entire library
-- Similarity-based edge candidates for cross-book linking
+### Phase 2 (current — in progress): Ingestion Pipeline & Metadata Intelligence
+Steps 1-3 DONE: vision processing, regex pre-annotation, surface metadata extraction.
+Steps 4-7 REMAINING:
+- Step 4: @@ Span Generation (core intelligence — LLM-generated span annotations in DSL)
+- Step 5: Chunking & chunk linking (group spans into chunks, link prev/next)
+- Step 6: Quality monitoring (judge model, session management, re-injection)
+- Step 7: Embeddings & search (vector embeddings for chunks/spans, semantic search)
 
-### Phase 4: @@ Span Generation & Edge Resolution
-- Core intelligence: LLM-generated span annotations in compressed DSL format
-- Session-managed quality with judge model monitoring
-- Edge classification and cross-book relationship graph
+### Phase 3: Edge Graph & Cross-Reference Resolution
+- N/L/I/S/B triage of span search classes
+- candidateService: find candidate matches (lexical, embedding, cross-book)
+- classificationService: LLM edge classification (Y/N + relevance + confidence)
+- Typed edges between chunks across books (proves, assumes, contradicts, extends, etc.)
 
-### Phase 5: Knowledge Graph & Visualization
-- Interactive graph view of concept relationships across books
-- "What depends on this?" and "What proves this?" queries
-- Gap detection: find missing proofs, unresolved assumptions
+### Phase 4: AI Research Partner Enhancements
+- Graph display mode in reader (visualize edges from current passage)
+- contextBuilder with edge traversal (follow prerequisite chains)
+- Cached responses for repeated queries
+- Feedback loop: user corrections improve future edge classification
 
-### Phase 6: Advanced AI Features
-- AI-generated summaries per chapter, section, and book
-- "Explain like I'm an undergrad" mode that chains prerequisites
-- Research paper writing assistant that cites from the library
+### Phase 5: Note Ingestion & Crawler
+- Import external notes, annotations, bookmarks
+- Web crawler for referenced papers (follow citations)
+- Auto-download and process cited papers
 
-### Phase 7+: Multi-Format File Support
+### Phase 6+: Multi-Format Files & Advanced Features
 The library accepts ANY file type, not just PDFs. Each format gets its own
 extraction pipeline but feeds into the same metadata/chunk/span/edge system.
 
