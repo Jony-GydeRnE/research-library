@@ -89,7 +89,7 @@ function parseSpanOutput(dslOutput, bookId, pageNumber) {
     const ROLE_TAGS = new Set([
       'claim', 'background', 'conjecture', 'result', 'review',
       'definition', 'equation', 'application', 'citation', 'preview',
-      'proof', 'remark',
+      'proof', 'remark', 'example', 'figure_ref',
     ]);
 
     // Parse remaining tokens

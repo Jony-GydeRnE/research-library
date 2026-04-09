@@ -18,6 +18,8 @@ Format rules:
     preview     = previewing a result that comes later in this paper
     proof       = part of a proof
     remark      = an aside or observation
+    example     = a worked example or concrete instance
+    figure_ref  = referencing or describing a figure/diagram
 - Declarative tags (letter + chunk.tag): relationships to OTHER content
     p=proves, a=assumes, c=contradicts, e=extends, r=prerequisite
     q=equivalent, s=supports, k=special_case, x=example_of, d=data_for, v=figure_ref
