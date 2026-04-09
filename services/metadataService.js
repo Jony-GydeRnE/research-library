@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
 const { normalizeList } = require('./taxonomyService');
+const pipeline = require('../config/pipeline');
 
 const PROMPT_PATH = path.join(__dirname, '..', 'prompts', 'surface-metadata.txt');
 const PROMPT = fs.readFileSync(PROMPT_PATH, 'utf-8');
@@ -34,9 +35,9 @@ async function extractPageMetadata(rawText) {
 
   try {
     const response = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: pipeline.METADATA_MODEL,
       max_tokens: 200,
-      temperature: 0,
+      temperature: pipeline.METADATA_TEMPERATURE,
       messages: [
         { role: 'system', content: PROMPT },
         { role: 'user', content: input },

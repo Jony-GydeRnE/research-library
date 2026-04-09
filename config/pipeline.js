@@ -2,35 +2,58 @@ module.exports = {
   // ─── Phase 1 settings (still in use) ─────────────────────────
   chunkTargetTokens: 400,
   chunkOverlapTokens: 50,
-  qualityJudgeSampleRate: 0.1,
-  qualityThreshold: 6,
   missingProofPhrases: [
     'it is obvious', 'clearly', 'it can be shown',
     'it follows easily', 'one can verify', 'trivially'
   ],
-  crossBookEdgeCandidateTopK: 20,
-  crossBookEdgeLLMTopK: 5,
-  metadataModel: 'gpt-4.1-nano',
-  judgeModel: 'claude-opus-4-6',
-  embeddingModel: 'text-embedding-3-small',
   maxPagesPerJob: 50,
 
-  // ─── Phase 2: Vision processing ──────────────────────────────
-  VISION_PAGES_BATCH_SIZE: 5,
+  // ─── VISION PROCESSING ───────────────────────────────────────
+  VISION_MODEL: process.env.VISION_MODEL || 'gpt-4o',
+  VISION_BATCH_SIZE: 20,
+  VISION_TEMPERATURE: 0.1,
 
-  // ─── Phase 2: Span generation ────────────────────────────────
-  SPAN_SESSION_RESET_THRESHOLD: 6,   // Judge score 0-9; below this triggers session reset
-  SPAN_JUDGE_SAMPLE_RATE: 10,        // Judge every Nth chunk
-  SPAN_SESSION_MAX_CHUNKS: 200,      // Max chunks before forced session reset
+  // ─── SPAN GENERATION ─────────────────────────────────────────
+  SPAN_MODEL: process.env.SPAN_MODEL || 'gpt-4o',
+  SPAN_MAX_SENTENCES_PER_CALL: 30,
+  SPAN_TEMPERATURE: 0.3,
+  SPAN_PROMPT_FULL: 'prompts/span-generation-full.txt',
+  SPAN_PROMPT_SHORT: 'prompts/span-generation-short.txt',
+  SPAN_SESSION_RESET_THRESHOLD: 6,
+  SPAN_JUDGE_SAMPLE_RATE: 10,
+  SPAN_SESSION_MAX_CHUNKS: 200,
 
-  // ─── Phase 2: Embeddings ─────────────────────────────────────
+  // ─── CHUNK DERIVATION ────────────────────────────────────────
+  CHUNK_MAX_SPANS: 3,
+  CHUNK_SPLIT_ON_DECLARATIVE: true,
+  CHUNK_SPLIT_ON_SEARCH_CLASS: true,
+
+  // ─── METADATA EXTRACTION ─────────────────────────────────────
+  METADATA_MODEL: process.env.NANO_MODEL || 'gpt-4o-mini',
+  METADATA_TEMPERATURE: 0.2,
+  METADATA_MAX_TOPICS: 5,
+  METADATA_MAX_CONCEPTS: 5,
+
+  // ─── EMBEDDINGS ──────────────────────────────────────────────
   EMBEDDING_MODEL: 'text-embedding-3-small',
   EMBEDDING_DIMENSIONS: 1536,
 
-  // ─── Phase 3: Edge resolution (define now, use later) ────────
-  STOPPING_CONFIDENCE: 't',          // ~77% on a-z scale
-  MAX_COMPARISONS_PER_SPAN: 5,
-  NANO_ESCALATION_THRESHOLD: 'm',
+  // ─── QUALITY MONITORING ──────────────────────────────────────
+  JUDGE_MODEL: process.env.JUDGE_MODEL || 'claude-opus-4-6',
+  JUDGE_SAMPLE_RATE: 10,
+  JUDGE_RESET_THRESHOLD: 6,
+
+  // ─── CHAT CONTEXT ────────────────────────────────────────────
+  CHAT_CONTEXT_BUDGET: 8000,
+  CHAT_MODEL: 'claude-opus-4-6',
+  CHAT_STREAMING: true,
+  CHAT_MAX_HISTORY: 20,
+
+  // ─── FUTURE: EDGE CLASSIFICATION (Phase 3) ───────────────────
+  EDGE_MODEL: process.env.EDGE_MODEL || 'claude-opus-4-6',
+  EDGE_STOPPING_CONFIDENCE: 't',
+  EDGE_MAX_COMPARISONS: 5,
+  EDGE_NANO_ESCALATION: 'm',
   CANDIDATE_CEILING_I: 5,
   CANDIDATE_CEILING_S: 20,
   CANDIDATE_CEILING_B: 20,
@@ -39,10 +62,4 @@ module.exports = {
   TRANSITIVE_MAX_DEPTH_ASSUMES: 3,
   TRANSITIVE_MAX_DEPTH_EXTENDS: 5,
   TRANSITIVITY_JOB_INTERVAL: '1 hour',
-
-  // ─── Chat context ────────────────────────────────────────────
-  CHAT_CONTEXT_BUDGET: 8000,
-  CHAT_MODEL: 'claude-opus-4-6',
-  CHAT_STREAMING: true,
-  CHAT_MAX_HISTORY: 20,
 };

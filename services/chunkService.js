@@ -6,6 +6,7 @@
 const Chunk = require('../models/Chunk');
 const Span = require('../models/Span');
 const Page = require('../models/Page');
+const pipeline = require('../config/pipeline');
 
 // Structural types that START a new chunk when they appear
 const BOUNDARY_TYPES = new Set(['theorem', 'definition', 'lemma', 'proposition', 'corollary', 'proof', 'example', 'remark']);
@@ -69,8 +70,14 @@ function shouldBreakChunk(currentSpans, nextSpan, pageAnnotations) {
   // Gap of more than 3 sentences = likely new section
   if (nextSpan.sentenceStart - lastSpan.sentenceEnd > 3) return true;
 
-  // Max chunk size: ~15 spans
-  if (currentSpans.length >= 15) return true;
+  // Max spans per chunk (from pipeline config)
+  if (currentSpans.length >= (pipeline.CHUNK_MAX_SPANS || 3)) return true;
+
+  // Spans with declarative tags start new chunks (if configured)
+  if (pipeline.CHUNK_SPLIT_ON_DECLARATIVE && nextSpan.declarativeTags?.length > 0) return true;
+
+  // Spans with L/S/B search class start new chunks (if configured)
+  if (pipeline.CHUNK_SPLIT_ON_SEARCH_CLASS && nextSpan.searchClass && nextSpan.searchClass !== 'N') return true;
 
   return false;
 }

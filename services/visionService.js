@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const OpenAI = require('openai');
+const pipeline = require('../config/pipeline');
 
 const PROMPT_PATH = path.join(__dirname, '..', 'prompts', 'page-to-html.txt');
 const PROMPT_TEMPLATE = fs.readFileSync(PROMPT_PATH, 'utf-8');
@@ -54,7 +55,7 @@ async function convertPageWithVision(pngBuffer, pageNumber, isFirstPage) {
   }
 
   const response = await client.chat.completions.create({
-    model: 'gpt-4o',
+    model: pipeline.VISION_MODEL,
     max_tokens: 4096,
     messages: [
       {

@@ -12,8 +12,9 @@ const Span = require('../models/Span');
 const Page = require('../models/Page');
 const pipeline = require('../config/pipeline');
 
-const FULL_PROMPT = fs.readFileSync(path.join(__dirname, '..', 'prompts', 'span-generation-full.txt'), 'utf-8');
-const SHORT_PROMPT = fs.readFileSync(path.join(__dirname, '..', 'prompts', 'span-generation-short.txt'), 'utf-8');
+// Load prompts from paths in pipeline config
+const FULL_PROMPT = fs.readFileSync(path.join(__dirname, '..', pipeline.SPAN_PROMPT_FULL), 'utf-8');
+const SHORT_PROMPT = fs.readFileSync(path.join(__dirname, '..', pipeline.SPAN_PROMPT_SHORT), 'utf-8');
 
 let openai = null;
 function getOpenAI() {
@@ -156,25 +157,30 @@ async function generateSpansForPage(bookId, pageNumber, rawText, preAnnotations,
   const client = getOpenAI();
   if (!client || !rawText) return [];
 
-  // Number sentences
+  // Number sentences, cap at pipeline limit
   const { numbered, sentences } = numberSentences(rawText);
   if (sentences.length === 0) return [];
 
+  // Truncate to max sentences per call
+  const maxSentences = pipeline.SPAN_MAX_SENTENCES_PER_CALL || 30;
+  const truncatedNumbered = sentences.length > maxSentences
+    ? sentences.slice(0, maxSentences).map(s => `[${s.index}] ${s.text}`).join('\n')
+    : numbered;
+
   // Build input with pre-annotations as hints
-  let input = numbered;
+  let input = truncatedNumbered;
   if (preAnnotations && preAnnotations.length > 0) {
     const hints = preAnnotations.map(a => `  [${a.kind}] ${a.value} (sentence ~${a.sentenceRange?.[0] || '?'})`).join('\n');
     input += `\n\nPre-detected signals:\n${hints}`;
   }
 
-  // Choose prompt
   const systemPrompt = isNewSession ? FULL_PROMPT : SHORT_PROMPT;
 
   try {
     const response = await client.chat.completions.create({
-      model: process.env.SPAN_MODEL || 'gpt-4o',
+      model: pipeline.SPAN_MODEL,
       max_tokens: 500,
-      temperature: 0.2,
+      temperature: pipeline.SPAN_TEMPERATURE,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: input },
@@ -182,6 +188,10 @@ async function generateSpansForPage(bookId, pageNumber, rawText, preAnnotations,
     });
 
     const dslOutput = response.choices[0]?.message?.content || '';
+
+    // Log raw DSL output for debugging
+    console.log(`[spanService] Page ${pageNumber} RAW DSL OUTPUT (${sentences.length} sentences, model: ${pipeline.SPAN_MODEL}):\n${dslOutput}\n---`);
+
     const spanData = parseSpanOutput(dslOutput, bookId, pageNumber);
 
     // Save spans
