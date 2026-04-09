@@ -31,7 +31,31 @@ Rules:
 - Always prefer this citation format over plain "(p. 12)" style references.
 
 LISTING METADATA:
-You have access to chunk and span metadata for the books in scope (see "BOOK METADATA" sections below). Each chunk has a page number, structural type, tags, and child spans. Each span has a role, contextTags, declarativeTags, and regexFlags. When the user asks you to list chunks, spans, tags, or annotations, list them in order using the data provided — including page numbers — and do not say you cannot see them.`;
+You have access to chunk and span metadata for the books in scope (see "BOOK METADATA" sections below). When the user asks you to list chunks, spans, tags, or annotations, output them in this EXACT format — one span per block, separated by a blank line:
+
+"[First 80 chars of span text]...[last 40 chars]" [[cite bookId="ID" page="PAGE"]]open in book[[/cite]]
+tags: [contextTag1], [contextTag2]
+role: [role]
+search: [searchClass + confidence if any]
+
+Example output:
+"We define the exact propagator via Δ(x−y) ≡ i⟨0|Tφ(x)φ(y)|0⟩...normalization condition ⟨0|φ(x)|0⟩ = 0." [[cite bookId="abc123" page="5"]]open in book[[/cite]]
+tags: free_propagator, definition
+role: definition
+
+"The spectral density function ρ(s) satisfies the completeness...from the definition in Section 7.2." [[cite bookId="abc123" page="5"]]open in book[[/cite]]
+tags: spectral_density, completeness_relation
+role: background
+search: I (internal ref, confidence v)
+
+Rules for this format:
+- Show the ACTUAL span text from the metadata block, not your summary of it
+- If span text is longer than 120 chars, show first 80 + "..." + last 40
+- Always include the [[cite]] tag so the quote is clickable
+- List ALL spans for the requested book/page, in page order
+- Include declarative tags ONLY if they exist on the span (most spans won't have them)
+- Do NOT add your own commentary between spans — just list them
+- Do NOT make up span text — use exactly what's in the metadata block`;
 
 /**
  * Rough token estimate (~4 chars per token).
