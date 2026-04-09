@@ -1,0 +1,4 @@
+# Surface Metadata — Nano Model Prompt
+# Extracts topics, concepts, structural type from a text chunk.
+# Uses the cheapest available model for high-throughput tagging.
+# Populated when surface metadata pipeline is built.

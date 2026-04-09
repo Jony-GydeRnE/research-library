@@ -1,0 +1,4 @@
+# Span Generation — Short Prompt (continuation)
+# This prompt is sent for subsequent chunks within the same session.
+# Uses abbreviated instructions since the model already has context.
+# Populated when span generation pipeline is built.

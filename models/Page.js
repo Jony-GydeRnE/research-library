@@ -11,7 +11,18 @@ const pageSchema = new mongoose.Schema({
   hasImages: Boolean,
   imageS3Keys: [String],
   textItems: [{ x: Number, y: Number, w: Number, h: Number }],
-  pdfPageHeight: Number
+  pdfPageHeight: Number,
+
+  // Phase 2 fields
+  rawTextLegacy: String,                    // Original pdf-parse text, preserved for highlight re-mapping
+  visionProcessed: { type: Boolean, default: false },
+  structuralAnnotations: [{                 // Regex-detected signals
+    type: String,                           // "theorem", "definition", "missing_proof", "citation", "equation"
+    sentenceRange: [Number],
+    value: String,                          // e.g. "it is obvious that" or "[AM, Ch. 3]"
+  }],
+  chunkIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Chunk' }],
+  spanIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Span' }],
 });
 
 pageSchema.index({ bookId: 1, pageNumber: 1 });

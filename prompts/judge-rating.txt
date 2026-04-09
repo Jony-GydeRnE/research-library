@@ -1,0 +1,4 @@
+# Judge Rating — Quality Assessment Prompt
+# Sent to the judge model (Claude) to rate span annotation quality 0-9.
+# Used for session management: scores below threshold trigger session reset.
+# Populated when quality monitoring pipeline is built.

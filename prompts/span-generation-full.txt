@@ -1,0 +1,4 @@
+# Span Generation — Full Prompt (with gold-standard examples)
+# This prompt is sent at the START of a new annotation session.
+# See CLAUDE_PHASE2.md for the @@ tagging system specification.
+# Populated when span generation pipeline is built.
