@@ -291,19 +291,18 @@ window.MathJax = {
     return result;
   }
 
-  // Intercept citation link clicks: if a reader split panel/iframe exists,
-  // update it in place; otherwise navigate in the same tab (no new tab).
+  // Intercept citation link clicks: open the split reader panel, or update
+  // it in place if already open. Never navigate away from the chat.
   messagesEl.addEventListener('click', function(e) {
     var link = e.target.closest && e.target.closest('a.chat-cite');
     if (!link) return;
     e.preventDefault();
     var url = link.getAttribute('data-cite-url') || link.getAttribute('href');
     if (!url) return;
-    var readerIframe = document.querySelector('iframe.split-reader-iframe');
-    var readerPanel = document.querySelector('.split-reader-panel iframe');
-    var target = readerIframe || readerPanel;
-    if (target) {
-      target.src = url;
+    if (window.__isSplitReaderOpen && window.__isSplitReaderOpen()) {
+      window.__updateSplitReader(url);
+    } else if (window.__openSplitReader) {
+      window.__openSplitReader(url);
     } else {
       window.location.href = url;
     }
@@ -457,4 +456,5 @@ window.MathJax = {
 .chat-cite-source { display:block; margin-top:0.3rem; font-size:0.72rem; color:var(--app-accent); font-style:normal; }
 </style>
 
+<script src="/js/chat-split-reader.js"></script>
 <%- include('partials/layout-end') %>
