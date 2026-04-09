@@ -6,7 +6,7 @@ const { getSidebarData } = require('../services/sidebarData');
 exports.listCollections = async (req, res) => {
   try {
     let collections = await Collection.find().sort({ updatedAt: -1 }).lean();
-    const allBooks = await Book.find({ status: 'ready' }).sort({ uploadedAt: -1 }).lean();
+    const allBooks = await Book.find().sort({ uploadedAt: -1 }).lean();
 
     if (collections.length === 0) {
       const defaultCol = await Collection.create({
