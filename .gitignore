@@ -6,3 +6,4 @@ uploads/
 *.png
 *.jpg
 *.jpeg
+.tmp.driveupload/
