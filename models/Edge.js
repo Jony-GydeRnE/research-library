@@ -1,5 +1,10 @@
 const mongoose = require('mongoose');
 
+// a-z scale: each letter ≈ 3.84% increment
+// For edge classification OUTPUT: confidence a=most confident, z=least confident
+// For search-class tags on SPANS: confidence a≈4%, z≈100%
+// These are inverted — see config/pipeline.js for mapping if needed
+
 const edgeSchema = new mongoose.Schema({
   fromChunkId: { type: mongoose.Schema.Types.ObjectId, ref: 'Chunk' },
   fromSpanId: { type: mongoose.Schema.Types.ObjectId, ref: 'Span' },
@@ -12,8 +17,8 @@ const edgeSchema = new mongoose.Schema({
     enum: ['proves', 'assumes', 'contradicts', 'extends',
            'prerequisite', 'equivalent', 'uses_definition', 'missing_proof']
   },
-  confidence: Number,
-  relevance: Number,
+  confidence: String,   // single letter a-z (a=most confident)
+  relevance: String,    // single letter a-z
   method: {
     type: String,
     enum: ['lexical', 'embedding', 'llm', 'manual']

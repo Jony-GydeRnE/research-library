@@ -204,6 +204,8 @@ spanIds:             [{ type: mongoose.Schema.Types.ObjectId, ref: 'Span' }],
 
 ### Step 1: Vision-Model Page Processing
 
+> **PHASE 1 INVARIANT EXCEPTION:** Phase 1 treated Page.rawText as immutable ground truth. Phase 2 replaces it with vision-model output (which is strictly better — preserves equations, formatting, structure). The original pdf-parse text is preserved in Page.rawTextLegacy. Phase 1 highlights are re-mapped by matching selectedText against the new rawText. After Phase 2 processing, rawText contains vision output and rawTextLegacy contains the original. Both are permanent.
+
 Upgrade the existing process-book agenda.js job. After pdf-parse runs (Phase 1 behavior), add a second stage:
 
 1. For each page, convert the PDF page to an image (use `pdf-poppler` or `sharp` to rasterize)
