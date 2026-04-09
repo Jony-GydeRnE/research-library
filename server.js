@@ -70,6 +70,17 @@ app.post('/api/books/:bookId/reprocess-vision', async (req, res) => {
   }
 });
 
+// API: reprocess surface metadata
+app.post('/api/books/:bookId/reprocess-metadata', async (req, res) => {
+  try {
+    const { extractBookMetadata } = require('./services/metadataService');
+    const result = await extractBookMetadata(req.params.bookId);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // API: reprocess regex annotations
 app.post('/api/books/:bookId/reprocess-regex', async (req, res) => {
   try {

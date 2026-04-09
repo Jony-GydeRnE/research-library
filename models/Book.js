@@ -19,7 +19,12 @@ const bookSchema = new mongoose.Schema({
   uploadedAt: { type: Date, default: Date.now },
   readyAt: Date,
   collections: [String],
-  tags: [String]
+  tags: [String],
+  keyConcepts: [String],
+  summary: String,
+  chapterSummaries: [{ chapter: String, summary: String, pageStart: Number }],
+  academicLevel: String,
+  documentType: String
 });
 
 bookSchema.index({ isbn: 1 });

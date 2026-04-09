@@ -13,6 +13,7 @@ const { getPdfBuffer } = require('./s3Service');
 const { renderPageToImage, convertPageWithVision, isVisionAvailable } = require('./visionService');
 const { detectAndCropFigures } = require('./figureService');
 const { annotateBook } = require('./regexService');
+const { extractBookMetadata } = require('./metadataService');
 const pipeline = require('../config/pipeline');
 
 let agenda;
@@ -236,6 +237,17 @@ function defineJobs() {
       // Run regex pre-annotation (Step 2 — zero cost)
       console.log(`  Running regex pre-annotation...`);
       await annotateBook(bookId);
+
+      // Run surface metadata extraction (Step 3 — cheap, ~$0.02)
+      if (process.env.OPENAI_API_KEY) {
+        console.log(`  Running surface metadata extraction...`);
+        try {
+          await extractBookMetadata(bookId);
+          console.log(`  Metadata extraction complete.`);
+        } catch (metaErr) {
+          console.warn(`  Metadata extraction failed: ${metaErr.message}`);
+        }
+      }
 
       book.status = 'ready';
       book.processingProgress = 100;

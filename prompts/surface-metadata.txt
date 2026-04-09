@@ -1,4 +1,18 @@
-# Surface Metadata — Nano Model Prompt
-# Extracts topics, concepts, structural type from a text chunk.
-# Uses the cheapest available model for high-throughput tagging.
-# Populated when surface metadata pipeline is built.
+Given this page from an academic STEM paper or textbook, extract structured metadata. Return ONLY valid JSON, no explanation.
+
+{
+  "topics": ["topic1", "topic2"],
+  "concepts": ["concept1", "concept2"],
+  "equations": ["E = mc^2", "\\nabla \\cdot E = \\rho / \\epsilon_0"],
+  "chapterTitle": "Chapter title if this page starts a new chapter, or null",
+  "sectionTitle": "Section title if this page starts a new section, or null",
+  "academicLevel": "undergraduate" or "graduate" or "research"
+}
+
+Rules:
+- Max 5 topics (broad areas: "quantum field theory", "algebraic geometry")
+- Max 5 concepts (specific: "BCFW recursion", "Zariski topology", "amplitude zeros")
+- Equations as LaTeX strings, max 3 most important on this page
+- Use lowercase for topics and concepts
+- If no chapter/section title is visible, set to null
+- academicLevel: "undergraduate" if intro-level, "graduate" if assumes prior knowledge, "research" if original results

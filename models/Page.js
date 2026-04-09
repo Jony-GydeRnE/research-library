@@ -21,6 +21,9 @@ const pageSchema = new mongoose.Schema({
     sentenceRange: [Number],
     value: String,                          // e.g. "it is obvious that" or "[AM, Ch. 3]"
   }],
+  topics: [String],
+  concepts: [String],
+  equations: [String],
   chunkIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Chunk' }],
   spanIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Span' }],
 });
