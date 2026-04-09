@@ -70,6 +70,17 @@ app.post('/api/books/:bookId/reprocess-vision', async (req, res) => {
   }
 });
 
+// API: generate spans for a book
+app.post('/api/books/:bookId/generate-spans', async (req, res) => {
+  try {
+    const { generateSpansForBook } = require('./services/spanService');
+    const result = await generateSpansForBook(req.params.bookId);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // API: reprocess surface metadata
 app.post('/api/books/:bookId/reprocess-metadata', async (req, res) => {
   try {

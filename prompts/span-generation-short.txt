@@ -1,4 +1,4 @@
-# Span Generation — Short Prompt (continuation)
-# This prompt is sent for subsequent chunks within the same session.
-# Uses abbreviated instructions since the model already has context.
-# Populated when span generation pipeline is built.
+Continue annotating in the same DSL format. One line per span:
+SENTENCE_RANGE CONTEXT_TAGS [DECLARATIVE_TAGS] [SEARCH_CLASS]
+
+Annotate this text:
