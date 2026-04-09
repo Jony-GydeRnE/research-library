@@ -542,3 +542,60 @@ Remaining:
 - Upload progress indicator does not live-update in the library/collection view (shows static progress, needs polling)
 - Notes panel live MathJax preview div is hidden (display:none) — needs toggle or always-visible approach
 - Existing highlights may fail to re-render after MathJax typesets (offsets shift when MathJax replaces DOM nodes)
+
+---
+
+## FUTURE PHASES
+
+### Phase 3: Vector Embeddings & Semantic Search
+- Embed all chunks and spans using text-embedding-3-small
+- Search bar finds passages by concept across the entire library
+- Similarity-based edge candidates for cross-book linking
+
+### Phase 4: @@ Span Generation & Edge Resolution
+- Core intelligence: LLM-generated span annotations in compressed DSL format
+- Session-managed quality with judge model monitoring
+- Edge classification and cross-book relationship graph
+
+### Phase 5: Knowledge Graph & Visualization
+- Interactive graph view of concept relationships across books
+- "What depends on this?" and "What proves this?" queries
+- Gap detection: find missing proofs, unresolved assumptions
+
+### Phase 6: Advanced AI Features
+- AI-generated summaries per chapter, section, and book
+- "Explain like I'm an undergrad" mode that chains prerequisites
+- Research paper writing assistant that cites from the library
+
+### Phase 7+: Multi-Format File Support
+The library accepts ANY file type, not just PDFs. Each format gets its own
+extraction pipeline but feeds into the same metadata/chunk/span/edge system.
+
+**Supported formats (future):**
+- PDF (current) → vision processing → pages → chunks
+- CSV/Excel/Numbers → parse rows/columns → each sheet or table = one "page" equivalent → chunks are row groups or named ranges
+- Markdown/Text → split by headers → chunks are sections
+- Images (PNG/JPG) → GPT-4o vision → extracted text/data becomes chunks
+- Code files → AST parsing or section splitting → chunks are functions/classes
+- LaTeX source (.tex) → parse directly (better than PDF extraction)
+- Presentations (PPTX/Keynote) → each slide = one page → vision extraction
+
+**Key principle:** the Chunk is the universal unit. Every format produces Chunks
+with contextTags, embeddings, and sourceText. The edge system doesn't care
+whether a chunk came from a PDF page, an Excel row, or a Markdown section.
+
+**AI-generated artifacts:**
+- The AI can CREATE new files: tables, spreadsheets, presentations
+- It can make a copy of any uploaded Excel/Numbers file, edit it, and return a new version
+- Tables can reference data from other tables or documents in the collection
+- Presentations can pull from all data types (text, equations, experimental data, figures)
+- The AI reasons across formats: finding patterns in experimental CSV data, citing
+  theorems from PDFs, generating LaTeX equations, building summary tables
+
+**UI adaptation:** the reader adapts to file type. PDFs get the current page reader.
+Excel gets a spreadsheet viewer. Markdown gets rendered HTML. Images get a gallery.
+But the chat, highlights, notes, and edge graph work identically across all formats.
+
+**Data reasoning:** the AI should be able to reason with patterns in experimental data,
+generate visualizations, cross-reference numerical results with theoretical predictions
+from papers, and produce publication-ready output combining all sources.
