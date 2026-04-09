@@ -11,6 +11,7 @@ const readerRoutes = require('./routes/reader');
 const collectionsRoutes = require('./routes/collections');
 const highlightsRoutes = require('./routes/highlights');
 const notesRoutes = require('./routes/notes');
+const spansRoutes = require('./routes/spans');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,6 +32,7 @@ app.use('/collections', collectionsRoutes);
 app.use('/collection', collectionsRoutes);
 app.use('/api/highlights', highlightsRoutes);
 app.use('/api/notes', notesRoutes);
+app.use('/api/spans', spansRoutes);
 
 // Chats
 const { getSidebarData } = require('./services/sidebarData');

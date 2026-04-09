@@ -31,6 +31,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         Ask AI
       </button>
+      <button class="hl-btn hl-metadata">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+        Metadata
+      </button>
     `;
     document.body.appendChild(popup);
 
@@ -75,6 +79,19 @@
         return;
       }
       askAI(pendingInfo);
+    });
+    popup.querySelector('.hl-metadata').addEventListener('click', () => {
+      if (!pendingInfo) return;
+      if (pendingInfo._existingHlId) {
+        var text = pendingInfo.text;
+        hidePopup();
+        if (window.__openMetadataPanel) {
+          window.__openMetadataPanel(text, R.bookId, R.currentPage, pendingInfo._existingHlId);
+        }
+        return;
+      }
+      // New highlight: persist first, then open metadata
+      openMetadata(pendingInfo);
     });
 
     return popup;
@@ -340,6 +357,30 @@
 
     if (window.__openNotesPanel) {
       window.__openNotesPanel(info.text, hlId);
+    }
+  }
+
+  // ─── OPEN METADATA ─────────────────────────────────────────────
+
+  async function openMetadata(info) {
+    let hlId = null;
+    try {
+      const res = await fetch('/api/highlights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookId: R.bookId, pageNumber: R.currentPage,
+          startOffset: info.startOffset, endOffset: info.endOffset, text: info.text,
+        }),
+      });
+      const hl = await res.json();
+      hlId = hl._id;
+      if (info.range) applyHighlightToRange(info.range, hl._id);
+    } catch(e) {}
+
+    hidePopup();
+    if (window.__openMetadataPanel) {
+      window.__openMetadataPanel(info.text, R.bookId, R.currentPage, hlId);
     }
   }
 
