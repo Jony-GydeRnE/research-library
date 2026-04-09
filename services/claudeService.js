@@ -249,13 +249,26 @@ async function getCollectionContext(collectionId) {
   if (col.instructions) ctx += `\n\nUser instructions for AI:\n${col.instructions}`;
 
   if (col.bookIds?.length > 0) {
-    const books = await Book.find({ _id: { $in: col.bookIds }, status: 'ready' }).select('_id title author').lean();
-    ctx += `\n\nBooks in this collection:`;
+    const books = await Book.find({ _id: { $in: col.bookIds } }).select('_id title author keyConcepts summary').lean();
+    ctx += `\n\nBooks in this collection (${books.length}):`;
+
+    // Adaptive depth: <=6 books → 3 pages × 1500 chars; >6 books → page 1 × 800 chars
+    const deepMode = books.length <= 6;
+    const maxPages = deepMode ? 3 : 1;
+    const charLimit = deepMode ? 1500 : 800;
+
     for (const b of books.slice(0, 15)) {
-      ctx += `\n  - "${b.title}"${b.author ? ' (' + b.author + ')' : ''}`;
-      // Include first page snippet for each book (brief)
-      const p1 = await Page.findOne({ bookId: b._id, pageNumber: 1 }).select('rawText').lean();
-      if (p1?.rawText) ctx += `\n    Abstract: ${p1.rawText.substring(0, 400)}`;
+      ctx += `\n\n--- Book: "${b.title}" ${b.author ? 'by ' + b.author : ''} ---`;
+      if (b.summary) ctx += `\nSummary: ${b.summary}`;
+      if (b.keyConcepts?.length) ctx += `\nKey concepts: ${b.keyConcepts.slice(0, 8).join(', ')}`;
+
+      const pages = await Page.find({ bookId: b._id, pageNumber: { $lte: maxPages } })
+        .select('pageNumber rawText').sort({ pageNumber: 1 }).lean();
+
+      for (const p of pages) {
+        const text = (p.rawText || '').substring(0, charLimit);
+        if (text) ctx += `\n[Page ${p.pageNumber}]: ${text}`;
+      }
     }
   }
 
@@ -263,9 +276,13 @@ async function getCollectionContext(collectionId) {
 }
 
 async function getLibraryOverview() {
-  const books = await Book.find({ status: 'ready' }).select('title author pageCount').lean();
+  const books = await Book.find().select('title author pageCount keyConcepts').lean();
   if (books.length === 0) return null;
-  const list = books.map(b => `- "${b.title}"${b.author ? ' (' + b.author + ')' : ''}`).join('\n');
+  const list = books.map(b => {
+    let line = `- "${b.title}"${b.author ? ' (' + b.author + ')' : ''}`;
+    if (b.keyConcepts?.length) line += ` [${b.keyConcepts.slice(0, 3).join(', ')}]`;
+    return line;
+  }).join('\n');
   return `Library (${books.length} books):\n${list}`;
 }
 

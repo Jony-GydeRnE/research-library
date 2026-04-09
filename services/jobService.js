@@ -202,7 +202,6 @@ function defineJobs() {
 
         for (const r of results) {
           if (r.html) {
-            // Preserve original rawText in legacy field (only if not already set)
             if (!r.page.rawTextLegacy && r.page.rawText) {
               r.page.rawTextLegacy = r.page.rawText;
             }
@@ -214,6 +213,22 @@ function defineJobs() {
             r.page.hasImages = true;
             r.page.visionProcessed = true;
             await r.page.save();
+
+            // Update book title from page 1 vision output if better
+            if (r.page.pageNumber === 1) {
+              const titleMatch = r.html.match(/<h1[^>]*class="paper-title"[^>]*>([^<]+)<\/h1>/);
+              if (titleMatch) {
+                const visionTitle = titleMatch[1].trim();
+                // Update if vision title is cleaner (no garbled chars)
+                if (visionTitle.length > 5 && !visionTitle.includes('\ufffd')) {
+                  const currentBook = await Book.findById(bookId);
+                  if (currentBook) {
+                    currentBook.title = visionTitle;
+                    await currentBook.save();
+                  }
+                }
+              }
+            }
           } else if (r.error) {
             // Vision failed — keep pdf-parse rawText, log error
             r.page.visionProcessed = false;
