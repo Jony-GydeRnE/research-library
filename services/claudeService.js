@@ -394,8 +394,11 @@ async function renderBookMetadata(book) {
           parts.push('decl=[' + s.declarativeTags.map(d => d.kind + (d.targetChunk != null ? ':' + d.targetChunk : '') + (d.targetTag != null ? '.' + d.targetTag : '')).join(',') + ']');
         }
         if (s.regexFlags?.length) parts.push('flags=[' + s.regexFlags.join(',') + ']');
-        const stext = (s.spanText || '').replace(/\s+/g, ' ').trim().substring(0, 140);
-        out += `\n      • span ${parts.join(' ')}${stext ? ' "' + stext + '"' : ''}`;
+        const stext = (s.spanText || '').replace(/\s+/g, ' ').trim();
+        const displayText = stext.length > 120
+          ? stext.substring(0, 80) + '...' + stext.substring(stext.length - 40)
+          : stext;
+        out += `\n      • span ${parts.join(' ')}${displayText ? ' "' + displayText + '"' : ''}`;
       }
     }
   }

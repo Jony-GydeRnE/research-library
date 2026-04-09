@@ -209,6 +209,20 @@ async function generateSpansForPage(bookId, pageNumber, rawText, preAnnotations,
 
     const spanData = parseSpanOutput(dslOutput, bookId, pageNumber);
 
+    // Materialize spanText from the numbered sentences so the LLM
+    // (and downstream chat context) always has the actual text. The
+    // DSL parser only stores indices, so without this step spanText
+    // would stay null.
+    for (const s of spanData) {
+      if (!s.spanText) {
+        const start = Math.max(0, (s.sentenceStart || 1) - 1);
+        const end = Math.min(sentences.length, s.sentenceEnd || s.sentenceStart || 1);
+        if (end > start) {
+          s.spanText = sentences.slice(start, end).map(x => x.text).join(' ').trim();
+        }
+      }
+    }
+
     // Save spans
     const savedSpans = [];
     for (const s of spanData) {
