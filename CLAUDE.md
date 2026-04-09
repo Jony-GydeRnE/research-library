@@ -1,5 +1,26 @@
 # CLAUDE.md — Gyde Research Library, Phase 1
 
+## Session start instructions (read first, every new session)
+
+This file is automatically loaded at the start of every Claude Code session. Treat the rules below as standing orders — apply them without being asked.
+
+**GitHub workflow — auto-commit and push after every edit**
+- Remote: https://github.com/Jony-GydeRnE/research-library
+- Branch: `main` (tracks `origin/main`)
+- After any code change in this project, automatically:
+  1. Stage the changed files
+  2. Create a commit with a **detailed message** describing what changed and why — use the same level of detail you'd put in a chat summary, not a one-liner. Match the style of existing commits (e.g. `Swap chat split layout, collapse inner sidebar, fuzzier highlight matcher`).
+  3. Push to `origin/main`
+- The commit history is meant to serve as the running log of changes, so the detail that would otherwise live only in chat belongs in the commit message.
+- Do NOT wait for the user to say "commit this" — do it as part of finishing the edit.
+- Still follow git safety: never force-push, never skip hooks, create new commits rather than amending.
+- Only skip the auto-push if the user explicitly says "don't push" or "wait to commit".
+
+**Tone**
+- Be concise in chat. Lead with what you did or what you need. The detailed explanation goes in the commit message, not a long chat recap.
+
+---
+
 ## What we are building
 
 A personal research library. Single user. Upload academic books and papers (PDF), read them in a beautiful HTML-based reader, and lay the data foundation for everything that comes next (highlights, notes, AI, edge graph).
