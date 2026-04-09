@@ -14,6 +14,8 @@ const bookSchema = new mongoose.Schema({
     default: 'uploading'
   },
   processingProgress: { type: Number, default: 0 },
+  processingStatus: { type: String, default: '' },   // e.g. "vision-processing", "complete"
+  visionProgress: { type: String, default: '' },      // e.g. "12/35 pages"
   uploadedAt: { type: Date, default: Date.now },
   readyAt: Date,
   collections: [String],

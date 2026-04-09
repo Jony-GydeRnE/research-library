@@ -49,7 +49,7 @@
             <% if (book.status === 'processing') { %>
               <div class="processing-overlay">
                 <div class="processing-spinner"></div>
-                <span class="processing-pct"><%= book.processingProgress %>%</span>
+                <span class="processing-pct"><%= book.visionProgress || (book.processingProgress + '%') %></span>
               </div>
             <% } %>
           </div>

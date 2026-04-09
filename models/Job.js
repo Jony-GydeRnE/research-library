@@ -5,7 +5,8 @@ const jobSchema = new mongoose.Schema({
   type: {
     type: String,
     enum: ['extract-pdf', 'generate-html', 'generate-metadata',
-           'resolve-edges-local', 'resolve-edges-cross']
+           'resolve-edges-local', 'resolve-edges-cross',
+           'reprocess-vision', 'generate-spans', 'generate-embeddings']
   },
   status: {
     type: String,

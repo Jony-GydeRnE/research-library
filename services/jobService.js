@@ -7,6 +7,7 @@ const Book = require('../models/Book');
 const Page = require('../models/Page');
 const Job = require('../models/Job');
 const ErrorLog = require('../models/ErrorLog');
+const Highlight = require('../models/Highlight');
 const { extractPages } = require('./pdfService');
 const { getPdfBuffer } = require('./s3Service');
 const { renderPageToImage, convertPageWithVision, isVisionAvailable } = require('./visionService');
@@ -17,18 +18,61 @@ let agenda;
 
 async function initAgenda() {
   agenda = new Agenda({
-    db: {
-      address: process.env.MONGODB_URI,
-      collection: 'agendaJobs',
-    },
+    db: { address: process.env.MONGODB_URI, collection: 'agendaJobs' },
     processEvery: '5 seconds',
   });
-
   defineJobs();
   await agenda.start();
   console.log('Agenda job queue started');
   return agenda;
 }
+
+// ─── SHARED: Vision-process a single page ────────────────────────
+
+async function visionProcessPage(pdfTmpPath, page, bookId, isFirstPage) {
+  const pageNum = page.pageNumber;
+  const pngBuffer = await renderPageToImage(pdfTmpPath, pageNum, bookId);
+  let html = await convertPageWithVision(pngBuffer, pageNum, isFirstPage);
+  html = await detectAndCropFigures(html, bookId, pageNum, [], 792);
+
+  const h2 = html.match(/<h2[^>]*>([^<]+)<\/h2>/);
+  const h3 = html.match(/<h3[^>]*>([^<]+)<\/h3>/);
+
+  return { html, chapterTitle: h2 ? h2[1] : null, sectionTitle: h3 ? h3[1] : null };
+}
+
+async function visionProcessWithRetry(pdfTmpPath, page, bookId, isFirstPage) {
+  try {
+    return await visionProcessPage(pdfTmpPath, page, bookId, isFirstPage);
+  } catch (err) {
+    if (err.status === 429) {
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        return await visionProcessPage(pdfTmpPath, page, bookId, isFirstPage);
+      } catch (e2) { return { error: e2.message }; }
+    }
+    return { error: err.message };
+  }
+}
+
+// ─── SHARED: Re-map highlights after rawText changes ─────────────
+
+async function remapHighlights(bookId, pageNumber, newRawText) {
+  const highlights = await Highlight.find({ bookId, pageNumber });
+  for (const hl of highlights) {
+    if (!hl.text || hl.startOffset < 0) continue;
+    const idx = newRawText.indexOf(hl.text);
+    if (idx >= 0) {
+      hl.startOffset = idx;
+      hl.endOffset = idx + hl.text.length;
+      await hl.save();
+    } else {
+      console.warn(`  Highlight re-map failed for page ${pageNumber}: "${hl.text.substring(0, 40)}..." not found in new rawText`);
+    }
+  }
+}
+
+// ─── JOB DEFINITIONS ─────────────────────────────────────────────
 
 function defineJobs() {
 
@@ -47,6 +91,7 @@ function defineJobs() {
       if (!book) throw new Error('Book not found');
 
       book.status = 'processing';
+      book.processingStatus = 'extracting-text';
       await book.save();
 
       const pdfBuffer = await getPdfBuffer(book.s3Key);
@@ -63,12 +108,16 @@ function defineJobs() {
           bookId: book._id,
           pageNumber: p.pageNumber,
           rawText: p.text,
+          rawTextLegacy: p.text,  // preserve original pdf-parse text
           hasEquations: false,
           hasImages: false,
+          visionProcessed: false,
+          textItems: (p.textCoords || []).map(({ x, y, w, h }) => ({ x, y, w, h })),
+          pdfPageHeight: p.pdfPageHeight || 792,
         }));
         await Page.insertMany(pageDocs);
 
-        const progress = Math.round(((i + batch.length) / pages.length) * 50);
+        const progress = Math.round(((i + batch.length) / pages.length) * 25);
         book.processingProgress = progress;
         await book.save();
         jobDoc.progress = progress;
@@ -76,18 +125,14 @@ function defineJobs() {
       }
 
       jobDoc.status = 'done';
-      jobDoc.progress = 50;
+      jobDoc.progress = 25;
       jobDoc.completedAt = new Date();
       await jobDoc.save();
-
-      book.processingProgress = 50;
+      book.processingProgress = 25;
       await book.save();
 
-      const htmlJob = new Job({
-        bookId: book._id,
-        type: 'generate-html',
-        status: 'pending',
-      });
+      // Enqueue vision processing
+      const htmlJob = new Job({ bookId: book._id, type: 'generate-html', status: 'pending' });
       await htmlJob.save();
       await agenda.now('generate-html', { bookId: bookId.toString() });
 
@@ -96,19 +141,12 @@ function defineJobs() {
       jobDoc.error = err.message;
       jobDoc.completedAt = new Date();
       await jobDoc.save();
-
       await Book.findByIdAndUpdate(bookId, { status: 'error' });
-
-      await ErrorLog.create({
-        bookId,
-        jobType: 'extract-pdf',
-        message: err.message,
-        stack: err.stack,
-      });
+      await ErrorLog.create({ bookId, jobType: 'extract-pdf', message: err.message, stack: err.stack });
     }
   });
 
-  // ─── GENERATE HTML ─────────────────────────────────────────────
+  // ─── GENERATE HTML (Vision Processing) ─────────────────────────
   agenda.define('generate-html', async (job) => {
     const { bookId } = job.attrs.data;
     const jobDoc = await Job.findOne({ bookId, type: 'generate-html', status: 'pending' });
@@ -125,18 +163,30 @@ function defineJobs() {
       if (!book) throw new Error('Book not found');
 
       if (!isVisionAvailable()) {
-        throw new Error('OPENAI_API_KEY not configured — vision is required for HTML generation');
+        // No vision key — mark as ready with text-only content
+        book.status = 'ready';
+        book.processingProgress = 100;
+        book.processingStatus = 'complete-text-only';
+        book.readyAt = new Date();
+        await book.save();
+        jobDoc.status = 'done';
+        jobDoc.progress = 100;
+        jobDoc.completedAt = new Date();
+        await jobDoc.save();
+        return;
       }
+
+      book.processingStatus = 'vision-processing';
+      await book.save();
 
       const pages = await Page.find({ bookId }).sort({ pageNumber: 1 });
       const totalPages = pages.length;
 
-      // Save PDF to temp file for Swift renderer
       const pdfBuffer = await getPdfBuffer(book.s3Key);
       pdfTmpPath = path.join(os.tmpdir(), `gyde-${book._id}.pdf`);
       fs.writeFileSync(pdfTmpPath, pdfBuffer);
 
-      // Process pages in parallel batches of 20
+      // Process in parallel batches of 20
       const BATCH = 20;
       let processed = 0;
 
@@ -144,56 +194,50 @@ function defineJobs() {
         const batch = pages.slice(i, i + BATCH);
 
         const results = await Promise.all(batch.map(async (page) => {
-          const pageNum = page.pageNumber;
-          try {
-            const pngBuffer = await renderPageToImage(pdfTmpPath, pageNum, book._id.toString());
-            let html = await convertPageWithVision(pngBuffer, pageNum, pageNum === 1);
-            html = await detectAndCropFigures(html, book._id.toString(), pageNum, page.textItems || [], page.pdfPageHeight || 792);
-            return { page, html };
-          } catch (err) {
-            // Retry once on rate limit
-            if (err.status === 429) {
-              await new Promise(r => setTimeout(r, 2000));
-              try {
-                const pngBuffer = await renderPageToImage(pdfTmpPath, pageNum, book._id.toString());
-                let html = await convertPageWithVision(pngBuffer, pageNum, pageNum === 1);
-                html = await detectAndCropFigures(html, book._id.toString(), pageNum, page.textItems || [], page.pdfPageHeight || 792);
-                return { page, html };
-              } catch (e2) { return { page, html: null, error: e2.message }; }
-            }
-            return { page, html: null, error: err.message };
-          }
+          const result = await visionProcessWithRetry(pdfTmpPath, page, book._id.toString(), page.pageNumber === 1);
+          return { page, ...result };
         }));
 
-        // Save results
         for (const r of results) {
           if (r.html) {
-            const h2 = r.html.match(/<h2[^>]*>([^<]+)<\/h2>/);
-            const h3 = r.html.match(/<h3[^>]*>([^<]+)<\/h3>/);
+            // Preserve original rawText in legacy field (only if not already set)
+            if (!r.page.rawTextLegacy && r.page.rawText) {
+              r.page.rawTextLegacy = r.page.rawText;
+            }
+
             r.page.htmlContent = r.html;
-            if (h2) r.page.chapterTitle = h2[1];
-            if (h3) r.page.sectionTitle = h3[1];
+            if (r.chapterTitle) r.page.chapterTitle = r.chapterTitle;
+            if (r.sectionTitle) r.page.sectionTitle = r.sectionTitle;
             r.page.hasEquations = true;
             r.page.hasImages = true;
+            r.page.visionProcessed = true;
             await r.page.save();
+          } else if (r.error) {
+            // Vision failed — keep pdf-parse rawText, log error
+            r.page.visionProcessed = false;
+            await r.page.save();
+            console.warn(`  Page ${r.page.pageNumber}: vision failed — ${r.error}`);
+            await ErrorLog.create({ bookId, jobType: 'generate-html', message: `Page ${r.page.pageNumber}: ${r.error}` });
           }
           processed++;
         }
 
-        const progress = 50 + Math.round((processed / totalPages) * 50);
-        book.processingProgress = progress;
+        book.processingProgress = 25 + Math.round((processed / totalPages) * 75);
+        book.visionProgress = `${processed}/${totalPages} pages`;
         await book.save();
-        jobDoc.progress = progress;
+        jobDoc.progress = book.processingProgress;
         await jobDoc.save();
       }
 
-      book.status = 'ready';
-      book.processingProgress = 100;
-      book.readyAt = new Date();
-      await book.save();
-
       // Clean up temp PDF
       if (fs.existsSync(pdfTmpPath)) fs.unlinkSync(pdfTmpPath);
+
+      book.status = 'ready';
+      book.processingProgress = 100;
+      book.processingStatus = 'complete';
+      book.visionProgress = `${totalPages}/${totalPages} pages`;
+      book.readyAt = new Date();
+      await book.save();
 
       jobDoc.status = 'done';
       jobDoc.progress = 100;
@@ -208,21 +252,108 @@ function defineJobs() {
       jobDoc.error = err.message;
       jobDoc.completedAt = new Date();
       await jobDoc.save();
-
       await Book.findByIdAndUpdate(bookId, { status: 'error' });
+      await ErrorLog.create({ bookId, jobType: 'generate-html', message: err.message, stack: err.stack });
+    }
+  });
 
-      await ErrorLog.create({
-        bookId,
-        jobType: 'generate-html',
-        message: err.message,
-        stack: err.stack,
-      });
+  // ─── REPROCESS VISION (Phase 2: re-run vision on existing book) ─
+  agenda.define('reprocess-vision', async (job) => {
+    const { bookId } = job.attrs.data;
+    const jobDoc = await Job.findOne({ bookId, type: 'reprocess-vision', status: 'pending' });
+
+    if (jobDoc) {
+      jobDoc.status = 'running';
+      jobDoc.startedAt = new Date();
+      await jobDoc.save();
+    }
+
+    let pdfTmpPath = null;
+
+    try {
+      const book = await Book.findById(bookId);
+      if (!book) throw new Error('Book not found');
+      if (!isVisionAvailable()) throw new Error('OPENAI_API_KEY not configured');
+
+      book.processingStatus = 'vision-processing';
+      await book.save();
+
+      const pages = await Page.find({ bookId }).sort({ pageNumber: 1 });
+      const totalPages = pages.length;
+
+      const pdfBuffer = await getPdfBuffer(book.s3Key);
+      pdfTmpPath = path.join(os.tmpdir(), `gyde-reprocess-${book._id}.pdf`);
+      fs.writeFileSync(pdfTmpPath, pdfBuffer);
+
+      const BATCH = 20;
+      let processed = 0;
+
+      for (let i = 0; i < totalPages; i += BATCH) {
+        const batch = pages.slice(i, i + BATCH);
+
+        const results = await Promise.all(batch.map(async (page) => {
+          const result = await visionProcessWithRetry(pdfTmpPath, page, book._id.toString(), page.pageNumber === 1);
+          return { page, ...result };
+        }));
+
+        for (const r of results) {
+          if (r.html) {
+            // Preserve original in legacy (only if empty)
+            if (!r.page.rawTextLegacy && r.page.rawText) {
+              r.page.rawTextLegacy = r.page.rawText;
+            }
+
+            r.page.htmlContent = r.html;
+            if (r.chapterTitle) r.page.chapterTitle = r.chapterTitle;
+            if (r.sectionTitle) r.page.sectionTitle = r.sectionTitle;
+            r.page.hasEquations = true;
+            r.page.hasImages = true;
+            r.page.visionProcessed = true;
+            await r.page.save();
+
+            // Re-map highlights for this page
+            await remapHighlights(bookId, r.page.pageNumber, r.page.rawText || '');
+          } else if (r.error) {
+            r.page.visionProcessed = false;
+            await r.page.save();
+            console.warn(`  Page ${r.page.pageNumber}: vision reprocess failed — ${r.error}`);
+          }
+          processed++;
+        }
+
+        book.visionProgress = `${processed}/${totalPages} pages`;
+        await book.save();
+        if (jobDoc) { jobDoc.progress = Math.round((processed / totalPages) * 100); await jobDoc.save(); }
+      }
+
+      if (fs.existsSync(pdfTmpPath)) fs.unlinkSync(pdfTmpPath);
+
+      book.processingStatus = 'complete';
+      book.visionProgress = `${totalPages}/${totalPages} pages`;
+      await book.save();
+
+      if (jobDoc) {
+        jobDoc.status = 'done';
+        jobDoc.progress = 100;
+        jobDoc.completedAt = new Date();
+        await jobDoc.save();
+      }
+
+    } catch (err) {
+      if (pdfTmpPath && fs.existsSync(pdfTmpPath)) {
+        try { fs.unlinkSync(pdfTmpPath); } catch(e) {}
+      }
+      if (jobDoc) {
+        jobDoc.status = 'failed';
+        jobDoc.error = err.message;
+        jobDoc.completedAt = new Date();
+        await jobDoc.save();
+      }
+      await ErrorLog.create({ bookId, jobType: 'reprocess-vision', message: err.message, stack: err.stack });
     }
   });
 }
 
-function getAgenda() {
-  return agenda;
-}
+function getAgenda() { return agenda; }
 
 module.exports = { initAgenda, getAgenda };

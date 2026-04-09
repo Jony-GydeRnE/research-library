@@ -50,6 +50,26 @@ app.get('/chat/:chatId', async (req, res) => {
   res.render('chat', { title: chat.title || 'Chat', page: 'chats', chat, hideInputBar: true, ...sidebar });
 });
 
+// API: reprocess book with vision
+app.post('/api/books/:bookId/reprocess-vision', async (req, res) => {
+  try {
+    const Book = require('./models/Book');
+    const Job = require('./models/Job');
+    const { getAgenda } = require('./services/jobService');
+
+    const book = await Book.findById(req.params.bookId);
+    if (!book) return res.status(404).json({ error: 'Book not found' });
+
+    const job = await Job.create({ bookId: book._id, type: 'reprocess-vision', status: 'pending' });
+    const agenda = getAgenda();
+    await agenda.now('reprocess-vision', { bookId: book._id.toString() });
+
+    res.json({ ok: true, jobId: job._id, message: 'Vision reprocessing started' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // API: get chat messages (for split panel loading existing chats)
 app.get('/chat/:chatId/api/messages', async (req, res) => {
   try {
