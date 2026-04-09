@@ -327,6 +327,7 @@ async function start() {
     await initAgenda();
     app.listen(PORT, () => {
       console.log(`${process.env.SITE_NAME} running on port ${PORT}`);
+      console.log('[startup] CHAT_MODEL:', require('./config/pipeline').CHAT_MODEL);
     });
   } catch (err) {
     console.error('Failed to start server:', err);
