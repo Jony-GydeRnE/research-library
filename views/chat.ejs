@@ -210,8 +210,12 @@ window.MathJax = {
     var title = book ? book.title : 'Book';
     // First 20 words of the quote, URL-encoded, for the highlight param
     var highlightWords = c.quote.split(/\s+/).filter(Boolean).slice(0, 20).join(' ');
+    // sidebar=collapsed: when the reader opens inside the chat split view,
+    // the TOC/nav sidebar should be hidden by default so the book fills the
+    // available width. The reader's sidebar script honors this query param.
     var url = '/reader/' + encodeURIComponent(c.bookId) +
               '?page=' + encodeURIComponent(c.page) +
+              '&sidebar=collapsed' +
               '&highlight=' + encodeURIComponent(highlightWords);
     var safeQuote = c.quote.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     var safeTitle = title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

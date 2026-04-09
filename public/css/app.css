@@ -900,20 +900,22 @@
 }
 
 /* ─── CHAT → SPLIT READER PANEL ─────────────────────── */
-/* Right-docked reader iframe opened when a citation in a chat is clicked. */
+/* Middle-docked reader iframe opened when a citation in a chat is clicked.
+   Layout when open: [ app-sidebar | reader panel | divider | chat view ].
+   Both position and width are driven from chat-split-reader.js (JS sets
+   inline `left` / `width` / `--chat-split-left` based on sidebar width). */
 
 .chat-split-reader {
   position: fixed;
   top: 0;
-  right: 0;
+  /* left & width set inline by JS */
   height: 100vh;
-  width: 50%;
   display: flex;
   flex-direction: column;
   background: var(--app-bg);
-  border-left: 1px solid var(--app-border);
+  border-right: 1px solid var(--app-border);
   z-index: 100;
-  box-shadow: -6px 0 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 6px 0 24px rgba(0, 0, 0, 0.35);
 }
 .chat-split-reader-header {
   display: flex;
@@ -959,6 +961,8 @@
   border: none;
   background: var(--app-bg);
 }
+/* Divider: narrow visible line but wide invisible hit area so it stays
+   grabbable even when the panel is near an edge. */
 .chat-split-reader-divider {
   position: fixed;
   top: 0;
@@ -967,11 +971,28 @@
   cursor: col-resize;
   z-index: 101;
   background: transparent;
+}
+.chat-split-reader-divider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -6px;
+  width: 18px;
+  height: 100%;
+}
+.chat-split-reader-divider::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 2px;
+  width: 2px;
+  height: 100%;
+  background: var(--app-border);
   transition: background 0.12s ease;
 }
-.chat-split-reader-divider:hover { background: rgba(var(--app-accent-rgb, 100, 150, 255), 0.35); }
+.chat-split-reader-divider:hover::after { background: var(--app-accent, #6da0ff); }
 
 body.chat-split-open .app-main {
-  margin-right: var(--chat-split-right, 50%);
-  transition: margin-right 0.12s ease;
+  margin-left: var(--chat-split-left, 0px);
+  transition: margin-left 0.12s ease;
 }

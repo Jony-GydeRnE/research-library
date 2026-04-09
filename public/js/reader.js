@@ -218,31 +218,120 @@
 
   function highlightQuoteIn(container, quote, opts) {
     if (!quote || !container) return false;
-    var needle = quote.replace(/\s+/g, ' ').trim();
-    if (!needle) return false;
+
+    // Normalize whitespace, smart quotes, dashes, and case.
+    function norm(s) {
+      return (s || '')
+        .replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u201C\u201D]/g, '"')
+        .replace(/[\u2013\u2014]/g, '-')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+    }
+
+    var normNeedle = norm(quote);
+    if (!normNeedle) return false;
+    var words = normNeedle.split(' ').filter(Boolean);
+
+    // Build a ladder of progressively shorter prefixes. Matching the
+    // longest one that lands inside a single text node usually gives a
+    // clean surroundContents; the shorter fallbacks catch cases where the
+    // AI-supplied quote diverges slightly from the book text (paraphrase,
+    // punctuation, hyphenation) or spans formatting elements.
+    var prefixCounts = [words.length, 15, 10, 6, 4, 3];
+    var prefixes = [];
+    var seen = {};
+    prefixCounts.forEach(function (n) {
+      if (n >= 2 && n <= words.length) {
+        var p = words.slice(0, n).join(' ');
+        if (!seen[p]) { seen[p] = true; prefixes.push(p); }
+      }
+    });
+    if (!prefixes.length) prefixes.push(normNeedle);
+
+    // Collect all non-empty text nodes inside the container.
     var walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+    var nodes = [];
     var node;
     while ((node = walker.nextNode())) {
-      var nodeText = node.nodeValue.replace(/\s+/g, ' ');
-      var idx = nodeText.indexOf(needle);
-      if (idx === -1 && needle.length > 40) idx = nodeText.indexOf(needle.substring(0, 40));
-      if (idx !== -1) {
+      if (node.nodeValue && node.nodeValue.trim()) nodes.push(node);
+    }
+    if (!nodes.length) return false;
+
+    // Escape a string for use in a regex, and let any whitespace run in the
+    // needle match any run of whitespace in the target (handles line breaks,
+    // non-breaking spaces, etc.).
+    function buildRegex(str, flags) {
+      var escaped = str
+        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        .replace(/\s+/g, '\\s+');
+      return new RegExp(escaped, flags || 'i');
+    }
+
+    function surroundAndScroll(n, start, end) {
+      try {
         var range = document.createRange();
-        range.setStart(node, idx);
-        range.setEnd(node, Math.min(node.nodeValue.length, idx + needle.length));
+        range.setStart(n, start);
+        range.setEnd(n, Math.min(n.nodeValue.length, end));
         var mark = document.createElement('mark');
         mark.className = 'quote-flash';
-        try {
-          range.surroundContents(mark);
-          if (!opts || opts.scroll !== false) {
-            mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-          return true;
-        } catch (e) {
-          return false;
+        range.surroundContents(mark);
+        if (!opts || opts.scroll !== false) {
+          mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
+        return true;
+      } catch (e) {
+        return false;
       }
     }
+
+    // PASS 1 — per-node regex match. Try each prefix against each text node.
+    // Matches the longest prefix that lives entirely inside one node.
+    for (var pi = 0; pi < prefixes.length; pi++) {
+      var re = buildRegex(prefixes[pi]);
+      for (var ni = 0; ni < nodes.length; ni++) {
+        var m = re.exec(nodes[ni].nodeValue);
+        if (!m) continue;
+        var startOff = m.index;
+        var endOff = m.index + m[0].length;
+        if (surroundAndScroll(nodes[ni], startOff, endOff)) return true;
+      }
+    }
+
+    // PASS 2 — cross-node match. Concatenate every text node (normalized)
+    // into one string, find the prefix there, then anchor the highlight at
+    // the first text node the match lands in. Only that leading node is
+    // highlighted (surroundContents can't span elements cleanly) but the
+    // user still sees the starting phrase flash and scroll into view, which
+    // is what matters for "take me to this quote".
+    var concat = '';
+    var nodeStarts = [];
+    for (var i = 0; i < nodes.length; i++) {
+      nodeStarts.push(concat.length);
+      concat += norm(nodes[i].nodeValue) + ' ';
+    }
+    for (var pj = 0; pj < prefixes.length; pj++) {
+      var gIdx = concat.indexOf(prefixes[pj]);
+      if (gIdx === -1) continue;
+      var sIdx = 0;
+      for (var j = 0; j < nodeStarts.length; j++) {
+        if (nodeStarts[j] > gIdx) break;
+        sIdx = j;
+      }
+      var startNode = nodes[sIdx];
+      // Highlight whatever portion of the prefix is local to the start node
+      // by regex-probing the first 3 words of the prefix inside it.
+      var probeWords = prefixes[pj].split(' ').slice(0, 3).join(' ');
+      var probeRe = buildRegex(probeWords);
+      var pm = probeRe.exec(startNode.nodeValue);
+      if (pm) {
+        var s = pm.index;
+        var e = Math.min(startNode.nodeValue.length, s + prefixes[pj].length + 20);
+        if (surroundAndScroll(startNode, s, e)) return true;
+      }
+    }
+
     return false;
   }
 

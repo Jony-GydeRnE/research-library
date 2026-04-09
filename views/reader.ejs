@@ -218,7 +218,11 @@
     var sidebar = document.getElementById('appSidebar');
     var btn = document.getElementById('sidebarCollapseBtn');
     var key = 'gyde-sidebar-state';
-    if (localStorage.getItem(key) === 'collapsed') sidebar.classList.add('collapsed');
+    // Honor ?sidebar=collapsed so when the reader is embedded inside the
+    // chat split view it starts with the TOC hidden (the user can still
+    // open it manually via the hamburger).
+    var forceCollapsed = /[?&]sidebar=collapsed(&|$)/.test(window.location.search);
+    if (forceCollapsed || localStorage.getItem(key) === 'collapsed') sidebar.classList.add('collapsed');
     btn.addEventListener('click', function() {
       sidebar.classList.toggle('collapsed');
       localStorage.setItem(key, sidebar.classList.contains('collapsed') ? 'collapsed' : 'open');

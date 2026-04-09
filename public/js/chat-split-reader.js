@@ -1,12 +1,15 @@
 /**
  * Split-screen reader panel for the chat view.
  *
- * Lets a chat page open a book/page in a resizable reader iframe on the right,
- * without leaving the chat. Called from citation link clicks in chat.ejs.
+ * Layout: [ app sidebar | READER (fixed) | divider | chat view (right) ]
+ *
+ * The reader iframe is docked to the middle of the screen, immediately right
+ * of the app sidebar. The chat view stays anchored on the right side.
+ * Triggered from citation link clicks in chat.ejs.
  *
  * Exposes:
- *   window.__openSplitReader(url)   — open (or update) the panel with the given reader URL
- *   window.__updateSplitReader(url) — update the iframe src if the panel is already open
+ *   window.__openSplitReader(url)   — open (or update) the panel
+ *   window.__updateSplitReader(url) — update the iframe src if already open
  *   window.__isSplitReaderOpen()    — bool
  *   window.__closeSplitReader()     — close the panel
  */
@@ -15,9 +18,18 @@
   var iframe = null;
   var divider = null;
   var isOpen = false;
-  // Fraction of viewport width occupied by the reader panel (right side).
-  var ratio = parseFloat(localStorage.getItem('gyde-chat-split-ratio'));
-  if (!isFinite(ratio) || ratio < 0.25 || ratio > 0.75) ratio = 0.5;
+
+  // Fraction of the non-sidebar width occupied by the reader panel.
+  // Using a new storage key — the old key stored a right-docked ratio that
+  // doesn't map 1:1 onto the new middle layout.
+  var ratio = parseFloat(localStorage.getItem('gyde-chat-split-ratio-v2'));
+  if (!isFinite(ratio) || ratio < 0.25 || ratio > 0.8) ratio = 0.55;
+
+  function getSidebarWidth() {
+    var sb = document.querySelector('.app-sidebar');
+    if (!sb) return 0;
+    return sb.getBoundingClientRect().width;
+  }
 
   function ensureCreated() {
     if (panel) return;
@@ -53,13 +65,34 @@
     divider.style.display = 'none';
     document.body.appendChild(divider);
     setupDrag();
+
+    // Recompute layout on window resize and whenever the app sidebar's
+    // collapsed state changes.
+    window.addEventListener('resize', function () { if (isOpen) apply(); });
+    var sb = document.querySelector('.app-sidebar');
+    if (sb && 'MutationObserver' in window) {
+      new MutationObserver(function () { if (isOpen) apply(); })
+        .observe(sb, { attributes: true, attributeFilter: ['class', 'style'] });
+      // Also watch for the width transition to finish.
+      sb.addEventListener('transitionend', function (e) {
+        if (e.propertyName === 'width' && isOpen) apply();
+      });
+    }
   }
 
   function apply() {
-    var pct = ratio * 100;
-    panel.style.width = pct + '%';
-    divider.style.right = 'calc(' + pct + '% - 3px)';
-    document.body.style.setProperty('--chat-split-right', pct + '%');
+    var sbw = getSidebarWidth();
+    var available = Math.max(0, window.innerWidth - sbw);
+    var panelWidth = Math.round(ratio * available);
+    panel.style.left = sbw + 'px';
+    panel.style.width = panelWidth + 'px';
+    // Divider sits at the right edge of the panel. Make the visible line
+    // thin but the hit area wide (see CSS ::before).
+    divider.style.left = (sbw + panelWidth - 3) + 'px';
+    // Push the chat view right by exactly the reader panel's width.
+    // (.app-main is a flex child after .app-sidebar — it already starts at
+    // the sidebar's right edge, so we only add the panel width as margin.)
+    document.body.style.setProperty('--chat-split-left', panelWidth + 'px');
   }
 
   function open(url) {
@@ -84,6 +117,7 @@
     if (panel) panel.style.display = 'none';
     if (divider) divider.style.display = 'none';
     if (iframe) iframe.src = 'about:blank';
+    document.body.style.removeProperty('--chat-split-left');
   }
 
   function setupDrag() {
@@ -93,15 +127,19 @@
       e.preventDefault();
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
+      // While dragging, disable pointer events on the iframe so the mouse
+      // moves track reliably (otherwise the iframe eats the mousemove).
+      if (iframe) iframe.style.pointerEvents = 'none';
     });
     document.addEventListener('mousemove', function (e) {
       if (!dragging) return;
-      var w = window.innerWidth;
-      var r = (w - e.clientX) / w;
+      var sbw = getSidebarWidth();
+      var available = Math.max(1, window.innerWidth - sbw);
+      var r = (e.clientX - sbw) / available;
       if (r < 0.25) r = 0.25;
-      if (r > 0.75) r = 0.75;
+      if (r > 0.8) r = 0.8;
       ratio = r;
-      localStorage.setItem('gyde-chat-split-ratio', String(r));
+      localStorage.setItem('gyde-chat-split-ratio-v2', String(r));
       apply();
     });
     document.addEventListener('mouseup', function () {
@@ -109,6 +147,7 @@
         dragging = false;
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
+        if (iframe) iframe.style.pointerEvents = '';
       }
     });
   }
