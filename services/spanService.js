@@ -170,7 +170,10 @@ function parseSpanOutput(dslOutput, bookId, pageNumber) {
  */
 async function generateSpansForPage(bookId, pageNumber, rawText, preAnnotations, isNewSession) {
   const client = getOpenAI();
-  if (!client || !rawText) return [];
+  if (!client || !rawText) {
+    if (!rawText) console.log('[spanService] SKIPPING page ' + pageNumber + ' — no rawText');
+    return [];
+  }
 
   // Number sentences, cap at pipeline limit
   const { numbered, sentences } = numberSentences(rawText);
@@ -194,7 +197,7 @@ async function generateSpansForPage(bookId, pageNumber, rawText, preAnnotations,
   try {
     const response = await client.chat.completions.create({
       model: pipeline.SPAN_MODEL,
-      max_tokens: 500,
+      max_tokens: 800,
       temperature: pipeline.SPAN_TEMPERATURE,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -259,6 +262,9 @@ async function generateSpansForBook(bookId) {
     .sort({ pageNumber: 1 });
 
   if (pages.length === 0) return { pagesProcessed: 0, spansCreated: 0 };
+
+  const skipped = pages.filter(p => !p.rawText).length;
+  console.log('[spanService] Pages with no rawText (skipped): ' + skipped + '/' + pages.length);
 
   // Clear existing spans for this book
   await Span.deleteMany({ bookId });

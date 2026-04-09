@@ -205,6 +205,7 @@
   }
 
   var pendingHighlight = getQueryParam('highlight');
+  console.debug('[highlight] search term:', pendingHighlight && pendingHighlight.substring(0, 80));
 
   function clearExistingQuoteMarks(root) {
     (root || document).querySelectorAll('mark.quote-flash').forEach(function (m) {
@@ -250,6 +251,9 @@
     });
     if (!prefixes.length) prefixes.push(normNeedle);
 
+    console.debug('[highlight] trying quote (' + words.length + ' words), prefixes:',
+      prefixes.map(function (p) { return p.substring(0, 40); }));
+
     // Collect all non-empty text nodes inside the container.
     var walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
     var nodes = [];
@@ -258,6 +262,9 @@
       if (node.nodeValue && node.nodeValue.trim()) nodes.push(node);
     }
     if (!nodes.length) return false;
+
+    console.debug('[highlight] ' + nodes.length + ' text nodes, first:',
+      nodes[0] && nodes[0].nodeValue && nodes[0].nodeValue.substring(0, 80));
 
     // Escape a string for use in a regex, and let any whitespace run in the
     // needle match any run of whitespace in the target (handles line breaks,
@@ -295,7 +302,10 @@
         if (!m) continue;
         var startOff = m.index;
         var endOff = m.index + m[0].length;
-        if (surroundAndScroll(nodes[ni], startOff, endOff)) return true;
+        if (surroundAndScroll(nodes[ni], startOff, endOff)) {
+          console.debug('[highlight] PASS 1 hit on prefix #' + pi);
+          return true;
+        }
       }
     }
 
@@ -328,10 +338,75 @@
       if (pm) {
         var s = pm.index;
         var e = Math.min(startNode.nodeValue.length, s + prefixes[pj].length + 20);
-        if (surroundAndScroll(startNode, s, e)) return true;
+        if (surroundAndScroll(startNode, s, e)) {
+          console.debug('[highlight] PASS 2 cross-node hit on prefix #' + pj);
+          return true;
+        }
       }
     }
 
+    // PASS 3 — raw character fallback. Ignore word boundaries entirely and
+    // look for the first 30 characters of the normalized needle anywhere in
+    // the concatenated page text. Catches cases where LaTeX rendering changes
+    // word boundaries (e.g. quote has "\phi" but rendered text has "ϕ").
+    if (normNeedle.length >= 6) {
+      var rawProbe = normNeedle.substring(0, Math.min(30, normNeedle.length));
+      var rawIdx = concat.indexOf(rawProbe);
+      if (rawIdx !== -1) {
+        console.debug('[highlight] PASS 3 raw-char match at position', rawIdx);
+        var rSIdx = 0;
+        for (var rj = 0; rj < nodeStarts.length; rj++) {
+          if (nodeStarts[rj] > rawIdx) break;
+          rSIdx = rj;
+        }
+        var rNode = nodes[rSIdx];
+        var localStart = Math.max(0, rawIdx - nodeStarts[rSIdx]);
+        var rEnd = Math.min(rNode.nodeValue.length, localStart + 60);
+        if (surroundAndScroll(rNode, localStart, rEnd)) return true;
+      }
+    }
+
+    // PASS 4 — strip all non-alphanumeric for last resort. Create a version
+    // of both the needle and concat with only letters/digits, lowercased.
+    // Search for the first 20 alnum chars of the needle and map the hit
+    // position back to the original concat via a parallel index map. Catches
+    // LaTeX symbol mismatches where the unicode char and ascii source differ
+    // entirely.
+    var alnumNeedle = '';
+    for (var an = 0; an < normNeedle.length; an++) {
+      var cn = normNeedle.charCodeAt(an);
+      if ((cn >= 48 && cn <= 57) || (cn >= 97 && cn <= 122)) alnumNeedle += normNeedle[an];
+    }
+    if (alnumNeedle.length >= 10) {
+      var alnumConcat = '';
+      var alnumToConcat = []; // alnumConcat index → original concat index
+      for (var ac = 0; ac < concat.length; ac++) {
+        var cc = concat.charCodeAt(ac);
+        if ((cc >= 48 && cc <= 57) || (cc >= 97 && cc <= 122)) {
+          alnumConcat += concat[ac];
+          alnumToConcat.push(ac);
+        }
+      }
+      var alnumProbe = alnumNeedle.substring(0, Math.min(20, alnumNeedle.length));
+      var alnumIdx = alnumConcat.indexOf(alnumProbe);
+      if (alnumIdx !== -1) {
+        var origIdx = alnumToConcat[alnumIdx];
+        console.debug('[highlight] PASS 4 alnum-strip match at alnum pos', alnumIdx,
+          '→ concat pos', origIdx);
+        var aSIdx = 0;
+        for (var ak = 0; ak < nodeStarts.length; ak++) {
+          if (nodeStarts[ak] > origIdx) break;
+          aSIdx = ak;
+        }
+        var aNode = nodes[aSIdx];
+        var aLocalStart = Math.max(0, origIdx - nodeStarts[aSIdx]);
+        var aEnd = Math.min(aNode.nodeValue.length, aLocalStart + 60);
+        if (surroundAndScroll(aNode, aLocalStart, aEnd)) return true;
+      }
+    }
+
+    console.warn('[highlight] NO MATCH. First 200 chars of page text:',
+      concat.substring(0, 200));
     return false;
   }
 
