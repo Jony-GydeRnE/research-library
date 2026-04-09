@@ -49,6 +49,69 @@
     </button>
   </div>
 
+  <!-- New Collection Modal -->
+  <div class="modal-overlay" id="newCollectionModal" style="display:none;">
+    <div class="modal">
+      <h2>New Collection</h2>
+      <input type="text" id="newCollectionTitle" class="modal-input" placeholder="Collection name" maxlength="120" />
+      <textarea id="newCollectionInstructions" class="modal-input" placeholder="AI instructions (optional)" rows="3"></textarea>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="newCollectionCancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="newCollectionCreateBtn">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function() {
+    var btn = document.getElementById('sidebarNewCollectionBtn');
+    var modal = document.getElementById('newCollectionModal');
+    var titleInput = document.getElementById('newCollectionTitle');
+    var instrInput = document.getElementById('newCollectionInstructions');
+    var cancelBtn = document.getElementById('newCollectionCancelBtn');
+    var createBtn = document.getElementById('newCollectionCreateBtn');
+    if (!btn || !modal) return;
+
+    function open() {
+      titleInput.value = '';
+      instrInput.value = '';
+      modal.style.display = '';
+      setTimeout(function() { titleInput.focus(); }, 10);
+    }
+    function close() { modal.style.display = 'none'; }
+
+    btn.addEventListener('click', function(e) { e.preventDefault(); open(); });
+    cancelBtn.addEventListener('click', close);
+    modal.addEventListener('click', function(e) { if (e.target === modal) close(); });
+
+    function submit() {
+      var title = (titleInput.value || '').trim();
+      if (!title) { titleInput.focus(); return; }
+      createBtn.disabled = true;
+      fetch('/collections/api', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title, instructions: instrInput.value || '' }),
+      }).then(function(r) { return r.json(); }).then(function(col) {
+        createBtn.disabled = false;
+        if (col && col._id) {
+          window.location.href = '/collection/' + col._id;
+        } else {
+          alert('Failed to create collection');
+        }
+      }).catch(function() {
+        createBtn.disabled = false;
+        alert('Network error creating collection');
+      });
+    }
+    createBtn.addEventListener('click', submit);
+    titleInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); submit(); }
+      if (e.key === 'Escape') close();
+    });
+  })();
+  </script>
+
   <div class="sidebar-bottom">
     <div class="sidebar-user">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>

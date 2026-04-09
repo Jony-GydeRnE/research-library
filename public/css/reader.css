@@ -1325,3 +1325,17 @@ mjx-container {
     line-height: 1.75;
   }
 }
+
+/* Quote landed from chat citation (?highlight=…) */
+mark.quote-flash {
+  background: rgba(255, 235, 120, 0.55);
+  color: inherit;
+  padding: 0.05em 0.15em;
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px rgba(255, 235, 120, 0.4);
+  animation: quoteFlash 1.4s ease-out 1;
+}
+@keyframes quoteFlash {
+  0%   { background: rgba(255, 235, 120, 0.95); box-shadow: 0 0 0 6px rgba(255, 235, 120, 0.7); }
+  100% { background: rgba(255, 235, 120, 0.55); box-shadow: 0 0 0 2px rgba(255, 235, 120, 0.4); }
+}

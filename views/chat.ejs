@@ -10,11 +10,54 @@ window.MathJax = {
 <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
 
 <div class="chat-view">
+  <!-- Breadcrumb header: Collection / Chat ▾ -->
+  <div class="chat-breadcrumb-bar">
+    <div class="chat-breadcrumb">
+      <% if (chatCollection) { %>
+        <a class="crumb crumb-collection" href="/collection/<%= chatCollection._id %>"><%= chatCollection.title %></a>
+        <span class="crumb-sep">/</span>
+      <% } else { %>
+        <a class="crumb crumb-collection" href="/chats">Chats</a>
+        <span class="crumb-sep">/</span>
+      <% } %>
+      <button class="crumb crumb-chat" id="chatCrumbBtn" type="button">
+        <span class="crumb-chat-title" id="chatCrumbTitle"><%= chat.title || 'Untitled chat' %></span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+    </div>
+
+    <div class="chat-crumb-menu" id="chatCrumbMenu" style="display:none;">
+      <button class="action-item" data-action="star">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        <span id="starLabel"><%= chat.starred ? 'Unstar' : 'Star' %></span>
+      </button>
+      <button class="action-item" data-action="rename">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        Rename
+      </button>
+      <button class="action-item" data-action="change-project">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        Change project
+      </button>
+      <% if (chat.collectionId) { %>
+      <button class="action-item" data-action="remove-project">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Remove from project
+      </button>
+      <% } %>
+      <div class="action-divider"></div>
+      <button class="action-item action-danger" data-action="delete">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        Delete
+      </button>
+    </div>
+  </div>
+
   <% if (chat.highlightText) { %>
     <div class="chat-source-quote">
       <blockquote><%= chat.highlightText %></blockquote>
       <% if (chat.bookId) { %>
-        <a href="/reader/<%= chat.bookId %>/page/<%= chat.pageNumber || 1 %>" class="quote-source-link">
+        <a href="/reader/<%= chat.bookId %>/page/<%= chat.pageNumber || 1 %>?highlight=<%= encodeURIComponent(chat.highlightText) %>" class="quote-source-link">
           Page <%= chat.pageNumber || 1 %> — open in reader
         </a>
       <% } %>
@@ -43,6 +86,8 @@ window.MathJax = {
 <script>
 (function() {
   var chatId = '<%= chat._id %>';
+  var collectionIdAtLoad = '<%= chat.collectionId || "" %>';
+  var booksMap = <%- JSON.stringify(typeof booksMap !== 'undefined' ? booksMap : {}) %>;
   var messagesEl = document.getElementById('chatMessages');
   var input = document.getElementById('chatInput');
   var sendBtn = document.getElementById('chatSendBtn');
@@ -144,7 +189,39 @@ window.MathJax = {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  function formatResponse(text) {
+  // Replace [[cite bookId="X" page="N"]]quoted text[[/cite]] with placeholder tokens
+  // BEFORE block splitting so the quote stays intact across newlines.
+  var citationPlaceholders = [];
+  function extractCitations(text) {
+    citationPlaceholders = [];
+    var re = /\[\[cite\s+bookId="([^"]+)"\s+page="([^"]+)"\]\]([\s\S]*?)\[\[\/cite\]\]/g;
+    return text.replace(re, function(_, bookId, page, quote) {
+      var idx = citationPlaceholders.length;
+      citationPlaceholders.push({ bookId: bookId, page: page, quote: quote.trim() });
+      return '\u0000CITE' + idx + '\u0000';
+    });
+  }
+  function renderCitation(c) {
+    var book = booksMap[c.bookId];
+    var title = book ? book.title : 'Book';
+    var url = '/reader/' + encodeURIComponent(c.bookId) + '/page/' + encodeURIComponent(c.page) +
+              '?highlight=' + encodeURIComponent(c.quote);
+    var safeQuote = c.quote.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    var safeTitle = title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return '<a class="chat-cite" href="' + url + '" target="_blank" rel="noopener" title="Open ' + safeTitle + ' p.' + c.page + '">' +
+           '<span class="chat-cite-quote">' + safeQuote + '</span>' +
+           '<span class="chat-cite-source">— ' + safeTitle + ', p.' + c.page + '</span>' +
+           '</a>';
+  }
+  function reinsertCitations(html) {
+    return html.replace(/\u0000CITE(\d+)\u0000/g, function(_, i) {
+      var c = citationPlaceholders[parseInt(i, 10)];
+      return c ? renderCitation(c) : '';
+    });
+  }
+
+  function formatResponse(rawText) {
+    var text = extractCitations(rawText);
     // Split into blocks by double newline
     var blocks = text.split(/\n\n+/);
     var html = blocks.map(function(block) {
@@ -175,7 +252,7 @@ window.MathJax = {
       return '<p>' + lines.join('<br>') + '</p>';
     }).join('');
 
-    return html;
+    return reinsertCitations(html);
   }
 
   function processInline(text) {
@@ -221,6 +298,76 @@ window.MathJax = {
     sendBtn.disabled = true;
     streamFrom('/api/chat/' + chatId + '/respond', 'POST');
   }
+
+  // ─── BREADCRUMB DROPDOWN MENU ───────────────────────────────
+  var crumbBtn = document.getElementById('chatCrumbBtn');
+  var crumbMenu = document.getElementById('chatCrumbMenu');
+  var crumbTitleEl = document.getElementById('chatCrumbTitle');
+
+  function closeMenu() { crumbMenu.style.display = 'none'; }
+  function openMenu() {
+    var rect = crumbBtn.getBoundingClientRect();
+    crumbMenu.style.left = rect.left + 'px';
+    crumbMenu.style.top = (rect.bottom + 4) + 'px';
+    crumbMenu.style.display = 'block';
+  }
+  crumbBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (crumbMenu.style.display === 'block') closeMenu(); else openMenu();
+  });
+  document.addEventListener('click', function(e) {
+    if (!crumbMenu.contains(e.target) && e.target !== crumbBtn) closeMenu();
+  });
+
+  function patchChat(body) {
+    return fetch('/api/chat/' + chatId, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(function(r) { return r.json(); });
+  }
+
+  crumbMenu.querySelectorAll('.action-item').forEach(function(item) {
+    item.addEventListener('click', function() {
+      var action = item.dataset.action;
+      closeMenu();
+      if (action === 'star') {
+        var currentlyStarred = document.getElementById('starLabel').textContent === 'Unstar';
+        patchChat({ starred: !currentlyStarred }).then(function() {
+          document.getElementById('starLabel').textContent = currentlyStarred ? 'Star' : 'Unstar';
+        });
+      } else if (action === 'rename') {
+        var current = crumbTitleEl.textContent;
+        var nv = prompt('Rename chat:', current);
+        if (nv && nv.trim() && nv.trim() !== current) {
+          patchChat({ title: nv.trim() }).then(function() {
+            crumbTitleEl.textContent = nv.trim();
+          });
+        }
+      } else if (action === 'change-project') {
+        showCollectionPickerForChat(function(targetId) {
+          patchChat({ collectionId: targetId }).then(function() { location.reload(); });
+        });
+      } else if (action === 'remove-project') {
+        if (!confirm('Remove this chat from its collection?')) return;
+        patchChat({ collectionId: null }).then(function() { location.reload(); });
+      } else if (action === 'delete') {
+        if (!confirm('Delete this chat permanently?')) return;
+        fetch('/api/chat/' + chatId, { method: 'DELETE' }).then(function() {
+          window.location.href = collectionIdAtLoad ? '/collection/' + collectionIdAtLoad : '/chats';
+        });
+      }
+    });
+  });
+
+  function showCollectionPickerForChat(onPick) {
+    fetch('/collections/api/all/list').then(function(r) { return r.json(); }).then(function(cols) {
+      // Simple prompt-based picker as a fallback (no extra modal markup needed)
+      var listText = cols.map(function(c, i) { return (i + 1) + '. ' + c.title; }).join('\n');
+      var pick = prompt('Choose a collection by number:\n\n' + listText);
+      var idx = parseInt(pick, 10) - 1;
+      if (!isNaN(idx) && cols[idx]) onPick(cols[idx]._id);
+    });
+  }
 })();
 </script>
 
@@ -262,6 +409,27 @@ window.MathJax = {
 .chat-source-quote blockquote { border-left:3px solid var(--app-accent); padding-left:0.7rem; color:var(--app-text-muted); font-style:italic; font-size:0.8rem; margin:0; }
 .quote-source-link { display:block; font-size:0.7rem; color:var(--app-accent); text-decoration:none; margin-top:0.3rem; padding-left:0.7rem; }
 .quote-source-link:hover { text-decoration:underline; }
+
+/* Breadcrumb header */
+.chat-breadcrumb-bar { display:flex; align-items:center; padding:0.65rem 1rem; border-bottom:1px solid var(--app-border); flex-shrink:0; position:relative; }
+.chat-breadcrumb { display:flex; align-items:center; gap:0.4rem; font-size:0.85rem; color:var(--app-text-muted); }
+.chat-breadcrumb .crumb { color:var(--app-text-muted); text-decoration:none; padding:0.25rem 0.55rem; border-radius:6px; transition:background 0.12s ease, color 0.12s ease; background:transparent; border:none; cursor:pointer; font-family:inherit; font-size:0.85rem; display:inline-flex; align-items:center; gap:0.3rem; }
+.chat-breadcrumb .crumb:hover { background:var(--app-surface); color:var(--app-text-bright); }
+.chat-breadcrumb .crumb-collection { font-weight:500; }
+.chat-breadcrumb .crumb-chat { color:var(--app-text-bright); font-weight:600; max-width:420px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chat-breadcrumb .crumb-sep { color:var(--app-text-muted); opacity:0.6; }
+.chat-crumb-menu { position:fixed; min-width:200px; background:var(--app-surface); border:1px solid var(--app-border); border-radius:10px; padding:0.35rem; z-index:200; box-shadow:0 6px 18px rgba(0,0,0,0.35); }
+.chat-crumb-menu .action-item { display:flex; align-items:center; gap:0.55rem; width:100%; padding:0.45rem 0.65rem; background:transparent; border:none; color:var(--app-text); font-size:0.85rem; text-align:left; border-radius:6px; cursor:pointer; font-family:inherit; }
+.chat-crumb-menu .action-item:hover { background:var(--app-bg); color:var(--app-text-bright); }
+.chat-crumb-menu .action-divider { height:1px; background:var(--app-border); margin:0.3rem 0; }
+.chat-crumb-menu .action-danger { color:#e55858; }
+.chat-crumb-menu .action-danger:hover { background:rgba(229,88,88,0.12); color:#ff6b6b; }
+
+/* Inline citation link rendered from [[cite ...]] */
+.chat-cite { display:block; margin:0.5em 0; padding:0.55rem 0.75rem; border-left:3px solid var(--app-accent); background:rgba(255,235,120,0.10); color:var(--app-text); text-decoration:none; border-radius:0 6px 6px 0; transition:background 0.12s ease; }
+.chat-cite:hover { background:rgba(255,235,120,0.18); }
+.chat-cite-quote { display:block; font-style:italic; line-height:1.5; }
+.chat-cite-source { display:block; margin-top:0.3rem; font-size:0.72rem; color:var(--app-accent); font-style:normal; }
 </style>
 
 <%- include('partials/layout-end') %>

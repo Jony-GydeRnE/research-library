@@ -15,9 +15,23 @@ const BASE_PROMPT = `You are a research assistant for an advanced physics and ma
 When answering:
 - Be precise and rigorous. Cite specific theorems, equations, and page numbers when referencing the user's books.
 - Use LaTeX notation for math: \\( ... \\) for inline, \\[ ... \\] for display equations.
-- If you reference a passage from a book in the library, mention the book title and page number.
 - Be concise but thorough. Prioritize clarity over verbosity.
-- If you're unsure about something, say so rather than guessing.`;
+- If you're unsure about something, say so rather than guessing.
+
+CITING BOOK PASSAGES — IMPORTANT:
+When you quote or reference a passage from a book in the user's library, you MUST emit the citation using this exact tag format so the UI can render it as a clickable link that opens the reader at the right page with the quote highlighted:
+
+  [[cite bookId="<BOOK_ID>" page="<PAGE_NUMBER>"]]<quoted text exactly as it appears>[[/cite]]
+
+Rules:
+- Use the BOOK_ID exactly as provided in the "Books in this collection" or library listing below (the value after "id=").
+- PAGE_NUMBER is the printed page number you are citing.
+- The text between the opening and closing tags must be a verbatim quote from that page (1–3 sentences). Do not paraphrase inside the tags.
+- You may write commentary outside the tags. The tags themselves render as a clickable highlighted quote in the chat.
+- Always prefer this citation format over plain "(p. 12)" style references.
+
+LISTING METADATA:
+You have access to chunk and span metadata for the books in scope (see "BOOK METADATA" sections below). Each chunk has a page number, structural type, tags, and child spans. Each span has a role, contextTags, declarativeTags, and regexFlags. When the user asks you to list chunks, spans, tags, or annotations, list them in order using the data provided — including page numbers — and do not say you cannot see them.`;
 
 /**
  * Rough token estimate (~4 chars per token).
@@ -173,7 +187,7 @@ async function getBookHeader(bookId) {
   if (!bookId) return null;
   const book = await Book.findById(bookId).select('title author pageCount').lean();
   if (!book) return null;
-  return `Book: "${book.title}"${book.author ? ' by ' + book.author : ''} (${book.pageCount || '?'} pages)`;
+  return `Book: id=${book._id} "${book.title}"${book.author ? ' by ' + book.author : ''} (${book.pageCount || '?'} pages)\nUse this id in [[cite bookId="${book._id}" page="N"]]…[[/cite]] tags when quoting.`;
 }
 
 async function getBookChapters(bookId) {
@@ -245,45 +259,102 @@ async function getCollectionContext(collectionId) {
   const col = await Collection.findById(collectionId).lean();
   if (!col) return null;
 
-  let ctx = `Collection: "${col.title}"`;
+  let ctx = `Collection: "${col.title}" (id=${col._id})`;
   if (col.instructions) ctx += `\n\nUser instructions for AI:\n${col.instructions}`;
 
   if (col.bookIds?.length > 0) {
-    const books = await Book.find({ _id: { $in: col.bookIds } }).select('_id title author keyConcepts summary').lean();
+    const books = await Book.find({ _id: { $in: col.bookIds } }).select('_id title author keyConcepts summary pageCount').lean();
     ctx += `\n\nBooks in this collection (${books.length}):`;
+    for (const b of books) {
+      ctx += `\n  - id=${b._id} | "${b.title}"${b.author ? ' by ' + b.author : ''}${b.pageCount ? ' (' + b.pageCount + ' pp.)' : ''}`;
+    }
 
-    // Adaptive depth: <=6 books → 3 pages × 1500 chars; >6 books → page 1 × 800 chars
-    const deepMode = books.length <= 6;
-    const maxPages = deepMode ? 3 : 1;
-    const charLimit = deepMode ? 1500 : 800;
-
-    for (const b of books.slice(0, 15)) {
-      ctx += `\n\n--- Book: "${b.title}" ${b.author ? 'by ' + b.author : ''} ---`;
-      if (b.summary) ctx += `\nSummary: ${b.summary}`;
-      if (b.keyConcepts?.length) ctx += `\nKey concepts: ${b.keyConcepts.slice(0, 8).join(', ')}`;
-
-      const pages = await Page.find({ bookId: b._id, pageNumber: { $lte: maxPages } })
-        .select('pageNumber rawText').sort({ pageNumber: 1 }).lean();
-
-      for (const p of pages) {
-        const text = (p.rawText || '').substring(0, charLimit);
-        if (text) ctx += `\n[Page ${p.pageNumber}]: ${text}`;
-      }
+    ctx += `\n\n=== BOOK METADATA (chunks, spans, tags) ===`;
+    for (const b of books) {
+      ctx += await renderBookMetadata(b);
     }
   }
 
   return ctx;
 }
 
+/**
+ * Render every chunk + every span + tags/annotations for a single book,
+ * in page order then chunk order. Compact but complete.
+ */
+async function renderBookMetadata(book) {
+  let out = `\n\n--- Book id=${book._id} "${book.title}"${book.author ? ' by ' + book.author : ''} ---`;
+  if (book.summary) out += `\nSummary: ${book.summary}`;
+  if (book.keyConcepts?.length) out += `\nKey concepts: ${book.keyConcepts.slice(0, 12).join(', ')}`;
+
+  const chunks = await Chunk.find({ bookId: book._id })
+    .select('_id pageNumber chunkIndex structuralType chunkType contextTags subjectTags conceptTags searchClasses sourceText sectionTitle')
+    .sort({ pageNumber: 1, chunkIndex: 1 })
+    .lean();
+
+  if (chunks.length === 0) {
+    out += `\n(no chunks generated yet for this book)`;
+    return out;
+  }
+
+  // Pre-load all spans for this book in one query
+  const spans = await Span.find({ bookId: book._id })
+    .select('_id chunkId pageNumber role contextTags declarativeTags searchClass searchConfidence regexFlags spanText sentenceStart sentenceEnd')
+    .lean();
+  const spansByChunk = new Map();
+  for (const s of spans) {
+    const key = String(s.chunkId);
+    if (!spansByChunk.has(key)) spansByChunk.set(key, []);
+    spansByChunk.get(key).push(s);
+  }
+
+  out += `\nChunks: ${chunks.length} | Spans: ${spans.length}`;
+
+  let lastPage = null;
+  for (const c of chunks) {
+    if (c.pageNumber !== lastPage) {
+      out += `\n\n  [Page ${c.pageNumber}]`;
+      lastPage = c.pageNumber;
+    }
+    const type = c.structuralType || c.chunkType || 'unknown';
+    const idx = (c.chunkIndex != null) ? `#${c.chunkIndex}` : '';
+    out += `\n  Chunk ${idx} (${type})${c.sectionTitle ? ' — ' + c.sectionTitle : ''}`;
+    const tags = [...new Set([...(c.contextTags || []), ...(c.subjectTags || []), ...(c.conceptTags || [])])];
+    if (tags.length) out += `\n    tags: ${tags.slice(0, 20).join(', ')}`;
+    if (c.searchClasses?.length) out += `\n    search: ${c.searchClasses.join(', ')}`;
+    if (c.sourceText) {
+      const snippet = c.sourceText.replace(/\s+/g, ' ').trim().substring(0, 220);
+      out += `\n    text: "${snippet}${c.sourceText.length > 220 ? '…' : ''}"`;
+    }
+    const cs = spansByChunk.get(String(c._id)) || [];
+    if (cs.length) {
+      cs.sort((a, b) => (a.sentenceStart || 0) - (b.sentenceStart || 0));
+      for (const s of cs) {
+        const parts = [];
+        if (s.role) parts.push('role=' + s.role);
+        if (s.searchClass) parts.push('class=' + s.searchClass + (s.searchConfidence || ''));
+        if (s.contextTags?.length) parts.push('tags=[' + s.contextTags.slice(0, 8).join(',') + ']');
+        if (s.declarativeTags?.length) {
+          parts.push('decl=[' + s.declarativeTags.map(d => d.kind + (d.targetChunk != null ? ':' + d.targetChunk : '') + (d.targetTag != null ? '.' + d.targetTag : '')).join(',') + ']');
+        }
+        if (s.regexFlags?.length) parts.push('flags=[' + s.regexFlags.join(',') + ']');
+        const stext = (s.spanText || '').replace(/\s+/g, ' ').trim().substring(0, 140);
+        out += `\n      • span ${parts.join(' ')}${stext ? ' "' + stext + '"' : ''}`;
+      }
+    }
+  }
+  return out;
+}
+
 async function getLibraryOverview() {
   const books = await Book.find().select('title author pageCount keyConcepts').lean();
   if (books.length === 0) return null;
   const list = books.map(b => {
-    let line = `- "${b.title}"${b.author ? ' (' + b.author + ')' : ''}`;
+    let line = `- id=${b._id} "${b.title}"${b.author ? ' (' + b.author + ')' : ''}`;
     if (b.keyConcepts?.length) line += ` [${b.keyConcepts.slice(0, 3).join(', ')}]`;
     return line;
   }).join('\n');
-  return `Library (${books.length} books):\n${list}`;
+  return `Library (${books.length} books) — use the id values in [[cite bookId="…"]] tags:\n${list}`;
 }
 
 // ─── STREAM RESPONSE ─────────────────────────────────────────────

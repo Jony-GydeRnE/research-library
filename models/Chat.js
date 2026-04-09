@@ -13,6 +13,7 @@ const chatSchema = new mongoose.Schema({
   bookId: { type: mongoose.Schema.Types.ObjectId, ref: 'Book' },
   pageNumber: Number,
   highlightText: String,
+  starred: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });

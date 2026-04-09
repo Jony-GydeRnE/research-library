@@ -170,4 +170,51 @@
     localStorage.setItem(`gyde-bookmark-${R.bookId}`, JSON.stringify({ page: pg, timestamp: Date.now() }));
   }
   saveBookmark(R.currentPage);
+
+  // ─── HIGHLIGHT FROM ?highlight= QUERY (chat citations) ──────────
+  function getQueryParam(name) {
+    var m = new RegExp('[?&]' + name + '=([^&]+)').exec(window.location.search);
+    return m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : null;
+  }
+
+  function highlightQuoteOnPage(quote) {
+    if (!quote || !content) return false;
+    var needle = quote.replace(/\s+/g, ' ').trim();
+    if (!needle) return false;
+    // Walk text nodes and find first node containing the needle (whole-node match)
+    var walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null);
+    var node;
+    while ((node = walker.nextNode())) {
+      var nodeText = node.nodeValue.replace(/\s+/g, ' ');
+      var idx = nodeText.indexOf(needle);
+      if (idx === -1 && needle.length > 40) idx = nodeText.indexOf(needle.substring(0, 40));
+      if (idx !== -1) {
+        var range = document.createRange();
+        range.setStart(node, idx);
+        range.setEnd(node, Math.min(node.nodeValue.length, idx + needle.length));
+        var mark = document.createElement('mark');
+        mark.className = 'quote-flash';
+        try {
+          range.surroundContents(mark);
+          mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }
+    }
+    return false;
+  }
+
+  var pendingHighlight = getQueryParam('highlight');
+  if (pendingHighlight) {
+    // Wait for MathJax / initial render
+    var attempts = 0;
+    var tryHighlight = function() {
+      attempts++;
+      if (highlightQuoteOnPage(pendingHighlight) || attempts > 20) return;
+      setTimeout(tryHighlight, 200);
+    };
+    setTimeout(tryHighlight, 300);
+  }
 })();

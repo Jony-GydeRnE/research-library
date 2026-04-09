@@ -44,7 +44,7 @@ module.exports = {
   JUDGE_RESET_THRESHOLD: 6,
 
   // ─── CHAT CONTEXT ────────────────────────────────────────────
-  CHAT_CONTEXT_BUDGET: 8000,
+  CHAT_CONTEXT_BUDGET: 60000,
   CHAT_MODEL: 'claude-opus-4-6',
   CHAT_STREAMING: true,
   CHAT_MAX_HISTORY: 20,

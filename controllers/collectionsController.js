@@ -79,8 +79,12 @@ exports.showCollection = async (req, res) => {
 
 exports.createCollection = async (req, res) => {
   try {
-    const { title, color } = req.body;
-    const collection = await Collection.create({ title: title || 'Untitled Collection', color });
+    const { title, color, instructions, description } = req.body;
+    const doc = { title: title || 'Untitled Collection' };
+    if (color) doc.color = color;
+    if (instructions) doc.instructions = instructions;
+    if (description) doc.description = description;
+    const collection = await Collection.create(doc);
     res.status(201).json(collection);
   } catch (err) {
     res.status(500).json({ error: err.message });

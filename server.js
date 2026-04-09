@@ -49,10 +49,76 @@ app.get('/chats', async (req, res) => {
 
 app.get('/chat/:chatId', async (req, res) => {
   const Chat = require('./models/Chat');
+  const Collection = require('./models/Collection');
+  const Book = require('./models/Book');
   const chat = await Chat.findById(req.params.chatId).lean();
   if (!chat) return res.redirect('/chats');
   const sidebar = await getSidebarData();
-  res.render('chat', { title: chat.title || 'Chat', page: 'chats', chat, hideInputBar: true, ...sidebar });
+  let chatCollection = null;
+  if (chat.collectionId) {
+    chatCollection = await Collection.findById(chat.collectionId).select('_id title color').lean();
+  }
+  // Books available for citation rendering (id → {title, author})
+  const allBooks = await Book.find().select('_id title author').lean();
+  const booksMap = {};
+  for (const b of allBooks) {
+    booksMap[String(b._id)] = { title: b.title, author: b.author || '' };
+  }
+  res.render('chat', {
+    title: chat.title || 'Chat',
+    page: 'chats',
+    chat,
+    chatCollection,
+    booksMap,
+    hideInputBar: true,
+    ...sidebar,
+  });
+});
+
+// Chat CRUD: rename, star, change/remove project, delete
+app.patch('/api/chat/:chatId', async (req, res) => {
+  try {
+    const Chat = require('./models/Chat');
+    const Collection = require('./models/Collection');
+    const update = {};
+    const { title, starred, collectionId } = req.body;
+    if (title !== undefined) update.title = title;
+    if (starred !== undefined) update.starred = !!starred;
+    if (collectionId !== undefined) update.collectionId = collectionId || null;
+
+    const previous = await Chat.findById(req.params.chatId).select('collectionId').lean();
+    const chat = await Chat.findByIdAndUpdate(req.params.chatId, update, { new: true }).lean();
+    if (!chat) return res.status(404).json({ error: 'Chat not found' });
+
+    // Sync Collection.chatIds when collectionId changes
+    if (collectionId !== undefined) {
+      if (previous && previous.collectionId && String(previous.collectionId) !== String(collectionId || '')) {
+        await Collection.findByIdAndUpdate(previous.collectionId, { $pull: { chatIds: chat._id } });
+      }
+      if (collectionId) {
+        await Collection.findByIdAndUpdate(collectionId, { $addToSet: { chatIds: chat._id } });
+      }
+    }
+    res.json({ ok: true, chat });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/chat/:chatId', async (req, res) => {
+  try {
+    const Chat = require('./models/Chat');
+    const Collection = require('./models/Collection');
+    const chat = await Chat.findById(req.params.chatId).lean();
+    if (!chat) return res.status(404).json({ error: 'Chat not found' });
+    if (chat.collectionId) {
+      await Collection.findByIdAndUpdate(chat.collectionId, { $pull: { chatIds: chat._id } });
+    }
+    await Chat.findByIdAndDelete(req.params.chatId);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // API: reprocess book with vision
