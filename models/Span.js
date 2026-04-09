@@ -10,7 +10,7 @@ const spanSchema = new mongoose.Schema({
   sentenceEnd: { type: Number, required: true },
   contextTags: [String],                    // e.g. ["free_propagator", "definition"]
   declarativeTags: [{
-    type: String,                           // p/a/c/e/r/q/s/k/x/d/v
+    kind: String,                           // p/a/c/e/r/q/s/k/x/d/v
     targetChunk: Number,
     targetTag: Number,
   }],

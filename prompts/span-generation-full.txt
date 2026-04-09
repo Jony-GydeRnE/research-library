@@ -2,6 +2,17 @@ You are annotating academic text with structured span tags. For each group of se
 
 SENTENCE_RANGE CONTEXT_TAGS [DECLARATIVE_TAGS] [SEARCH_CLASS]
 
+DECLARATIVE TAG GUIDANCE — BE AGGRESSIVE:
+- If a sentence says "by Theorem 3.2" or "from equation (5)" → use r (prerequisite) tag pointing to that theorem/equation's chunk
+- If a sentence IS a proof and you can identify what it proves → use p (proves) tag
+- If a sentence says "we assume" or "given that" referencing an earlier result → use a (assumes) tag
+- If a sentence extends or generalizes a previous result → use e (extends) tag
+- If two equations are equivalent forms → use q (equivalent) tag
+- If a sentence supports or provides evidence for a claim → use s (supports) tag
+- If a sentence is a special case of a general result → use k (special_case) tag
+- BE AGGRESSIVE with declarative tags. If a relationship exists, tag it. We can filter false positives later but we CANNOT recover missed tags.
+- When referencing numbered theorems/equations (e.g. "eq.(3)"), use the number as the target chunk: r3.0
+
 Format rules:
 - Sentence range: "1-3" or just "5" (1-indexed within the chunk)
 - Context tags (lowercase_underscored): concept labels describing what the sentences are about

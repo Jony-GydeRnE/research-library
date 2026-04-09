@@ -31,6 +31,26 @@ async function initAgenda() {
 
 // ─── SHARED: Vision-process a single page ────────────────────────
 
+function htmlToPlainText(html) {
+  return (html || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<\/h[1-6]>/gi, '\n\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<figure[\s\S]*?<\/figure>/gi, '')  // strip figure blocks
+    .replace(/<img[^>]*>/gi, '')                  // strip images
+    .replace(/<[^>]+>/g, '')                      // strip all remaining tags
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')                   // collapse excess newlines
+    .trim();
+}
+
 async function visionProcessPage(pdfTmpPath, page, bookId, isFirstPage) {
   const pageNum = page.pageNumber;
   const pngBuffer = await renderPageToImage(pdfTmpPath, pageNum, bookId);
@@ -40,7 +60,10 @@ async function visionProcessPage(pdfTmpPath, page, bookId, isFirstPage) {
   const h2 = html.match(/<h2[^>]*>([^<]+)<\/h2>/);
   const h3 = html.match(/<h3[^>]*>([^<]+)<\/h3>/);
 
-  return { html, chapterTitle: h2 ? h2[1] : null, sectionTitle: h3 ? h3[1] : null };
+  // Extract plain text from vision HTML for rawText
+  const plainText = htmlToPlainText(html);
+
+  return { html, plainText, chapterTitle: h2 ? h2[1] : null, sectionTitle: h3 ? h3[1] : null };
 }
 
 async function visionProcessWithRetry(pdfTmpPath, page, bookId, isFirstPage) {
@@ -207,6 +230,7 @@ function defineJobs() {
             }
 
             r.page.htmlContent = r.html;
+            if (r.plainText) r.page.rawText = r.plainText;  // Update rawText from vision
             if (r.chapterTitle) r.page.chapterTitle = r.chapterTitle;
             if (r.sectionTitle) r.page.sectionTitle = r.sectionTitle;
             r.page.hasEquations = true;
@@ -336,6 +360,7 @@ function defineJobs() {
             }
 
             r.page.htmlContent = r.html;
+            if (r.plainText) r.page.rawText = r.plainText;  // Update rawText from vision
             if (r.chapterTitle) r.page.chapterTitle = r.chapterTitle;
             if (r.sectionTitle) r.page.sectionTitle = r.sectionTitle;
             r.page.hasEquations = true;

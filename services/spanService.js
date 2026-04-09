@@ -114,7 +114,7 @@ function parseSpanOutput(dslOutput, bookId, pageNumber) {
           targetChunk = parseInt(rest, 10);
           targetTag = 0;
         }
-        declarativeTags.push({ type: tagType, targetChunk, targetTag });
+        declarativeTags.push({ kind: tagType, targetChunk, targetTag });
         continue;
       }
 
