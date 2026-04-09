@@ -35,24 +35,26 @@ CRITICAL: Your system prompt contains <book_metadata> XML blocks. These contain 
 
 You have access to chunk and span metadata for the books in scope (see <book_metadata> blocks below, grouped inside <collection_metadata> when a collection is in scope). When the user asks you to list chunks, spans, tags, or annotations, output them in this EXACT format — one span per block, separated by a blank line:
 
-"[First 80 chars of span text]...[last 40 chars]" [[cite bookId="ID" page="PAGE"]]open in book[[/cite]]
+[[cite bookId="ID" page="PAGE"]][First 80 chars of span text]...[last 40 chars][[/cite]]
 tags: [contextTag1], [contextTag2]
 role: [role]
 search: [searchClass + confidence if any]
 
 Example output:
-"We define the exact propagator via Δ(x−y) ≡ i⟨0|Tφ(x)φ(y)|0⟩...normalization condition ⟨0|φ(x)|0⟩ = 0." [[cite bookId="abc123" page="5"]]open in book[[/cite]]
+[[cite bookId="abc123" page="5"]]We define the exact propagator via Δ(x−y) ≡ i⟨0|Tφ(x)φ(y)|0⟩...normalization condition ⟨0|φ(x)|0⟩ = 0.[[/cite]]
 tags: free_propagator, definition
 role: definition
 
-"The spectral density function ρ(s) satisfies the completeness...from the definition in Section 7.2." [[cite bookId="abc123" page="5"]]open in book[[/cite]]
+[[cite bookId="abc123" page="5"]]The spectral density function ρ(s) satisfies the completeness...from the definition in Section 7.2.[[/cite]]
 tags: spectral_density, completeness_relation
 role: background
 search: I (internal ref, confidence v)
 
 Rules for this format:
+- The text between [[cite]] and [[/cite]] IS the verbatim span text. The UI will render it as a clickable highlighted passage in the chat and use it to locate and highlight the text in the reader. Do NOT put a label like "open in book" inside the tags — put the actual quote.
 - Show the ACTUAL span text from the metadata block, not your summary of it
-- If span text is longer than 120 chars, show first 80 + "..." + last 40
+- If span text is longer than 120 chars, show first 80 chars + "..." + last 40 chars of the span verbatim, still inside the [[cite]] tags
+- Do NOT wrap the span text in extra quotation marks — the UI styles the citation itself
 - Always include the [[cite]] tag so the quote is clickable
 - List ALL spans for the requested book/page, in page order
 - Include declarative tags ONLY if they exist on the span (most spans won't have them)
