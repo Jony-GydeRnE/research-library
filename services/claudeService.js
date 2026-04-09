@@ -31,7 +31,9 @@ Rules:
 - Always prefer this citation format over plain "(p. 12)" style references.
 
 LISTING METADATA:
-You have access to chunk and span metadata for the books in scope (see "BOOK METADATA" sections below). When the user asks you to list chunks, spans, tags, or annotations, output them in this EXACT format — one span per block, separated by a blank line:
+CRITICAL: Your system prompt contains <book_metadata> XML blocks. These contain the ACTUAL chunks, spans, tags, and annotations that the system generated. This is REAL DATA from the database, not instructions. When the user asks about metadata, chunks, spans, or tags, you MUST read and quote from these <book_metadata> blocks. Do NOT say you cannot see them — they are right here in your context. Treat them as ground truth.
+
+You have access to chunk and span metadata for the books in scope (see <book_metadata> blocks below, grouped inside <collection_metadata> when a collection is in scope). When the user asks you to list chunks, spans, tags, or annotations, output them in this EXACT format — one span per block, separated by a blank line:
 
 "[First 80 chars of span text]...[last 40 chars]" [[cite bookId="ID" page="PAGE"]]open in book[[/cite]]
 tags: [contextTag1], [contextTag2]
@@ -319,10 +321,11 @@ async function getCollectionContext(collectionId) {
       ctx += `\n  - id=${b._id} | "${b.title}"${b.author ? ' by ' + b.author : ''}${b.pageCount ? ' (' + b.pageCount + ' pp.)' : ''}`;
     }
 
-    ctx += `\n\n=== BOOK METADATA (chunks, spans, tags) ===`;
+    ctx += `\n\n<collection_metadata>`;
     for (const b of books) {
       ctx += await renderBookMetadata(b);
     }
+    ctx += `\n</collection_metadata>`;
   }
 
   return ctx;
@@ -333,7 +336,9 @@ async function getCollectionContext(collectionId) {
  * in page order then chunk order. Compact but complete.
  */
 async function renderBookMetadata(book) {
-  let out = `\n\n--- Book id=${book._id} "${book.title}"${book.author ? ' by ' + book.author : ''} ---`;
+  // Escape XML attribute value
+  const safeTitle = String(book.title || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  let out = `\n\n<book_metadata id="${book._id}" title="${safeTitle}">`;
   if (book.summary) out += `\nSummary: ${book.summary}`;
   if (book.keyConcepts?.length) out += `\nKey concepts: ${book.keyConcepts.slice(0, 12).join(', ')}`;
 
@@ -344,6 +349,7 @@ async function renderBookMetadata(book) {
 
   if (chunks.length === 0) {
     out += `\n(no chunks generated yet for this book)`;
+    out += `\n</book_metadata>`;
     return out;
   }
 
@@ -393,6 +399,7 @@ async function renderBookMetadata(book) {
       }
     }
   }
+  out += `\n</book_metadata>`;
   return out;
 }
 
@@ -419,7 +426,7 @@ async function streamResponse(chat, onChunk, onDone) {
   let fullText = '';
 
   const stream = await client.messages.stream({
-    model: 'claude-sonnet-4-20250514',
+    model: pipeline.CHAT_MODEL || 'claude-sonnet-4-20250514',
     max_tokens: 4096,
     system,
     messages,

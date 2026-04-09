@@ -45,7 +45,7 @@ module.exports = {
 
   // ─── CHAT CONTEXT ────────────────────────────────────────────
   CHAT_CONTEXT_BUDGET: 60000,
-  CHAT_MODEL: 'claude-opus-4-6',
+  CHAT_MODEL: 'claude-sonnet-4-20250514',
   CHAT_STREAMING: true,
   CHAT_MAX_HISTORY: 20,
 
