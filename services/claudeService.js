@@ -166,6 +166,16 @@ async function buildContext(chat) {
   }
 
   console.log(`[claudeService] Final context: ~${totalTokens} tokens, ${sections.length} sections`);
+
+  // ─── TEMPORARY DEBUG ─────────────────────────────────────────
+  console.log('[claudeService] FULL SYSTEM PROMPT LENGTH:', system.length, 'chars, ~' + Math.ceil(system.length/4) + ' tokens');
+  console.log('[claudeService] FIRST 500 CHARS OF CONTEXT:', system.substring(0, 500));
+  console.log('[claudeService] LAST 500 CHARS OF CONTEXT:', system.substring(system.length - 500));
+  console.log('[claudeService] Context includes "spans"?', system.includes('span'));
+  console.log('[claudeService] Context includes "chunk"?', system.includes('chunk'));
+  console.log('[claudeService] Context includes "contextTags"?', system.includes('contextTags'));
+  // ─────────────────────────────────────────────────────────────
+
   return system;
 }
 
