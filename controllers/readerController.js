@@ -5,7 +5,10 @@ const { getSidebarData } = require('../services/sidebarData');
 exports.showReader = async (req, res) => {
   try {
     const { bookId } = req.params;
-    const pageNumber = parseInt(req.params.pageNumber, 10) || 1;
+    const pageNumber =
+      parseInt(req.params.pageNumber, 10) ||
+      parseInt(req.query.page, 10) ||
+      1;
 
     const book = await Book.findById(bookId).lean();
     if (!book) return res.redirect('/collections');

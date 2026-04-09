@@ -208,11 +208,14 @@ window.MathJax = {
   function renderCitation(c) {
     var book = booksMap[c.bookId];
     var title = book ? book.title : 'Book';
-    var url = '/reader/' + encodeURIComponent(c.bookId) + '/page/' + encodeURIComponent(c.page) +
-              '?highlight=' + encodeURIComponent(c.quote);
+    // First 20 words of the quote, URL-encoded, for the highlight param
+    var highlightWords = c.quote.split(/\s+/).filter(Boolean).slice(0, 20).join(' ');
+    var url = '/reader/' + encodeURIComponent(c.bookId) +
+              '?page=' + encodeURIComponent(c.page) +
+              '&highlight=' + encodeURIComponent(highlightWords);
     var safeQuote = c.quote.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     var safeTitle = title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    return '<a class="chat-cite" href="' + url + '" target="_blank" rel="noopener" title="Open ' + safeTitle + ' p.' + c.page + '">' +
+    return '<a class="chat-cite" href="' + url + '" data-cite-url="' + url + '" title="Open ' + safeTitle + ' p.' + c.page + '">' +
            '<span class="chat-cite-quote">' + safeQuote + '</span>' +
            '<span class="chat-cite-source">— ' + safeTitle + ', p.' + c.page + '</span>' +
            '</a>';
@@ -287,6 +290,24 @@ window.MathJax = {
     result = result.replace(/`([^`]+)`/g, '<code>$1</code>');
     return result;
   }
+
+  // Intercept citation link clicks: if a reader split panel/iframe exists,
+  // update it in place; otherwise navigate in the same tab (no new tab).
+  messagesEl.addEventListener('click', function(e) {
+    var link = e.target.closest && e.target.closest('a.chat-cite');
+    if (!link) return;
+    e.preventDefault();
+    var url = link.getAttribute('data-cite-url') || link.getAttribute('href');
+    if (!url) return;
+    var readerIframe = document.querySelector('iframe.split-reader-iframe');
+    var readerPanel = document.querySelector('.split-reader-panel iframe');
+    var target = readerIframe || readerPanel;
+    if (target) {
+      target.src = url;
+    } else {
+      window.location.href = url;
+    }
+  });
 
   sendBtn.addEventListener('click', send);
   input.addEventListener('keydown', function(e) {
