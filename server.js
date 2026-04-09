@@ -70,6 +70,17 @@ app.post('/api/books/:bookId/reprocess-vision', async (req, res) => {
   }
 });
 
+// API: generate chunks for a book
+app.post('/api/books/:bookId/generate-chunks', async (req, res) => {
+  try {
+    const { generateChunksForBook } = require('./services/chunkService');
+    const result = await generateChunksForBook(req.params.bookId);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // API: generate spans for a book
 app.post('/api/books/:bookId/generate-spans', async (req, res) => {
   try {
