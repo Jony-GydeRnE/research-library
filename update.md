@@ -5,6 +5,54 @@ A rolling knowledge log of the project. **Newest entries at the top.** Read top-
 Maintained by Claude Code (CC) on a ~3-5-response cadence. Bad attempts that got fixed in the same session are not listed — only the final state of each session's work matters. Older sections are trimmed to one-line summaries when their detail is fully superseded; key decisions and target metrics are preserved so future sessions can recall them. Commit messages handle the comprehensive change record.
 
 
+## 2026-04-11 evening — Book 2 LLM regen experiment + per-book Info & stats modal
+
+Two pieces this round. The first one is the more important finding: **a clean LLM regeneration of Book 2 produced WORSE edge precision than the manual targeted tag patch from earlier in the day, contradicting Claude's prediction.** The second is a UX feature the user asked for so they can sense-check ingestion quality and rough $ spend per book.
+
+### 1. Book 2 LLM regen experiment — empirical finding
+
+Per Claude's recommendation: ran `generateSpansForBook(book2._id)` which wipes spans, regenerates them (58 pages, 1104 spans, 7.4 minutes, ~$0.30), regenerates chunks, citation spans, bibliography, edges. Then re-ran `resolveSEdgesForLibrary` so other books' edges point to the fresh chunk IDs.
+
+**Result: regression.** Down from 12 edges at ~95% to 11 edges at ~75%:
+- 5 edges that were `f` (overlap=2) dropped back to `j` (overlap=1)
+- "Discovery + hidden_zeros" Understanding-zeros edges went BACK to landing on the p1 abstract instead of Section 3.1, because the LLM tagged the new abstract chunk as `[hidden_zeros, discovery, observation]` (giving the abstract a 2-tag overlap with the source span, while no body chunk had both tags)
+- Lost the `tr_phi3_conjecture` / `uniqueness_conjecture` body target entirely — no chunk in the regen had those tags, even though p49 0e8e1d *is* the chunk that discusses the ansatz uniqueness conjecture
+- The Section 3.1 examples chunk on p11 (0e8a96) ended up tagged just `[tr_phi3_zeros, feynman_diagrams]`, which is more specific than the old `amplitude_zeros` but doesn't match any source span tag — so Rodina p2's `amplitude_zeros` edge stopped being able to find it
+
+**Why:** the LLM tagging spans/chunks doesn't know which chunks are *citation targets*. It tags for narrative coherence ("what's this paragraph about"), which is the right local objective but the wrong global one. The result is more semantically precise tags that don't match the *vocabulary* the source spans (in *other* books) use to refer to the same content. This is a vocabulary-alignment problem, not a specificity problem.
+
+**Recovery:** re-applied targeted tag iteration on the new chunk IDs (same 6 chunks as the morning patch, mapped to new IDs). Edges back to 11 at ~95%, with all the previously-fixed body targets restored. The regen *did* leave behind some genuinely better tag vocabulary in places (e.g. `tr_phi3_zeros` instead of `amplitude_zeros`, `gluon_zeros` instead of `polarization_vectors`), but the citation-target chunks needed manual hints to bridge to the source-side vocabulary.
+
+**Lessons for the next iteration:**
+- Don't rely on regen alone to improve citation matching. Regen is a good baseline but loses any manual tag work — a Book 2 regen invalidates every targeted patch we've ever made.
+- The right long-term fix is either (a) a tag-vocabulary normalization layer in the resolver that maps `tr_phi3_zeros ≈ amplitude_zeros ≈ hidden_zeros` so the LLM's narrative tags match the source-side vocabulary, OR (b) a post-regen "citation-target enrichment" pass that walks every source-side span tag and ensures at least one body chunk in each potentially-cited book has that tag explicitly.
+- Targeted manual iteration is currently the highest-quality lever we have. Worth persisting between regens — could store as a `tagOverrides` field on the chunk so future regens preserve them.
+
+Cost log: 1 Book 2 regen ≈ 7m, ~$0.30 (vision was already cached, so this was span-only).
+
+### 2. Kebab menu + Info & stats modal on All Files page
+
+User flagged that the All Files page had no working kebab — confirmed it had no kebab at all. Added the same three-dot menu the collections page already had, with one new item: **Info & stats**.
+
+**New endpoint** `GET /api/books/:id/stats` (`controllers/booksController.js`) returns:
+- counts: pages, vision pages, chunks, spans, tags, edges in/out
+- distributions for chunks/page, spans/page, tags/chunk, tags/span — each with mean, median, stddev, min/max
+- cost estimate (rough, per-page constants in the controller)
+- storage: source bytes (PDF on disk if local, else extracted text), metadata bytes (sum of stringified pages+chunks+spans+edges+book), and the (source+metadata)/source ratio the user explicitly asked about
+- retrievalMs: how long the aggregation took
+
+**Modal** (in `views/files.ejs` and mirrored to `views/collections.ejs`): a wide modal with a 6-card stats grid, distribution table, cost breakdown, storage list, and a retrieval-time footnote. Uses existing app theme variables so it adopts space/nebula/midnight automatically.
+
+Cost constants (`COST_PER_VISION_PAGE = 0.015`, `COST_PER_SPAN_PAGE = 0.005`, `COST_PER_METADATA = 0.01`) are pegged to current GPT-4o pricing and the Vision doc estimate. They will drift; treat as order-of-magnitude. The modal note tells the user this.
+
+### Open follow-ups (priority order)
+1. **Live click-through test** of all 11 cross-book citations in the app (still the next user-facing milestone — was deferred from this morning).
+2. **Tag-vocabulary normalization** — either a synonym layer in the resolver or persistent `tagOverrides` so manual patches survive regens. This is the path to 100% precision without hand-tuning every chunk.
+3. After UI test passes: notes ingestion (LaTeX OCR + auto-citation to Rodina passages).
+4. Process geometric-background through the span pipeline so G/W [31] gets a real body target.
+5. Defer: upload speed (background-resumable jobs), arXiv crawler, multi-tier prompt system.
+
+
 ## 2026-04-11 PM — Bibliography column fix + Book 2 targeted tag iteration (75% → ~95% edge precision)
 
 Two pieces of work this session, both aimed at sharpening the 12 cross-book edges to bulletproof quality before adding more books or features.
