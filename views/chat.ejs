@@ -49,6 +49,10 @@ window.MathJax = {
         Remove from project
       </button>
       <% } %>
+      <button class="action-item" data-action="copy-text">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        Copy chat as text
+      </button>
       <div class="action-divider"></div>
       <button class="action-item action-danger" data-action="delete">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -461,6 +465,8 @@ window.MathJax = {
       } else if (action === 'remove-project') {
         if (!confirm('Remove this chat from its collection?')) return;
         patchChat({ collectionId: null }).then(function() { location.reload(); });
+      } else if (action === 'copy-text') {
+        copyChatAsPlainText();
       } else if (action === 'delete') {
         if (!confirm('Delete this chat permanently?')) return;
         fetch('/api/chat/' + chatId, { method: 'DELETE' }).then(function() {
@@ -478,6 +484,48 @@ window.MathJax = {
       var idx = parseInt(pick, 10) - 1;
       if (!isNaN(idx) && cols[idx]) onPick(cols[idx]._id);
     });
+  }
+
+  // Fetch the full chat message log and copy to clipboard as plain
+  // text. Format: title at top, then each message as a
+  // "===== ROLE (timestamp) =====" header followed by the body.
+  // Used for sharing test results without copying message-by-message.
+  function copyChatAsPlainText() {
+    fetch('/chat/' + chatId + '/api/messages')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var msgs = (data && data.messages) || [];
+        var title = (crumbTitleEl && crumbTitleEl.textContent) || 'Chat';
+        var lines = ['# ' + title, ''];
+        msgs.forEach(function(m) {
+          var role = (m.role || 'unknown').toUpperCase();
+          var ts = m.timestamp ? new Date(m.timestamp).toISOString() : '';
+          lines.push('===== ' + role + (ts ? ' (' + ts + ')' : '') + ' =====');
+          lines.push((m.content || '').toString());
+          lines.push('');
+        });
+        var text = lines.join('\n');
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(function() {
+            alert('Copied ' + msgs.length + ' messages (' + text.length + ' chars) to clipboard.');
+          }, function() { fallbackCopyText(text); });
+        } else {
+          fallbackCopyText(text);
+        }
+      })
+      .catch(function(err) { alert('Failed to fetch chat: ' + (err.message || err)); });
+  }
+
+  function fallbackCopyText(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.top = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); alert('Copied (' + text.length + ' chars).'); }
+    catch (e) { alert('Copy failed.'); }
+    document.body.removeChild(ta);
   }
 })();
 </script>

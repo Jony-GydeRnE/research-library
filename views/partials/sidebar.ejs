@@ -113,6 +113,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         Copy to…
       </button>
+      <button type="button" class="chat-action-btn" data-action="copy-text">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        Copy chat as text
+      </button>
       <button type="button" class="chat-action-btn chat-action-danger" data-action="delete">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
         Delete
@@ -425,8 +429,65 @@
         if (action === 'delete') performAction('delete');
         else if (action === 'move') showCollections('move');
         else if (action === 'copy') showCollections('copy');
+        else if (action === 'copy-text') copyChatAsText();
       });
     });
+
+    // Fetch the full chat message log for the active chat and copy
+    // it to the clipboard as plain text. Format: title at top, then
+    // each message as a "===== ROLE (timestamp) =====" header
+    // followed by the message body. Used for sharing test results
+    // without manually piecing together copy-from-each-message.
+    function copyChatAsText() {
+      if (!activeChat) { closePopup(); return; }
+      var id = activeChat.id;
+      var title = activeChat.title || 'Untitled';
+      fetch('/chat/' + encodeURIComponent(id) + '/api/messages')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var msgs = (data && data.messages) || [];
+          var lines = [];
+          lines.push('# ' + title);
+          lines.push('');
+          msgs.forEach(function(m) {
+            var role = (m.role || 'unknown').toUpperCase();
+            var ts = m.timestamp ? new Date(m.timestamp).toISOString() : '';
+            lines.push('===== ' + role + (ts ? ' (' + ts + ')' : '') + ' =====');
+            lines.push((m.content || '').toString());
+            lines.push('');
+          });
+          var text = lines.join('\n');
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(function() {
+              alert('Copied ' + msgs.length + ' messages (' + text.length + ' chars).');
+              closePopup();
+            }, function() {
+              fallbackCopy(text);
+              closePopup();
+            });
+          } else {
+            fallbackCopy(text);
+            closePopup();
+          }
+        })
+        .catch(function(err) {
+          alert('Failed to fetch chat: ' + (err.message || err));
+          closePopup();
+        });
+    }
+
+    // Fallback for browsers without async clipboard API.
+    function fallbackCopy(text) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.top = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); alert('Copied (' + text.length + ' chars).'); }
+      catch (e) { alert('Copy failed.'); }
+      document.body.removeChild(ta);
+    }
     backBtn.addEventListener('click', function(e) { e.preventDefault(); showMain(); });
 
     // Close on outside click / escape
