@@ -122,10 +122,20 @@ async function ensureCitationSpansForBook(bookId) {
     // Pull every existing span in this chunk so we can detect which
     // citation keys are already covered by a span (any span, not
     // just role=citation — what we care about is "does the span
-    // text already contain this [N] marker").
+    // text reference this citation key").
     const existingSpans = await Span.find({ chunkId: chunk._id })
       .select('_id spanText role searchClass searchConfidence')
       .lean();
+
+    // Pre-compute the set of citation keys covered by each existing
+    // span using the SAME extractor we use for the chunk text. This
+    // correctly handles ranges like [22-25] and comma-lists like
+    // [22, 23, 24] — a literal substring search for "[22]" misses
+    // them and falsely creates duplicate synthetic spans.
+    const existingSpanKeys = existingSpans.map(s => ({
+      span: s,
+      keys: new Set(extractCitationKeysFromText(s.spanText)),
+    }));
 
     const newSpanIds = [];
 
@@ -138,9 +148,9 @@ async function ensureCitationSpansForBook(bookId) {
     const sentenceToKeys = new Map();
     for (const key of keys) {
       // Skip if any existing span already covers this key — handle
-      // promotion below.
-      const marker = '[' + key + ']';
-      const matching = existingSpans.filter(s => s.spanText && s.spanText.includes(marker));
+      // promotion below. Use the precomputed key set, NOT a literal
+      // substring search.
+      const matching = existingSpanKeys.filter(e => e.keys.has(key)).map(e => e.span);
       if (matching.length > 0) {
         const target = matching.find(s => s.role !== 'citation') || matching[0];
         const update = {};

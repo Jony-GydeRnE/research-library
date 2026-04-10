@@ -214,6 +214,30 @@ function tagTextMatchScore(sourceTags, targetText) {
 //   Floor: at least one of (tag overlap, text match) must be > 0.
 //   Returns null if no chunk shares anything with the citing span.
 
+// Detect a bibliography-page chunk. These should NEVER be edge
+// targets — they're just lists of references, and any text-keyword
+// matching against them is spurious (the references mention many
+// concepts but the chunk itself doesn't actually CONTAIN those
+// concepts as content).
+//
+// Heuristics (any one triggers):
+//   1. 4+ "[N]" markers in the full source text — real prose
+//      chunks have 0-2 inline citations, bib chunks have many.
+//   2. Density: more than 1 "[N]" marker per 200 chars of text.
+//      A 200-char prose chunk with 2 citations is borderline; a
+//      400-char chunk with 4 citations is clearly a bib block.
+//   3. The chunk text starts with a "[N]" marker followed by
+//      author initials ("[41] R. H. Boels...").
+function isBibliographyChunk(chunk) {
+  if (!chunk || !chunk.sourceText) return false;
+  const text = chunk.sourceText;
+  const matches = text.match(/\[\d+\]/g) || [];
+  if (matches.length >= 4) return true;
+  if (matches.length >= 2 && text.length > 0 && (matches.length / text.length) > (1 / 200)) return true;
+  if (/^\s*\[\d+\]\s+[A-Z]\.\s*[A-Z\-]/.test(text)) return true;
+  return false;
+}
+
 async function findBestTargetChunk(targetBookId, citingSpan) {
   const chunks = await Chunk.find({ bookId: targetBookId })
     .select('_id chunkIndex pageNumber contextTags structuralType sourceText')
@@ -225,6 +249,9 @@ async function findBestTargetChunk(targetBookId, citingSpan) {
 
   let best = null;
   for (const c of chunks) {
+    // Skip bibliography-page chunks — they're never valid edge
+    // targets. See isBibliographyChunk for the heuristic.
+    if (isBibliographyChunk(c)) continue;
     const targetTags = new Set((c.contextTags || []).map(t => t.toLowerCase()));
     let overlap = 0;
     for (const t of sourceTags) if (targetTags.has(t)) overlap++;
