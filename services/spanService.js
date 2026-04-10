@@ -24,6 +24,36 @@ function getOpenAI() {
   return openai;
 }
 
+// ─── HTML → PLAIN TEXT (preserves LaTeX source) ─────────────────
+// The vision pipeline produces HTML containing real LaTeX delimiters
+// (\(...\), \[...\]) inside <p>/<div>/<h2>/<div class="math-display">.
+// Stripping the HTML tags leaves the LaTeX source intact, which is what
+// we want both for the LLM (so it understands the math) and for the
+// citation matcher (so the highlight URL contains real symbol-bearing
+// text instead of pdf-parse garbage like "˜X 2,5˜˜˜˜").
+function stripHtml(html) {
+  return (html || '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<figure[\s\S]*?<\/figure>/gi, '')
+    .replace(/<img[^>]*>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<\/h[1-6]>/gi, '\n\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 // ─── SESSION STATE ───────────────────────────────────────────────
 
 let currentSessionId = null;
@@ -258,13 +288,29 @@ async function generateSpansForPage(bookId, pageNumber, rawText, preAnnotations,
  */
 async function generateSpansForBook(bookId) {
   const pages = await Page.find({ bookId })
-    .select('pageNumber rawText structuralAnnotations')
+    .select('pageNumber rawText htmlContent visionProcessed structuralAnnotations')
     .sort({ pageNumber: 1 });
 
   if (pages.length === 0) return { pagesProcessed: 0, spansCreated: 0 };
 
-  const skipped = pages.filter(p => !p.rawText).length;
-  console.log('[spanService] Pages with no rawText (skipped): ' + skipped + '/' + pages.length);
+  // For each page, pick the best available source text:
+  // 1. Vision-stripped HTML (preserves LaTeX source, no pdf-parse garbage)
+  // 2. rawText (vision pipeline overwrites this with vision plain text on
+  //    success, but reading htmlContent directly is safer in case spans
+  //    were generated before that overwrite happened, or in case rawText
+  //    got reverted somewhere)
+  // A page is only "skipped" if BOTH sources are empty.
+  const sources = pages.map(p => {
+    if (p.visionProcessed && p.htmlContent) {
+      return { page: p, text: stripHtml(p.htmlContent), source: 'vision' };
+    }
+    return { page: p, text: p.rawText || '', source: 'raw' };
+  });
+
+  const skipped = sources.filter(s => !s.text).length;
+  const visionCount = sources.filter(s => s.source === 'vision' && s.text).length;
+  console.log('[spanService] Source mix: ' + visionCount + ' vision, ' +
+    (sources.length - skipped - visionCount) + ' rawText, ' + skipped + ' skipped (empty), total ' + sources.length);
 
   // Clear existing spans for this book
   await Span.deleteMany({ bookId });
@@ -274,15 +320,21 @@ async function generateSpansForBook(bookId) {
   let totalSpans = 0;
   let pagesProcessed = 0;
 
-  for (let i = 0; i < pages.length; i++) {
-    const page = pages[i];
+  for (let i = 0; i < sources.length; i++) {
+    const { page, text, source } = sources[i];
     const isNew = i === 0 || shouldResetSession();
     if (isNew && i > 0) startNewSession();
+
+    if (!text) {
+      console.log('[spanService] SKIPPING page ' + page.pageNumber + ' — no source text (vision=' + page.visionProcessed + ', html=' + !!page.htmlContent + ', raw=' + !!page.rawText + ')');
+      pagesProcessed++;
+      continue;
+    }
 
     const spans = await generateSpansForPage(
       bookId,
       page.pageNumber,
-      page.rawText,
+      text,
       page.structuralAnnotations || [],
       isNew
     );
@@ -291,7 +343,7 @@ async function generateSpansForBook(bookId) {
     pagesProcessed++;
 
     if ((i + 1) % 5 === 0) {
-      console.log(`[spanService] ${pagesProcessed}/${pages.length} pages, ${totalSpans} spans so far`);
+      console.log(`[spanService] ${pagesProcessed}/${sources.length} pages (using ${source} for last), ${totalSpans} spans so far`);
     }
   }
 
