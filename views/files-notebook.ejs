@@ -1,5 +1,17 @@
 <%- include('partials/layout-start') %>
 
+<!-- MathJax for rendering LaTeX inside note bodies and highlighted quotes.
+     Same config the reader and chat views use so inline \( \) and display
+     \[ \] both typeset. Loaded async; we also re-typeset after the page
+     renders so notes saved with LaTeX show equations, not raw source. -->
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)'], ['$', '$']], displayMath: [['\\[', '\\]'], ['$$', '$$']] },
+  options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] },
+};
+</script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+
 <div class="notebook-page">
   <div class="notebook-topbar">
     <a href="/files/notes" class="notebook-back-link">
@@ -33,17 +45,35 @@
       <a href="/reader/<%= book._id %>" class="btn btn-primary">Open the reader</a>
     </div>
   <% } else { %>
-    <div class="notebook-scroll">
+    <div class="notebook-scroll" id="notebookScroll">
       <% notes.forEach(function(note, idx) { %>
+        <%
+          // Build the reader URL. When the note is attached to a highlight
+          // we send its text as ?highlight=... so the reader's 4-pass
+          // matcher can jump to the exact passage and wrap it in the
+          // callout box. &sidebar=collapsed matches the chat citation
+          // behavior so the reader opens clean.
+          var pageHref = '/reader/' + book._id;
+          if (note.pageNumber) pageHref += '/page/' + note.pageNumber;
+          var hlText = (note.highlight && note.highlight.text) ? note.highlight.text : '';
+          if (hlText) {
+            var words = hlText.split(/\s+/).filter(Boolean).slice(0, 60).join(' ');
+            pageHref += '?sidebar=collapsed&highlight=' + encodeURIComponent(words);
+          } else {
+            pageHref += '?sidebar=collapsed';
+          }
+        %>
         <article class="notebook-entry" data-note-id="<%= note._id %>">
           <div class="notebook-entry-meta">
             <% if (note.pageNumber) { %>
-              <a href="/reader/<%= book._id %>/page/<%= note.pageNumber %>" class="notebook-entry-page">Page <%= note.pageNumber %></a>
+              <a href="<%= pageHref %>" class="notebook-entry-page">Page <%= note.pageNumber %></a>
             <% } %>
             <span class="notebook-entry-date"><%= new Date(note.createdAt).toLocaleDateString() %></span>
           </div>
-          <% if (note.highlight && note.highlight.text) { %>
-            <blockquote class="notebook-entry-quote"><%= note.highlight.text %></blockquote>
+          <% if (hlText) { %>
+            <a href="<%= pageHref %>" class="notebook-entry-quote-link" title="Open in reader at this highlight">
+              <blockquote class="notebook-entry-quote"><%= hlText %></blockquote>
+            </a>
           <% } %>
           <% if (note.title) { %>
             <h3 class="notebook-entry-title"><%= note.title %></h3>
@@ -54,5 +84,27 @@
     </div>
   <% } %>
 </div>
+
+<script>
+  // Force a MathJax typeset pass once the notebook has rendered so notes
+  // saved with inline \(...\) or display \[...\] show as equations, not
+  // raw source. Uses startup.promise so we don't race MathJax's own
+  // initial scan.
+  (function () {
+    var scroll = document.getElementById('notebookScroll');
+    if (!scroll) return;
+    function typeset() {
+      if (window.MathJax && window.MathJax.typesetPromise) {
+        window.MathJax.typesetPromise([scroll]).catch(function () {});
+      }
+    }
+    if (window.MathJax && window.MathJax.startup && window.MathJax.startup.promise) {
+      window.MathJax.startup.promise.then(typeset);
+    } else {
+      // MathJax may not have attached yet — wait until window.load.
+      window.addEventListener('load', typeset);
+    }
+  })();
+</script>
 
 <%- include('partials/layout-end') %>

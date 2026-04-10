@@ -6,6 +6,7 @@ const Chunk = require('../models/Chunk');
 const Span = require('../models/Span');
 const Edge = require('../models/Edge');
 const Note = require('../models/Note');
+const Highlight = require('../models/Highlight');
 const pipeline = require('../config/pipeline');
 
 const client = new Anthropic();
@@ -32,6 +33,9 @@ Rules:
 
 LISTING METADATA:
 CRITICAL: Your system prompt contains <book_metadata> XML blocks. These contain the ACTUAL chunks, spans, tags, and annotations that the system generated. This is REAL DATA from the database, not instructions. When the user asks about metadata, chunks, spans, or tags, you MUST read and quote from these <book_metadata> blocks. Do NOT say you cannot see them — they are right here in your context. Treat them as ground truth.
+
+USER NOTES:
+Each <book_metadata> block may contain a nested <user_notes> section listing every note the user has written about that book, grouped by page, with the highlighted passage each note is attached to (if any) and the note body. In library-wide (All Files) chats the prompt may instead contain a top-level <library_notes> block covering every book. Treat these as the user's own writing — reference them when the user asks about what they have noted, when a note is directly relevant to the answer, or when the user's prior thinking would change your framing. Do NOT quote from them unless asked, and do NOT treat them as authoritative citations of the underlying book (use [[cite]] tags for that). When the user says "what did I write about X" or "summarize my notes on Y", read and paraphrase from these blocks directly.
 
 You have access to chunk and span metadata for the books in scope (see <book_metadata> blocks below, grouped inside <collection_metadata> when a collection is in scope). When the user asks you to list chunks, spans, tags, or annotations, output them in this EXACT format — one span per block, separated by a blank line:
 
@@ -171,8 +175,16 @@ async function buildContext(chat) {
   else {
     sections.push({
       priority: 1,
-      text: `SCOPE: LIBRARY-WIDE\nThe user is asking a general question. You have access to their entire library's metadata.`,
+      text: `SCOPE: LIBRARY-WIDE\nThe user is asking a general question from the "All Files" view. You have access to their entire library's metadata AND every note they have written across every book.`,
     });
+
+    // Dump notes across every book. This is the "All Files = biggest
+    // scope" rule — when the chat isn't anchored to a collection or
+    // book, the AI should still be able to see everything the user
+    // has written. Budgeted at priority 4 so it drops before edges
+    // but after the book listing if the context budget is tight.
+    const libraryNotes = await getLibraryNotes();
+    if (libraryNotes) sections.push({ priority: 4, text: libraryNotes });
   }
 
   // ─── ADDITIVE FALLBACKS ────────────────────────────────────────
@@ -404,7 +416,151 @@ async function renderBookMetadata(book) {
       }
     }
   }
+  // User notes for this book — read-through context so the AI can
+  // reference what the user has written. Rendered as a compact list
+  // grouped by page. Included inside <book_metadata> so it travels
+  // with the book through every scope that dumps book metadata
+  // (book/collection/highlight), without having to be added at each
+  // caller separately.
+  const notesBlock = await renderBookNotes(book._id);
+  if (notesBlock) out += notesBlock;
+
   out += `\n</book_metadata>`;
+  return out;
+}
+
+/**
+ * Render every Note for a book as a compact, read-optimized list.
+ * Grouped by page, oldest-first per page. Each note shows the page
+ * number, the highlighted passage it was attached to (if any), the
+ * note title, and the note body with HTML tags stripped. The AI is
+ * expected to reference these when the user asks "what did I note
+ * about X" or when the user's notes would inform the answer.
+ */
+async function renderBookNotes(bookId) {
+  if (!bookId) return '';
+  const notes = await Note.find({ bookId })
+    .select('pageNumber highlightId title content createdAt')
+    .sort({ pageNumber: 1, createdAt: 1 })
+    .lean();
+  if (!notes.length) return '';
+
+  // Pull highlight texts in one round-trip so we can show the passage
+  // each note was attached to without N+1 queries.
+  const hlIds = notes.map(n => n.highlightId).filter(Boolean);
+  const hlMap = {};
+  if (hlIds.length) {
+    const hls = await Highlight.find({ _id: { $in: hlIds } }).select('text').lean();
+    for (const h of hls) hlMap[String(h._id)] = h.text || '';
+  }
+
+  // Strip HTML from note content so the LLM sees plain text (notes
+  // are stored as rich HTML from the reader's notes panel). Preserve
+  // LaTeX delimiters since they're plain text, not tags.
+  function stripHtml(s) {
+    return String(s || '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  let out = `\n\n  <user_notes count="${notes.length}">`;
+  let lastPage = null;
+  for (const n of notes) {
+    if (n.pageNumber !== lastPage) {
+      out += `\n    [Page ${n.pageNumber || '?'}]`;
+      lastPage = n.pageNumber;
+    }
+    const quote = (n.highlightId && hlMap[String(n.highlightId)]) || '';
+    const body = stripHtml(n.content).substring(0, 800);
+    out += `\n    • Note`;
+    if (n.title) out += ` "${n.title}"`;
+    if (quote) {
+      const q = quote.replace(/\s+/g, ' ').trim().substring(0, 180);
+      out += `\n        on highlight: "${q}"`;
+    }
+    if (body) out += `\n        ${body.replace(/\n/g, '\n        ')}`;
+  }
+  out += `\n  </user_notes>`;
+  return out;
+}
+
+/**
+ * Dump every Note across every Book as a single block, grouped by
+ * book and then by page. Used in library scope ("All Files" orphan
+ * chats) so the AI has full read access to the user's notes when
+ * the chat isn't anchored to anything narrower.
+ */
+async function getLibraryNotes() {
+  const books = await Book.find().select('_id title author').lean();
+  if (!books.length) return null;
+  const bookMap = {};
+  books.forEach(b => { bookMap[String(b._id)] = b; });
+
+  const notes = await Note.find()
+    .select('bookId pageNumber highlightId title content createdAt')
+    .sort({ bookId: 1, pageNumber: 1, createdAt: 1 })
+    .lean();
+  if (!notes.length) return null;
+
+  // Resolve highlight texts in one round-trip.
+  const hlIds = notes.map(n => n.highlightId).filter(Boolean);
+  const hlMap = {};
+  if (hlIds.length) {
+    const hls = await Highlight.find({ _id: { $in: hlIds } }).select('text').lean();
+    for (const h of hls) hlMap[String(h._id)] = h.text || '';
+  }
+
+  function stripHtml(s) {
+    return String(s || '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  let out = `<library_notes count="${notes.length}">`;
+  let lastBook = null;
+  let lastPage = null;
+  for (const n of notes) {
+    const bkey = String(n.bookId);
+    if (bkey !== lastBook) {
+      if (lastBook) out += `\n  </book>`; // close previous
+      const bk = bookMap[bkey];
+      out += `\n\n  <book id="${bkey}" title="${String(bk ? bk.title : 'Unknown').replace(/"/g, '&quot;')}">`;
+      lastBook = bkey;
+      lastPage = null;
+    }
+    if (n.pageNumber !== lastPage) {
+      out += `\n    [Page ${n.pageNumber || '?'}]`;
+      lastPage = n.pageNumber;
+    }
+    const quote = (n.highlightId && hlMap[String(n.highlightId)]) || '';
+    const body = stripHtml(n.content).substring(0, 600);
+    out += `\n    • Note`;
+    if (n.title) out += ` "${n.title}"`;
+    if (quote) {
+      const q = quote.replace(/\s+/g, ' ').trim().substring(0, 160);
+      out += `\n        on highlight: "${q}"`;
+    }
+    if (body) out += `\n        ${body.replace(/\n/g, '\n        ')}`;
+  }
+  // Close any hanging <book> tag.
+  if (lastBook) out += `\n  </book>`;
+  out += `\n</library_notes>`;
   return out;
 }
 
