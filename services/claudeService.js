@@ -811,23 +811,53 @@ async function getLibraryOverview() {
  */
 async function getAllCrossBookEdges(opts = {}) {
   const filter = {};
-  // Only edges that are real cross-paper citations or note links —
-  // skip lexical edges that the resolver dropped to a-z scoring
-  // already, which we want, and skip pending-stub edges (they have
-  // toBookId pointing at a stub Book with status='pending-citation').
-  // Method filter keeps both 'lexical' (cross-paper) and
-  // 'note-citation' (notes-to-paper) so the AI sees both kinds.
   const edges = await Edge.find(filter)
-    .select('fromChunkId fromSpanId toChunkId toBookId fromBookId relationshipType confidence method')
+    .select('fromChunkId fromSpanId toChunkId toBookId fromBookId relationshipType confidence relevance method')
     .lean();
   if (edges.length === 0) return null;
 
+  // ── Method preference: LLM > lexical > others ─────────────
+  //
+  // The funnel resolver writes edges with method='llm'. The
+  // legacy resolver writes method='lexical'. For source spans
+  // where both methods produced an edge, prefer the LLM one
+  // (higher precision, real relationship type, real confidence
+  // and relevance scores). Lexical edges only survive when no
+  // LLM edge exists for the same source span — that happens for
+  // spans the funnel hasn't processed yet, or for cases where
+  // GPT-4o couldn't produce a parseable verdict.
+  //
+  // Note-citation edges (notes ingestion) have their own method
+  // and are kept independently.
+  const bySourceSpan = new Map();
+  for (const e of edges) {
+    const k = String(e.fromSpanId || '') + ':' + String(e.toBookId || '');
+    if (!k.startsWith(':') && k !== ':') {
+      const existing = bySourceSpan.get(k);
+      if (!existing) {
+        bySourceSpan.set(k, e);
+        continue;
+      }
+      // Method priority: llm > lexical > note-citation
+      const priority = (m) => m === 'llm' ? 3 : m === 'lexical' ? 2 : m === 'note-citation' ? 1 : 0;
+      if (priority(e.method) > priority(existing.method)) {
+        bySourceSpan.set(k, e);
+      }
+    }
+  }
+  // Edges with no fromSpanId go through unfiltered (notes,
+  // manual edges, etc.)
+  const filteredEdges = [
+    ...bySourceSpan.values(),
+    ...edges.filter(e => !e.fromSpanId),
+  ];
+
   // If scope is restricted, filter edges by whether either side
   // is in scope. opts.bookIds is the set of in-scope book ids.
-  let inScope = edges;
+  let inScope = filteredEdges;
   if (opts.bookIds && opts.bookIds.length > 0) {
     const setIds = new Set(opts.bookIds.map(String));
-    inScope = edges.filter(e =>
+    inScope = filteredEdges.filter(e =>
       setIds.has(String(e.fromBookId)) || setIds.has(String(e.toBookId))
     );
   }

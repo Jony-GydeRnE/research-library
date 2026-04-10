@@ -55,9 +55,11 @@ How well does the chosen target chunk actually address the cited content?
 WHAT TO PREFER
 - Section header chunks (texts starting with "3.1 X" or "Theorem 1") are CANONICAL citation targets in academic papers. Citations like "as shown in [15]" usually point at the section/theorem that introduces or proves the cited result, not at later chunks that paraphrase it.
 - "example" / "theorem" / "definition" structural types are usually preferred over generic "narrative" when the relationship is proves/extends/uses_definition.
-- Avoid "outlook" / "future directions" / "remark" chunks unless the source is explicitly citing speculation or conjecture.
+- **PREFER `remark` chunks when the source span contains words like "conjectured", "observed", "found", "proved", "shown", "noted", "remarked", "claimed", "demonstrated".** In physics and math papers, `remark` chunks often hold the key stated claim, the experimental finding, or the conjecture itself — exactly what such citations point at. Do NOT avoid `remark` chunks for these citations; they are usually the right answer.
+- Avoid "outlook" / "future directions" chunks unless the source is explicitly citing speculation about future work.
 - Avoid abstracts unless the source is citing the discovery announcement of the paper.
 - If a candidate's text contains the EXACT phrase the source quotes (or close paraphrase), that is much stronger evidence than concept overlap alone.
+- If a candidate's text contains words from the source span like "experimentally", "we have found", "we have shown", "we conjecture", "we prove" — that's strong evidence the candidate IS the cited claim.
 
 INPUT FORMAT
 You will receive:
