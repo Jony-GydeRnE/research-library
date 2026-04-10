@@ -8,11 +8,11 @@
   <nav class="sidebar-nav-main">
     <a href="/chats" class="sidebar-nav-item <%= page === 'chats' ? 'active' : '' %>">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-      <span class="nav-label">Chats</span>
+      <span class="nav-label">All Chats</span>
     </a>
-    <a href="/collections" class="sidebar-nav-item <%= page === 'collections' ? 'active' : '' %>">
+    <a href="/files" class="sidebar-nav-item <%= (page === 'files' || (typeof activeCollection !== 'undefined' && activeCollection && activeCollection.title === 'All Books')) ? 'active' : '' %>">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-      <span class="nav-label">Collections</span>
+      <span class="nav-label">All Files</span>
     </a>
   </nav>
 
@@ -22,7 +22,7 @@
     <div class="sidebar-section-label"><span class="nav-label">Collections</span></div>
 
     <% if (typeof collections !== 'undefined') { %>
-      <% (collections || []).forEach(function(col) { %>
+      <% (collections || []).filter(function(c) { return c.title !== 'All Books'; }).forEach(function(col) { %>
         <div class="sidebar-collection-group" data-collection-id="<%= col._id %>">
           <div class="sidebar-context-item-wrap">
             <a href="/collection/<%= col._id %>"
@@ -286,9 +286,9 @@
 
     // Collection list for the move/copy picker — same `collections`
     // array the sidebar iterates, but minimized to just id/title/color.
-    // Serialized directly so the popup has a full target list (not just
-    // the five visible in the sidebar under each group).
-    var COLLECTIONS = <%- JSON.stringify((typeof collections !== 'undefined' ? (collections || []).map(function(c){ return { _id: String(c._id), title: c.title, color: c.color }; }) : [])) %>;
+    // Excludes the "All Books" pseudo-collection so chats can only be
+    // moved/copied into real user collections (plus the orphan option).
+    var COLLECTIONS = <%- JSON.stringify((typeof collections !== 'undefined' ? (collections || []).filter(function(c){ return c.title !== 'All Books'; }).map(function(c){ return { _id: String(c._id), title: c.title, color: c.color }; }) : [])) %>;
 
     var activeChat = null; // { id, title, collectionId }
     var activeMode = null; // "move" | "copy"

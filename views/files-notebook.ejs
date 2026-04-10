@@ -1,0 +1,58 @@
+<%- include('partials/layout-start') %>
+
+<div class="notebook-page">
+  <div class="notebook-topbar">
+    <a href="/files/notes" class="notebook-back-link">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      All Notes
+    </a>
+    <h1 class="notebook-title"><%= book.title || 'Notebook' %></h1>
+    <% if (book.author) { %>
+      <p class="notebook-author"><%= book.author %></p>
+    <% } %>
+
+    <div class="notebook-controls">
+      <div class="notebook-sort">
+        <label class="notebook-sort-label">Sort by:</label>
+        <a href="/files/notebook/<%= book._id %>?sort=page"
+           class="notebook-sort-btn <%= sort === 'page' ? 'active' : '' %>">Book page</a>
+        <a href="/files/notebook/<%= book._id %>?sort=newest"
+           class="notebook-sort-btn <%= sort === 'newest' ? 'active' : '' %>">Newest</a>
+        <a href="/files/notebook/<%= book._id %>?sort=oldest"
+           class="notebook-sort-btn <%= sort === 'oldest' ? 'active' : '' %>">Oldest</a>
+      </div>
+      <a href="/reader/<%= book._id %>" class="btn btn-secondary btn-sm">Open in reader</a>
+    </div>
+  </div>
+
+  <% if (!notes || notes.length === 0) { %>
+    <div class="empty-state">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      <h2>No notes yet for this book</h2>
+      <p>Open the reader, highlight something, and click "Note" to start your notebook.</p>
+      <a href="/reader/<%= book._id %>" class="btn btn-primary">Open the reader</a>
+    </div>
+  <% } else { %>
+    <div class="notebook-scroll">
+      <% notes.forEach(function(note, idx) { %>
+        <article class="notebook-entry" data-note-id="<%= note._id %>">
+          <div class="notebook-entry-meta">
+            <% if (note.pageNumber) { %>
+              <a href="/reader/<%= book._id %>/page/<%= note.pageNumber %>" class="notebook-entry-page">Page <%= note.pageNumber %></a>
+            <% } %>
+            <span class="notebook-entry-date"><%= new Date(note.createdAt).toLocaleDateString() %></span>
+          </div>
+          <% if (note.highlight && note.highlight.text) { %>
+            <blockquote class="notebook-entry-quote"><%= note.highlight.text %></blockquote>
+          <% } %>
+          <% if (note.title) { %>
+            <h3 class="notebook-entry-title"><%= note.title %></h3>
+          <% } %>
+          <div class="notebook-entry-body"><%- note.content || '<em>(Empty note)</em>' %></div>
+        </article>
+      <% }); %>
+    </div>
+  <% } %>
+</div>
+
+<%- include('partials/layout-end') %>

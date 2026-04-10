@@ -37,6 +37,131 @@ app.use('/api/spans', spansRoutes);
 app.use('/api/books', booksRoutes);
 app.use('/covers', express.static(path.join(__dirname, 'uploads', 'covers')));
 
+// ─── All Files section (books + notes tabs) ────────────────────
+// "All Files" is the default landing area for every book in the
+// library. It mirrors the legacy "All Books" collection but is
+// presented as a first-class nav item with its own tabs:
+//   /files           → Books tab (grid of every book)
+//   /files/notes     → Notes tab (grid of every book-as-notebook)
+//   /files/notebook/:bookId → single book's notes in scroll view
+// The underlying "All Books" Collection document is preserved so
+// uploads still auto-add to it and the existing collections
+// machinery keeps working.
+
+app.get('/files', async (req, res) => {
+  const Collection = require('./models/Collection');
+  const Book = require('./models/Book');
+  const Note = require('./models/Note');
+  try {
+    let allBooksCol = await Collection.findOne({ title: 'All Books' });
+    // Auto-create if somehow missing
+    if (!allBooksCol) {
+      const allBooks = await Book.find().sort({ uploadedAt: -1 }).lean();
+      allBooksCol = await Collection.create({
+        title: 'All Books',
+        bookIds: allBooks.map(b => b._id),
+      });
+    }
+    const books = await Book.find({ _id: { $in: allBooksCol.bookIds } }).sort({ uploadedAt: -1 }).lean();
+    // Attach note counts per book so the Notes tab can show them
+    const counts = await Note.aggregate([
+      { $match: { bookId: { $in: allBooksCol.bookIds } } },
+      { $group: { _id: '$bookId', n: { $sum: 1 } } },
+    ]);
+    const countMap = {};
+    counts.forEach(c => { countMap[String(c._id)] = c.n; });
+    books.forEach(b => { b.noteCount = countMap[String(b._id)] || 0; });
+
+    const sidebar = await getSidebarData();
+    res.render('files', {
+      title: 'All Files',
+      page: 'files',
+      tab: 'books',
+      books,
+      activeCollection: allBooksCol,
+      collections: sidebar.collections,
+    });
+  } catch (err) {
+    console.error('All Files error:', err);
+    res.status(500).send('Error loading files');
+  }
+});
+
+app.get('/files/notes', async (req, res) => {
+  const Collection = require('./models/Collection');
+  const Book = require('./models/Book');
+  const Note = require('./models/Note');
+  try {
+    const allBooksCol = await Collection.findOne({ title: 'All Books' });
+    const bookIds = allBooksCol ? allBooksCol.bookIds : [];
+    const books = await Book.find({ _id: { $in: bookIds } }).sort({ uploadedAt: -1 }).lean();
+    const counts = await Note.aggregate([
+      { $match: { bookId: { $in: bookIds } } },
+      { $group: { _id: '$bookId', n: { $sum: 1 }, latest: { $max: '$updatedAt' } } },
+    ]);
+    const map = {};
+    counts.forEach(c => { map[String(c._id)] = c; });
+    // Only books with at least one note are shown in the Notes tab
+    const notebooks = books
+      .map(b => ({ ...b, noteCount: (map[String(b._id)] || {}).n || 0, latestNote: (map[String(b._id)] || {}).latest || null }))
+      .filter(b => b.noteCount > 0);
+
+    const sidebar = await getSidebarData();
+    res.render('files', {
+      title: 'All Notes',
+      page: 'files',
+      tab: 'notes',
+      notebooks,
+      activeCollection: allBooksCol,
+      collections: sidebar.collections,
+    });
+  } catch (err) {
+    console.error('Files notes error:', err);
+    res.status(500).send('Error loading notes');
+  }
+});
+
+app.get('/files/notebook/:bookId', async (req, res) => {
+  const Book = require('./models/Book');
+  const Note = require('./models/Note');
+  const Highlight = require('./models/Highlight');
+  try {
+    const book = await Book.findById(req.params.bookId).lean();
+    if (!book) return res.redirect('/files/notes');
+    const sort = (req.query.sort || 'page').toLowerCase();
+    let sortSpec;
+    if (sort === 'newest') sortSpec = { createdAt: -1 };
+    else if (sort === 'oldest') sortSpec = { createdAt: 1 };
+    else sortSpec = { pageNumber: 1, createdAt: 1 };
+    const notes = await Note.find({ bookId: book._id }).sort(sortSpec).lean();
+    // Attach the highlight text (if any) so the note can show the
+    // passage it was written about as context above the note body.
+    const highlightIds = notes.map(n => n.highlightId).filter(Boolean);
+    const highlights = highlightIds.length
+      ? await Highlight.find({ _id: { $in: highlightIds } }).lean()
+      : [];
+    const hMap = {};
+    highlights.forEach(h => { hMap[String(h._id)] = h; });
+    notes.forEach(n => {
+      if (n.highlightId) n.highlight = hMap[String(n.highlightId)] || null;
+    });
+
+    const sidebar = await getSidebarData();
+    res.render('files-notebook', {
+      title: book.title || 'Notebook',
+      page: 'files',
+      tab: 'notes',
+      book,
+      notes,
+      sort,
+      collections: sidebar.collections,
+    });
+  } catch (err) {
+    console.error('Files notebook error:', err);
+    res.status(500).send('Error loading notebook');
+  }
+});
+
 // Chats
 const { getSidebarData } = require('./services/sidebarData');
 
@@ -348,7 +473,7 @@ app.post('/api/chat/:chatId/respond', async (req, res) => {
 
 // Root → collections
 app.get('/', (req, res) => {
-  res.redirect('/collections');
+  res.redirect('/files');
 });
 
 async function start() {
