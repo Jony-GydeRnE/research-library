@@ -284,6 +284,23 @@ async function findBestTargetChunk(targetBookId, citingSpan) {
     let overlap = 0;
     for (const t of sourceConcepts) if (targetConcepts.has(t)) overlap++;
 
+    // Direct-tag-string match bonus. When a source tag exactly
+    // equals a target tag (case-insensitive), that's a much
+    // stronger signal than concept-only overlap because it means
+    // the LLM literally tagged this chunk with the cited concept.
+    // Ground-truth audit (2026-04-11 evening): the user found that
+    // edges where the matching concept came only through a compound
+    // tag (e.g. `zero_causal_diamond_factorization` adding hidden_zeros
+    // to a Section 7 chunk) were "winning" over chunks where the
+    // exact tag was present, because the typeBoost for "definition"
+    // / "theorem" outweighed the order tiebreak. This bonus rewards
+    // literal vocabulary alignment so chunks that are CENTRALLY
+    // about the cited concept beat chunks where the concept is
+    // incidental.
+    let directMatches = 0;
+    for (const t of sourceTags) if (targetTags.has(t)) directMatches++;
+    const directMatchBonus = directMatches * 0.5;
+
     // Compute text-keyword signal even when tag overlap is zero —
     // chunks where the citing span's tags appear AS PHRASES in the
     // chunk text are real candidates even without explicit tag
@@ -312,12 +329,22 @@ async function findBestTargetChunk(targetBookId, citingSpan) {
     else pageBoost = 0.15;
 
     // Structural-type boost: definitions, theorems, and proofs are
-    // the canonical citation targets. Bump them slightly so they
-    // outrank narrative chunks on the same page.
+    // canonical citation targets — but ONLY when the chunk is
+    // strongly aligned with the source on concepts (overlap >= 2).
+    // Without this gate, a "definition" chunk that shares a single
+    // incidental concept with the source span (because of one
+    // compound tag) inherits a +0.15 boost that overpowers chunks
+    // which are actually about the cited topic. Ground-truth audit
+    // 2026-04-11 evening: Edges 3 and 12 were both landing on a
+    // p32 [definition] chunk because of this exact bug, even though
+    // the concepts in the source span only matched a side-tag in
+    // the definition chunk's compound name.
     const stype = (c.structuralType || '').toLowerCase();
     let typeBoost = 0;
-    if (stype === 'definition' || stype === 'theorem' || stype === 'lemma' || stype === 'proposition') typeBoost = 0.15;
-    else if (stype === 'proof' || stype === 'corollary') typeBoost = 0.10;
+    if (overlap >= 2) {
+      if (stype === 'definition' || stype === 'theorem' || stype === 'lemma' || stype === 'proposition') typeBoost = 0.15;
+      else if (stype === 'proof' || stype === 'corollary') typeBoost = 0.10;
+    }
 
     // Tag-richness tiebreaker REMOVED. It used to add up to 0.05
     // for 5+ tags on a chunk, which sounds tiny but turned out to
@@ -340,14 +367,14 @@ async function findBestTargetChunk(targetBookId, citingSpan) {
     // chunk with marginally higher tag overlap but no text match.
     const textBonus = Math.min(1.5, 0.4 * textMatchRaw);
 
-    const score = overlap + pageBoost + typeBoost + richnessBonus + orderBonus + textBonus;
+    const score = overlap + pageBoost + typeBoost + richnessBonus + orderBonus + textBonus + directMatchBonus;
 
     if (!best || score > best.score) {
       best = {
         chunk: c,
         score,
         overlap,
-        scoreDetail: `ovl=${overlap} p=${c.pageNumber} type=${stype} tags=${targetTags.size} txt=${textMatchRaw.toFixed(1)} score=${score.toFixed(3)}`,
+        scoreDetail: `ovl=${overlap} direct=${directMatches} p=${c.pageNumber} type=${stype} tags=${targetTags.size} txt=${textMatchRaw.toFixed(1)} score=${score.toFixed(3)}`,
       };
     }
   }
