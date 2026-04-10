@@ -615,4 +615,5 @@ module.exports = {
   findBestTargetChunk,
   resolveSEdgesForBook,
   resolveSEdgesForLibrary,
+  isBibliographyChunk,
 };
