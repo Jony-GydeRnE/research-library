@@ -85,25 +85,96 @@ window.MathJax = {
   <% } %>
 </div>
 
+<script src="/js/chat-split-reader.js"></script>
 <script>
-  // Force a MathJax typeset pass once the notebook has rendered so notes
-  // saved with inline \(...\) or display \[...\] show as equations, not
-  // raw source. Uses startup.promise so we don't race MathJax's own
-  // initial scan.
+  // ─── AUTO-WRAP BARE LaTeX ──────────────────────────────────────
+  // Users paste LaTeX source into notes without wrapping in \(...\)
+  // or \[...\] delimiters, which means MathJax silently doesn't
+  // typeset those blocks. Walk every text node inside each
+  // .notebook-entry-body and, if a node contains backslash commands
+  // but no math delimiters, wrap its content in \[...\]. MathJax
+  // then picks it up on the next typeset pass. TeX '%' comment
+  // lines inside the wrapped range are handled correctly by
+  // MathJax's own comment logic — they skip to end-of-line inside
+  // math mode. Whitespace-only text nodes are left alone.
   (function () {
+    var LATEX_CMD = /\\[a-zA-Z]{2,}/;            // \frac, \int, \math{...}
+    var HAS_DELIMS = /\\\(|\\\[|\$\$|\\begin\{/;  // already wrapped
+
+    function autoWrapLatex(root) {
+      if (!root) return;
+      var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: function (n) {
+          if (!n.nodeValue || !n.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+          var p = n.parentElement;
+          if (!p) return NodeFilter.FILTER_REJECT;
+          // Skip anything already handled by MathJax or inside a code block.
+          if (p.closest('mjx-container, code, pre, script, style')) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      });
+      var targets = [];
+      var n;
+      while ((n = walker.nextNode())) {
+        var text = n.nodeValue;
+        if (HAS_DELIMS.test(text)) continue;
+        if (!LATEX_CMD.test(text)) continue;
+        targets.push(n);
+      }
+      targets.forEach(function (textNode) {
+        textNode.nodeValue = '\\[' + textNode.nodeValue + '\\]';
+      });
+    }
+
+    // ─── TYPESET ON LOAD ───────────────────────────────────────
     var scroll = document.getElementById('notebookScroll');
-    if (!scroll) return;
-    function typeset() {
-      if (window.MathJax && window.MathJax.typesetPromise) {
-        window.MathJax.typesetPromise([scroll]).catch(function () {});
+    if (scroll) {
+      scroll.querySelectorAll('.notebook-entry-body').forEach(autoWrapLatex);
+      function typeset() {
+        if (window.MathJax && window.MathJax.typesetPromise) {
+          window.MathJax.typesetPromise([scroll]).catch(function () {});
+        }
+      }
+      if (window.MathJax && window.MathJax.startup && window.MathJax.startup.promise) {
+        window.MathJax.startup.promise.then(typeset);
+      } else {
+        window.addEventListener('load', typeset);
       }
     }
-    if (window.MathJax && window.MathJax.startup && window.MathJax.startup.promise) {
-      window.MathJax.startup.promise.then(typeset);
-    } else {
-      // MathJax may not have attached yet — wait until window.load.
-      window.addEventListener('load', typeset);
+
+    // ─── SPLIT-READER INTERCEPT ────────────────────────────────
+    // Intercept clicks on the page pill and the quote blockquote
+    // link and route them through the split-screen reader API,
+    // matching the chat citation behavior. Falls back to normal
+    // navigation if the split-reader module didn't load.
+    function openSplit(href) {
+      if (!href) return false;
+      if (window.__isSplitReaderOpen && window.__isSplitReaderOpen()) {
+        window.__updateSplitReader(href);
+        return true;
+      }
+      if (window.__openSplitReader) {
+        window.__openSplitReader(href);
+        return true;
+      }
+      return false;
     }
+
+    document.addEventListener('click', function (e) {
+      var pageLink = e.target.closest && e.target.closest('.notebook-entry-page');
+      var quoteLink = e.target.closest && e.target.closest('.notebook-entry-quote-link');
+      var link = pageLink || quoteLink;
+      if (!link) return;
+      var href = link.getAttribute('href');
+      if (!href) return;
+      // Let modifier-click + middle-click open a new tab naturally.
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+      if (openSplit(href)) {
+        e.preventDefault();
+      }
+    });
   })();
 </script>
 
