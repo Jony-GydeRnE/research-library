@@ -207,13 +207,20 @@
   var pendingHighlight = getQueryParam('highlight');
   console.debug('[highlight] search term:', pendingHighlight && pendingHighlight.substring(0, 80));
 
-  function clearExistingQuoteMarks(root) {
-    (root || document).querySelectorAll('mark.quote-flash').forEach(function (m) {
-      var parent = m.parentNode;
+  // Unwrap any existing citation callout boxes by moving their children
+  // back into the parent in place, then removing the empty wrapper. This
+  // restores the page to its normal layout without touching any text or
+  // MathJax content — we only ever insert/remove block-level wrappers.
+  function clearExistingCallouts(root) {
+    (root || document).querySelectorAll('.citation-callout-box').forEach(function (box) {
+      var parent = box.parentNode;
       if (!parent) return;
-      while (m.firstChild) parent.insertBefore(m.firstChild, m);
-      parent.removeChild(m);
-      if (parent.normalize) parent.normalize();
+      // Skip the dismiss button when moving children back out.
+      Array.prototype.slice.call(box.childNodes).forEach(function (child) {
+        if (child.nodeType === 1 && child.classList && child.classList.contains('callout-dismiss')) return;
+        parent.insertBefore(child, box);
+      });
+      parent.removeChild(box);
     });
   }
 
@@ -266,6 +273,63 @@
     console.debug('[highlight] ' + nodes.length + ' text nodes, first:',
       nodes[0] && nodes[0].nodeValue && nodes[0].nodeValue.substring(0, 80));
 
+    // Walk up from a text node to the nearest block-level ancestor that
+    // sits directly inside the container (or inside a .page-content inside
+    // the container — scroll mode nests .page-content inside each scroll
+    // section). This is the element we will wrap in a callout box.
+    function findBlockAncestor(textNode) {
+      var el = textNode.parentElement;
+      while (el && el !== container) {
+        var parent = el.parentElement;
+        if (!parent) return null;
+        if (parent === container) return el;
+        if (parent.classList && parent.classList.contains('page-content')) return el;
+        if (parent.classList && parent.classList.contains('scroll-page-section')) return el;
+        el = parent;
+      }
+      return null;
+    }
+
+    // Wrap a block element (and optionally the next 1-2 siblings if the
+    // quote spans multiple paragraphs) in a .citation-callout-box. Uses
+    // insertBefore/appendChild only — never touches innerHTML or any text
+    // content, so MathJax renderings are preserved exactly.
+    function wrapInCallout(blockEl, extraSiblings) {
+      if (!blockEl || !blockEl.parentNode) return false;
+      var parent = blockEl.parentNode;
+
+      var box = document.createElement('div');
+      box.className = 'citation-callout-box';
+
+      var dismiss = document.createElement('button');
+      dismiss.type = 'button';
+      dismiss.className = 'callout-dismiss';
+      dismiss.setAttribute('aria-label', 'Dismiss citation');
+      dismiss.innerHTML = '&times;';
+      dismiss.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        pendingHighlight = null;
+        clearExistingCallouts(container);
+      });
+      box.appendChild(dismiss);
+
+      // Insert the wrapper before the target block, then move the block
+      // (and any requested siblings) into it in DOM order.
+      parent.insertBefore(box, blockEl);
+      box.appendChild(blockEl);
+      var moved = 1;
+      while (extraSiblings && moved <= extraSiblings && box.nextSibling) {
+        box.appendChild(box.nextSibling);
+        moved++;
+      }
+
+      if (!opts || opts.scroll !== false) {
+        box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      return true;
+    }
+
     // Escape a string for use in a regex, and let any whitespace run in the
     // needle match any run of whitespace in the target (handles line breaks,
     // non-breaking spaces, etc.).
@@ -276,110 +340,82 @@
       return new RegExp(escaped, flags || 'i');
     }
 
-    function surroundAndScroll(n, start, end) {
-      try {
-        var range = document.createRange();
-        range.setStart(n, start);
-        range.setEnd(n, Math.min(n.nodeValue.length, end));
-        var mark = document.createElement('mark');
-        mark.className = 'quote-flash';
-        range.surroundContents(mark);
-        if (!opts || opts.scroll !== false) {
-          mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-        return true;
-      } catch (e) {
-        return false;
-      }
-    }
-
-    // PASS 1 — per-node regex match. Try each prefix against each text node.
-    // Matches the longest prefix that lives entirely inside one node.
+    // PASS 1 — per-node regex match. For each prefix, for each text node,
+    // try to find the prefix inside that single text node. On a hit, wrap
+    // the block ancestor of the text node. Matches the longest prefix that
+    // lives entirely inside one node.
     for (var pi = 0; pi < prefixes.length; pi++) {
       var re = buildRegex(prefixes[pi]);
       for (var ni = 0; ni < nodes.length; ni++) {
-        var m = re.exec(nodes[ni].nodeValue);
-        if (!m) continue;
-        var startOff = m.index;
-        var endOff = m.index + m[0].length;
-        if (surroundAndScroll(nodes[ni], startOff, endOff)) {
+        if (!re.test(nodes[ni].nodeValue)) continue;
+        var block1 = findBlockAncestor(nodes[ni]);
+        if (block1 && wrapInCallout(block1)) {
           console.debug('[highlight] PASS 1 hit on prefix #' + pi);
           return true;
         }
       }
     }
 
-    // PASS 2 — cross-node match. Concatenate every text node (normalized)
-    // into one string, find the prefix there, then anchor the highlight at
-    // the first text node the match lands in. Only that leading node is
-    // highlighted (surroundContents can't span elements cleanly) but the
-    // user still sees the starting phrase flash and scroll into view, which
-    // is what matters for "take me to this quote".
+    // Build a concatenated normalized string covering every text node in
+    // the container, plus a parallel array recording the start offset of
+    // each text node inside that concat. Used by PASS 2 and the LaTeX
+    // fallback to locate WHICH text node a match lands in.
     var concat = '';
     var nodeStarts = [];
     for (var i = 0; i < nodes.length; i++) {
       nodeStarts.push(concat.length);
       concat += norm(nodes[i].nodeValue) + ' ';
     }
-    for (var pj = 0; pj < prefixes.length; pj++) {
-      var gIdx = concat.indexOf(prefixes[pj]);
-      if (gIdx === -1) continue;
+
+    function nodeIndexForConcatPos(gIdx) {
       var sIdx = 0;
       for (var j = 0; j < nodeStarts.length; j++) {
         if (nodeStarts[j] > gIdx) break;
         sIdx = j;
       }
-      var startNode = nodes[sIdx];
-      // Highlight whatever portion of the prefix is local to the start node
-      // by regex-probing the first 3 words of the prefix inside it.
-      var probeWords = prefixes[pj].split(' ').slice(0, 3).join(' ');
-      var probeRe = buildRegex(probeWords);
-      var pm = probeRe.exec(startNode.nodeValue);
-      if (pm) {
-        var s = pm.index;
-        var e = Math.min(startNode.nodeValue.length, s + prefixes[pj].length + 20);
-        if (surroundAndScroll(startNode, s, e)) {
+      return sIdx;
+    }
+
+    // PASS 2 — cross-node match. Look for each prefix in the concat string,
+    // map back to the text node where it starts, and wrap that node's
+    // block ancestor. If the quote visibly spans two paragraphs we also
+    // pull in the next sibling so the whole passage sits inside the box.
+    for (var pj = 0; pj < prefixes.length; pj++) {
+      var gIdx = concat.indexOf(prefixes[pj]);
+      if (gIdx === -1) continue;
+      var startNodeIdx = nodeIndexForConcatPos(gIdx);
+      var endNodeIdx = nodeIndexForConcatPos(gIdx + prefixes[pj].length);
+      var startNode = nodes[startNodeIdx];
+      var block2 = findBlockAncestor(startNode);
+      if (block2) {
+        // How many block-level siblings does the match span?
+        var extras = 0;
+        if (endNodeIdx > startNodeIdx) {
+          var endBlock = findBlockAncestor(nodes[endNodeIdx]);
+          if (endBlock && endBlock !== block2) extras = 1;
+        }
+        if (wrapInCallout(block2, extras)) {
           console.debug('[highlight] PASS 2 cross-node hit on prefix #' + pj);
           return true;
         }
       }
     }
 
-    // PASS 3 — raw character fallback. Ignore word boundaries entirely and
-    // look for the first 30 characters of the normalized needle anywhere in
-    // the concatenated page text. Catches cases where LaTeX rendering changes
-    // word boundaries (e.g. quote has "\phi" but rendered text has "ϕ").
-    if (normNeedle.length >= 6) {
-      var rawProbe = normNeedle.substring(0, Math.min(30, normNeedle.length));
-      var rawIdx = concat.indexOf(rawProbe);
-      if (rawIdx !== -1) {
-        console.debug('[highlight] PASS 3 raw-char match at position', rawIdx);
-        var rSIdx = 0;
-        for (var rj = 0; rj < nodeStarts.length; rj++) {
-          if (nodeStarts[rj] > rawIdx) break;
-          rSIdx = rj;
-        }
-        var rNode = nodes[rSIdx];
-        var localStart = Math.max(0, rawIdx - nodeStarts[rSIdx]);
-        var rEnd = Math.min(rNode.nodeValue.length, localStart + 60);
-        if (surroundAndScroll(rNode, localStart, rEnd)) return true;
-      }
-    }
-
-    // PASS 4 — strip all non-alphanumeric for last resort. Create a version
-    // of both the needle and concat with only letters/digits, lowercased.
-    // Search for the first 20 alnum chars of the needle and map the hit
-    // position back to the original concat via a parallel index map. Catches
-    // LaTeX symbol mismatches where the unicode char and ascii source differ
-    // entirely.
+    // LATEX EDGE CASE — the quote starts with (or is dominated by) math
+    // content, so none of the word-based prefixes match. Strip everything
+    // but [a-z0-9] from both the needle and the concat, carrying a parallel
+    // index map back to the original concat, then look for the first 20
+    // alnum characters of the needle. Good enough to identify WHICH
+    // paragraph the span lives in even when the rendered unicode symbols
+    // bear no textual resemblance to the AI-supplied LaTeX source.
     var alnumNeedle = '';
     for (var an = 0; an < normNeedle.length; an++) {
       var cn = normNeedle.charCodeAt(an);
       if ((cn >= 48 && cn <= 57) || (cn >= 97 && cn <= 122)) alnumNeedle += normNeedle[an];
     }
-    if (alnumNeedle.length >= 10) {
+    if (alnumNeedle.length >= 8) {
       var alnumConcat = '';
-      var alnumToConcat = []; // alnumConcat index → original concat index
+      var alnumToConcat = [];
       for (var ac = 0; ac < concat.length; ac++) {
         var cc = concat.charCodeAt(ac);
         if ((cc >= 48 && cc <= 57) || (cc >= 97 && cc <= 122)) {
@@ -387,21 +423,20 @@
           alnumToConcat.push(ac);
         }
       }
-      var alnumProbe = alnumNeedle.substring(0, Math.min(20, alnumNeedle.length));
-      var alnumIdx = alnumConcat.indexOf(alnumProbe);
+      var probeLen = Math.min(20, alnumNeedle.length);
+      var alnumIdx = alnumConcat.indexOf(alnumNeedle.substring(0, probeLen));
+      // Try progressively shorter alnum probes — LaTeX-dense spans often
+      // share only a handful of identifier characters with the rendering.
+      while (alnumIdx === -1 && probeLen > 6) {
+        probeLen -= 2;
+        alnumIdx = alnumConcat.indexOf(alnumNeedle.substring(0, probeLen));
+      }
       if (alnumIdx !== -1) {
         var origIdx = alnumToConcat[alnumIdx];
-        console.debug('[highlight] PASS 4 alnum-strip match at alnum pos', alnumIdx,
-          '→ concat pos', origIdx);
-        var aSIdx = 0;
-        for (var ak = 0; ak < nodeStarts.length; ak++) {
-          if (nodeStarts[ak] > origIdx) break;
-          aSIdx = ak;
-        }
-        var aNode = nodes[aSIdx];
-        var aLocalStart = Math.max(0, origIdx - nodeStarts[aSIdx]);
-        var aEnd = Math.min(aNode.nodeValue.length, aLocalStart + 60);
-        if (surroundAndScroll(aNode, aLocalStart, aEnd)) return true;
+        console.debug('[highlight] LaTeX fallback alnum match (probeLen=' + probeLen + ') at concat pos', origIdx);
+        var fbNode = nodes[nodeIndexForConcatPos(origIdx)];
+        var fbBlock = findBlockAncestor(fbNode);
+        if (fbBlock && wrapInCallout(fbBlock)) return true;
       }
     }
 
@@ -417,11 +452,15 @@
     else if (mode === 'pages') container = content;
     else return; // pdf mode: nothing to do
     if (!container) return;
-    // Re-apply even if already present — clear existing marks first so the
-    // flash animation re-triggers and the quote is visually located again.
-    clearExistingQuoteMarks(container);
+    // Re-apply even if already present — unwrap any existing callout first
+    // so the new one appears at the right block and re-triggers the
+    // appear animation.
+    clearExistingCallouts(container);
     var attempts = 0;
     var tryHighlight = function () {
+      // The user may have dismissed the citation between attempts; if so,
+      // stop trying.
+      if (!pendingHighlight) return;
       attempts++;
       if (highlightQuoteIn(container, pendingHighlight) || attempts > 20) return;
       setTimeout(tryHighlight, 200);
