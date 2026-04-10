@@ -37,49 +37,69 @@ CRITICAL: Your system prompt contains <book_metadata> XML blocks. These contain 
 USER NOTES:
 Each <book_metadata> block may contain a nested <user_notes> section listing every note the user has written about that book, grouped by page, with the highlighted passage each note is attached to (if any) and the note body. In library-wide (All Files) chats the prompt may instead contain a top-level <library_notes> block covering every book. Treat these as the user's own writing — reference them when the user asks about what they have noted, when a note is directly relevant to the answer, or when the user's prior thinking would change your framing. Do NOT quote from them unless asked, and do NOT treat them as authoritative citations of the underlying book (use [[cite]] tags for that). When the user says "what did I write about X" or "summarize my notes on Y", read and paraphrase from these blocks directly.
 
-You have access to chunk and span metadata for the books in scope (see <book_metadata> blocks below, grouped inside <collection_metadata> when a collection is in scope). When the user asks you to list chunks, spans, tags, or annotations, output them grouped by chunk, with EVERY chunk showing its OWN tags. Use this EXACT format:
+You have access to chunk and span metadata for the books in scope (see <book_metadata> blocks below, grouped inside <collection_metadata> when a collection is in scope). When the user asks to list chunks, spans, tags, or annotations, output ONE ENTRY PER SPAN. Tags belong to the span, NOT to the chunk — every span has its own "tags=[…]" field in the metadata block, and you must put those tags DIRECTLY UNDER the span they belong to. Use chunk headers only as visual separators between groups of spans.
 
-Page N, Chunk #M (type)
+EXACT format:
 
-[[cite bookId="ID" page="N"]][First 80 chars of span text]...[last 40 chars][[/cite]]
+  Page N, Chunk #M (chunk type)
 
-tags: [THIS chunk's contextTags from the metadata]
-role: [role]
-search: [searchClass + confidence if any]
+  [[cite bookId="ID" page="N"]]verbatim span text[[/cite]]
+  tags: [this span's tags=[…] from the metadata, comma-separated, or (none)]
+  role: [this span's role=… if present]
+  search: [this span's class=… + confidence if present]
 
-CRITICAL — per-chunk tags rule:
-Every chunk in the metadata block has its OWN "tags:" line. When listing chunks you MUST show the tags FOR THAT SPECIFIC CHUNK, read from its "tags:" line in the <book_metadata> block. Do NOT aggregate all tags from every chunk and dump them onto the first chunk. Do NOT leave subsequent chunks tagless. Each chunk's tags are different — they describe what THAT passage is about. If a chunk has no tags in the metadata, write "tags: (none)".
+  [[cite bookId="ID" page="N"]]next span's verbatim text[[/cite]]
+  tags: [this span's own tags, DIFFERENT from the previous span if the metadata says so]
+  role: [this span's role]
 
-Example output showing TWO chunks with DIFFERENT tags:
+  Page N, Chunk #M+1 (chunk type)
 
-Page 5, Chunk #0 (definition)
+  [[cite bookId="ID" page="N"]]first span of the new chunk[[/cite]]
+  tags: [this span's own tags]
+  role: [this span's role]
 
-[[cite bookId="abc123" page="5"]]We define the exact propagator via Δ(x−y) ≡ i⟨0|Tφ(x)φ(y)|0⟩...normalization condition ⟨0|φ(x)|0⟩ = 0.[[/cite]]
+CRITICAL — per-span tag rule:
+In the <book_metadata> block, each span is written like:
+  • span role=definition class=B1 tags=[free_propagator,definition] "verbatim span text"
+The "tags=[…]" list belongs ONLY to that one span. When you list spans you MUST read each span's OWN tags=[…] field and put them on the "tags:" line directly under that span. Do NOT dump the first span's tags under every span. Do NOT aggregate every span's tags onto the first span. Do NOT attach chunk-level tags to spans (spans carry their own tags). If a span's metadata line has no "tags=[…]" field, write "tags: (none)" — that is the correct answer for that span. It is better to write "(none)" for 10 spans than to copy the first span's tags onto all of them.
 
-tags: free_propagator, definition, green_function
-role: definition
+Example output showing FOUR spans across TWO chunks, where each span has its OWN distinct tags:
 
-Page 5, Chunk #1 (background)
+  Page 5, Chunk #0 (definition)
 
-[[cite bookId="abc123" page="5"]]The spectral density function ρ(s) satisfies the completeness...from the definition in Section 7.2.[[/cite]]
+  [[cite bookId="abc123" page="5"]]We define the exact propagator via Δ(x−y) ≡ i⟨0|Tφ(x)φ(y)|0⟩...normalization condition ⟨0|φ(x)|0⟩ = 0.[[/cite]]
+  tags: free_propagator, definition
+  role: definition
 
-tags: spectral_density, completeness_relation
-role: background
-search: I (internal ref, confidence v)
+  [[cite bookId="abc123" page="5"]]The Källén-Lehmann representation follows: ⟨0|Tφ(x)φ(y)|0⟩ = ∫₀^∞ dM² ρ(M²) Δ_F(x−y; M²)[[/cite]]
+  tags: kallen_lehmann, spectral_representation
+  role: theorem
 
-Notice: Chunk #0 has tags [free_propagator, definition, green_function]. Chunk #1 has DIFFERENT tags [spectral_density, completeness_relation]. This is correct — each chunk describes different content and has different tags. NEVER group them together.
+  Page 5, Chunk #1 (background)
+
+  [[cite bookId="abc123" page="5"]]The spectral density function ρ(s) satisfies the completeness relation ∫₀^∞ ρ(s) ds = 1.[[/cite]]
+  tags: spectral_density, completeness_relation
+  role: background
+  search: I (internal ref, confidence v)
+
+  [[cite bookId="abc123" page="5"]]This normalization follows directly from the definition in Section 7.2.[[/cite]]
+  tags: (none)
+  role: remark
+
+Notice how each of the four spans has a DIFFERENT "tags:" line, even though the first two share a chunk and the last two share a chunk. Tags track spans, not chunks. The fourth span has no tags in its metadata so it gets "tags: (none)" — that is the correct answer, not "copy the third span's tags".
 
 Rules for this format:
-- The text between [[cite]] and [[/cite]] IS the verbatim span text. The UI will render it as a clickable highlighted passage in the chat and use it to locate and highlight the text in the reader. Do NOT put a label like "open in book" inside the tags — put the actual quote.
-- EVERY chunk MUST show its own tags line, read from the metadata. Different chunks have different tags — preserve that distinction.
-- Show the ACTUAL span text from the metadata block, not your summary of it
-- If span text is longer than 120 chars, show first 80 chars + "..." + last 40 chars of the span verbatim, still inside the [[cite]] tags
-- Do NOT wrap the span text in extra quotation marks — the UI styles the citation itself
-- Always include the [[cite]] tag so the quote is clickable
-- List ALL spans for the requested book/page, in page order
-- Include declarative tags ONLY if they exist on the span (most spans won't have them)
-- Do NOT add your own commentary between spans — just list them
-- Do NOT make up span text — use exactly what's in the metadata block`;
+- The text between [[cite]] and [[/cite]] IS the verbatim span text from the metadata block. The UI renders it as a clickable highlighted passage in the chat and uses it to locate and highlight the text in the reader. Do NOT put a label like "open in book" inside the tags — put the actual quote.
+- Every span MUST have its own "tags:" line, read from THAT span's tags=[…] field in the metadata. If the field is absent, write "tags: (none)".
+- Every span MUST have its own "role:" line when the metadata has role=…. Skip the line silently if role is absent.
+- Show the ACTUAL span text from the metadata block, not your summary of it.
+- If span text is longer than 120 chars, show first 80 chars + "..." + last 40 chars of the span verbatim, still inside the [[cite]] tags.
+- Do NOT wrap the span text in extra quotation marks — the UI styles the citation itself.
+- Always include the [[cite]] tag so the quote is clickable.
+- List ALL spans for the requested book/page, in the order they appear in the metadata (which is page order, then span order within each chunk).
+- Include declarative tags ONLY if they exist on the span (most spans won't have them).
+- Do NOT add your own commentary between spans — just list them in the structured format.
+- Do NOT make up span text, tags, or roles — use exactly what's in the metadata block.`;
 
 /**
  * Rough token estimate (~4 chars per token).
@@ -191,7 +211,7 @@ async function buildContext(chat) {
   else {
     sections.push({
       priority: 1,
-      text: `SCOPE: LIBRARY-WIDE\nThe user is asking a general question from the "All Files" view. You have access to their entire library's metadata AND every note they have written across every book.`,
+      text: `SCOPE: LIBRARY-WIDE\nThe user is asking a general question from the "All Files" view. You have access to their entire library's metadata (every book's chunks, spans, and tags) AND every note they have written across every book. When they ask you to list metadata for a specific book, read it from the matching <book_metadata> block below.`,
     });
 
     // Dump notes across every book. This is the "All Files = biggest
@@ -201,6 +221,23 @@ async function buildContext(chat) {
     // but after the book listing if the context budget is tight.
     const libraryNotes = await getLibraryNotes();
     if (libraryNotes) sections.push({ priority: 4, text: libraryNotes });
+
+    // Dump per-book metadata (chunks, spans, tags) for every book in
+    // the library. Previously library scope only included a terse
+    // book list via getLibraryOverview, which meant orphan / All Files
+    // chats couldn't answer "show me metadata for book X" — there was
+    // nothing to read from. Priority 5 matches the anchored-book
+    // priority in narrower scopes so the assembly step drops these
+    // first if the budget is tight (notes at priority 4 survive
+    // longer, which matches the user expectation that notes are
+    // their own writing and most valuable).
+    const libraryBooks = await Book.find()
+      .select('_id title author summary keyConcepts pageCount')
+      .lean();
+    for (const b of libraryBooks) {
+      const meta = await renderBookMetadata(b);
+      if (meta) sections.push({ priority: 5, text: meta });
+    }
   }
 
   // ─── ADDITIVE FALLBACKS ────────────────────────────────────────
