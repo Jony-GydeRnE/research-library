@@ -4,6 +4,126 @@ A rolling knowledge log of the project. **Newest entries at the top.** Read top-
 
 Maintained by Claude Code (CC) on a ~3-5-response cadence. Bad attempts that got fixed in the same session are not listed — only the final state of each session's work matters. Older sections are trimmed to one-line summaries when their detail is fully superseded; key decisions and target metrics are preserved so future sessions can recall them. Commit messages handle the comprehensive change record.
 
+---
+
+## 📌 PINNED TO-DO (working list — keep this short)
+
+**Goal: shrink this list every session.** Items move from here to the "Done" tail at the bottom of this section as they ship. Each item carries the file path + function/line so future sessions can grep straight to the right place. Add new items at the bottom of their priority bucket; cross out and archive ones that ship.
+
+### 🔥 High priority — fires
+- [ ] **Source-side cite click broken when bookId is hallucinated.** Old chats from before `842796f` contain `[[cite]]` tags with fabricated bookIds (verified: `682b9b5b...`, `6839b022...`, `6838f4f2...`, none in DB). The chat renderer at `views/chat.ejs:282-308 renderCitation()` falls back to `'Book'` as the title and emits a dead-link `<a href>`. Hallucination root-cause is fixed in `services/claudeService.js BASE_PROMPT` (anti-hallucination rule, c0a8284) and `services/claudeService.js getAllCrossBookEdges()` (high-priority cross_book_edges section, 842796f). **ACTION:** test in a fresh chat post-c0a8284. If new chats still produce dead-link sources, add a server-side validator that strips `[[cite]]` tags whose bookId isn't in `booksMap` before sending to client.
+- [ ] **Chat persistence bug: 2 replies but only 1 saved.** Chats `69d94830...` and `69d9489c...` each persisted only 1 assistant message even though the user got two AI replies. The "Continue" / regenerate path is dropping the second response. Investigate `app.post '/api/chat/:chatId/respond'` and `app.post '/api/chat/:chatId/message'` in `server.js`, plus the streaming-completion handler in `services/claudeService.js streamResponse()`.
+- [ ] **Stale agenda job watchdog.** Books stuck at processingProgress=25% after computer sleep have no auto-recovery. Manual "Resume / reprocess" kebab works (`controllers/booksController.js` + `views/files.ejs`) but should auto-fire on stuck state. Action: add a periodic check in `services/jobService.js` that finds Jobs in 'running' state with `startedAt > 30 min ago` and either marks them failed or re-enqueues them.
+
+### 🛠 Medium priority — UX
+- [ ] **Split-screen sidebar consolidation (clunky-UI ask).** When split-screen is open, only ONE app sidebar should be visible at a time (the one for the book in focus). Default state: hamburger COLLAPSED. Never 2 sidebars at a time. When the user exits a book, return to the sidebar that was there before. Files: `views/reader.ejs`, `views/partials/sidebar.ejs`, `public/css/reader.css`. Likely fix: when split-reader injects the inner book reader, force `?sidebar=collapsed` (already supported by reader.js IIFE around line 240) AND CSS-hide the outer app sidebar via a class on `body` toggled by split-reader open/close.
+- [ ] **Back/forward navigation between books in split-screen.** If user is reading Book A in the split panel, clicks an edge → Book B opens, they need a back button to return to Book A and a forward button to re-open Book B. Eventually a stack of N books with arrows in the split-reader header. Files: `public/js/chat-split-reader.js` (the split-panel controller), `views/chat.ejs`.
+- [ ] **Chat continuation across navigation.** If AI is mid-stream when user navigates away from `/chat/:id`, the stream is killed and the partial reply is lost. Two parts: (a) server keeps the stream alive and persists the message even if the SSE client disconnects — `services/claudeService.js streamResponse() onDone` callback already saves the full message, but the controller likely tears down the stream when the response object closes; (b) when user returns to `/chat/:id`, show in-progress message and reconnect to the stream if running. Files: `server.js` `/api/chat/:id/message`, `services/claudeService.js`, `views/chat.ejs`.
+- [ ] **Persistent chat input draft.** `input#chatInput` value should persist across page navigations. Use `localStorage` keyed by `chatId`. Restore on `/chat/:id` load, clear on send. File: `views/chat.ejs` around `function send()` (line ~262).
+- [ ] **Per-message UX bundle: thumbs ↑↓, regenerate, branch toggle, export to .tex/.pdf with timestamps.** Schema: add `Message.feedback` (`up | down | null`) and `Message.parentMessageId` for branching. UI: extend `views/chat.ejs` `chat-message-actions` row (line ~76). Copy button already shipped in 842796f.
+- [ ] **Edge false-positive filter.** Waiting for real test data from a post-`c0a8284` chat. Once user reports actual false positives in a fresh chat (not the hallucinated ones from `69d94d05`), tighten `services/edgeResolverService.js findBestTargetChunk()` floor logic at line ~280.
+- [ ] **Marginal edge confidence demotion.** Edges where overlap=1 AND text-keyword bonus is the dominant score component should be demoted to confidence `j` or lower. Same file as above.
+
+### 📋 Low priority — features and polish
+- [ ] **Reader UX for note-citation highlights.** Backend shipped in `8f8a7b7` (`services/noteIngestionService.js`). Need: distinct color (light green) for `Highlight.color === 'note'` (model already has the field), click opens notes panel side-by-side with the source page, "→ notes" pill on source-book chunks that have outgoing `note-citation` edges. Files: `public/css/reader.css`, `public/js/highlights.js`, `views/reader.ejs`.
+- [ ] **Process geometric-background through span pipeline.** Resume worked (book is at 80/80 pages) but no spans/chunks/embeddings yet, so G/W [31] still has no body target. Action: `node -e "require('./services/spanService').generateSpansForBook('69d8d5c796edcecf348ff519')"`. Will auto-trigger note re-matching via the post-chain in `services/spanService.js generateSpansForBook` (added in 8f8a7b7).
+- [ ] **Notes ingestion live test.** Backend ready (`services/noteIngestionService.js`). Action: upload one of the 50 PDFs in `Hidden Zero Personal Notes/`, link to Rodina via the new "Link to source book" kebab item (added 8f8a7b7), verify the alert reports a reasonable edge count.
+- [ ] **Cost analysis refinement on stats modal.** Per-page constants in `controllers/booksController.js` (`COST_PER_VISION_PAGE = 0.015`, `COST_PER_SPAN_PAGE = 0.005`) are pegged to GPT-4o pricing and rough. Refine against actual OpenAI bills. Add a "history" view that shows cumulative spend over time across the library.
+- [ ] **Upload speed.** Vision pipeline takes 10-30 min for a 60-page book. Target: pre-render all PNGs in parallel via Swift, then send all vision requests through a 60 RPM rate-limited queue. Current code: `services/visionService.js renderPageToImage()` and the batching loop in `services/spanService.js`.
+- [ ] **arXiv crawler.** Crawl referenced papers from cited bib entries in `Book.bibEntries[]`. Activate from inside a collection.
+- [ ] **Multi-tier prompt system.** User has examples to share. Current single-tier: `prompts/span-generation-full.txt` and `prompts/span-generation-short.txt`.
+- [ ] **3-pane split screen.** 2 books + chat, or 2 books + notes. Defer until 2-pane is solid.
+
+### ✅ Recently shipped (move out of TO-DO once stable)
+- ✅ **Edge dedup + anti-hallucination rule** (`c0a8284`) — 16 → 15 edges, 0 duplicates remaining; BASE_PROMPT now forbids inventing bookIds.
+- ✅ **Copy chat as text action** (`65f859c`) — sidebar kebab + chat title menu, plain-text export to clipboard.
+- ✅ **Cross-book edges high-priority block in chat** (`842796f`) — fixes the hallucination root cause; AI now sees all real edges in `<cross_book_edges>` regardless of per-book metadata truncation.
+- ✅ **Chat list kebabs everywhere + LaTeX during streaming + per-message Copy + Resume kebab** (`842796f`).
+- ✅ **Notes ingestion backend** (`8f8a7b7`) — `services/noteIngestionService.js`, `Book.kind`/`linkedBookIds`, kebab "Link to source book".
+- ✅ **Info & stats modal + kebab on All Files** (`915b4ed`).
+- ✅ **Synonym normalization layer** (`52431c5`) — `services/taxonomyService.js`, concept-based tag matching.
+- ✅ **Bibliography column-aware extraction** (`a7102ed`) — pdfjs-dist replaces pdf-parse for 2-column bib pages.
+
+---
+
+
+## 2026-04-11 evening into night — Testing-feedback round (cross-book edge visibility, kebab regression, LaTeX streaming, copy, resume, dedup, anti-hallucination)
+
+User ran a 50-min test pass and surfaced six issues. Fixed five of them in two commits and discovered the sixth was actually an LLM hallucination, not a data quality problem.
+
+### 1. Cross-book edges invisible in chat (the most important fix — `842796f`)
+
+User asked the in-app AI to list all cross-book edges and got back "only 3 edges from Rodina, no metadata for the other books" even though the DB had 16. **Root cause:** in library and collection scope each book's metadata was added to the prompt at priority 5, and the 4-book corpus exceeds `CHAT_CONTEXT_BUDGET=60000` tokens. The budget assembler was dropping whole books — and with them, every `edge → ` line under those books' spans.
+
+**Fix:** lifted the edge graph out of per-book metadata into a dedicated `<cross_book_edges>` section.
+
+`services/claudeService.js`:
+- New `getAllCrossBookEdges({ bookIds })` (line ~770) — flat block listing every Edge in the user's library with both source-side context (book id, title, page, span text, span tags) and target-side (book id, title, page, chunk type, target_quote). ~3.4K tokens for 16 edges; always survives the budget cut.
+- `buildContext()` adds the edges block at priority 2 (right after the scope intro). Scope filter: collection scope restricts to edges involving books in the collection; book/page/highlight scopes restrict to edges involving the anchored book; library scope dumps everything.
+- The block carries an inline instruction telling the AI to treat it as the source of truth and to render edges as `[[cite]]` tags.
+
+Verified empirically: a fake library-scope chat now produces a context with all 16 edges visible, total ~24K tokens, well under the 60K budget. Previously the per-book metadata at priority 5 was dropping at the same point.
+
+### 2. Chat-list kebab regression + missing UI in collection right-panel and /chats (also `842796f`)
+
+Sidebar kebab no longer worked, and there was no kebab at all on the chats list at `/chats` or in the collection right-panel chats list. **Root cause:** wiring used `querySelectorAll('.chat-menu-btn')` which only catches buttons present at script execution time AND only in the sidebar partial — the right-panel and `/chats` render their own chat rows that the wiring never picked up.
+
+`views/partials/sidebar.ejs` (line ~404): switched from `querySelectorAll` to a single delegated `document.addEventListener('click')` listener that checks `e.target.closest('.chat-menu-btn')`. Catches every kebab no matter which view rendered it, no matter when it was added to the DOM.
+
+`views/chats.ejs` and `views/collections.ejs`: wrapped each chat row in a flex container (`.chat-list-row` / `.right-panel-chat-row`) and added a `.chat-menu-btn` carrying `data-chat-id`, `data-chat-title`, `data-collection-id`. The existing popup handler picks them up unchanged.
+
+`public/css/app.css`: hover-reveal styling so the kebabs stay out of the way until needed.
+
+### 3. LaTeX rendering during streaming (also `842796f`)
+
+When the AI was replying, equations showed as raw `\(...\)` source until the stream finished. Long replies with multiple equations looked like garbage for tens of seconds.
+
+`views/chat.ejs` (line ~140): new `makeThrottledTypeset(contentDiv)` returns a function that re-typesets the message div at most every 700 ms during streaming. Uses `MathJax.typesetClear` before each pass so previously-rendered equations are torn down and rebuilt from the latest text. Final typeset still happens in `finishStream()` so the completed message is fully typeset.
+
+### 4. Per-message Copy button (also `842796f`)
+
+`views/chat.ejs` (line ~120): new `.chat-message-actions` row beneath every message with a Copy button. Hover-reveals (opacity 0 → 1 on row hover). Reads `.innerText` (what the user sees) not raw HTML. Single delegated click handler. Label flips to "Copied" for 1.2s.
+
+### 5. Resume / reprocess kebab action (also `842796f`)
+
+`views/files.ejs` and `views/collections.ejs`: new "Resume / reprocess" item in the kebab. Calls `POST /api/books/:id/reprocess-vision` (already existed in `server.js:284`). User reported stuck book at 25% successfully unblocked — now at 80/80 pages.
+
+### 6. Copy chat as text (`65f859c`)
+
+User asked for a way to copy the entire chat content as plain text instead of message-by-message. Two access points:
+
+`views/partials/sidebar.ejs` (line ~115): "Copy chat as text" item in the chat-actions popup. Fetches `/chat/:id/api/messages`, formats as `===== ROLE (timestamp) =====` headers, copies to clipboard, alerts message count + char count.
+
+`views/chat.ejs` (line ~50): same item in the chat title dropdown (`chatCrumbMenu`) with `copyChatAsPlainText()` defined locally on the chat page.
+
+Both have a `document.execCommand` fallback for browsers without async clipboard.
+
+### 7. The bombshell — first round of test results were largely hallucinated (`c0a8284` is the hardener)
+
+After shipping fixes 1-6, CC pulled the user's test chat (`69d94d05575c5e75acb26308`) directly from MongoDB to verify the edge data quality the user reported. **Most of it was fabricated by the in-app AI.** The chat referenced bookIds `6839b022a04b6f3e10543052` "Positive satisfies" and `682b9b5b41854e2ba2804b37` "Elvang & Huang" — neither exists in the live DB. The "5 edges to Hidden zeros p.11" redundancy and the "Edge 5 spinor_helicity false positive" the user reported were both fiction.
+
+**Why it happened:** the test chat ran BEFORE `842796f` shipped the cross_book_edges block. The metadata was being budget-truncated and the AI filled the gap with plausible-sounding fiction — the classic "make up an answer when context is incomplete" failure mode.
+
+That commit already fixes the structural cause. `c0a8284` adds defense in depth:
+
+`services/claudeService.js BASE_PROMPT` — new section "NEVER FABRICATE BOOKS, CHUNKS, OR EDGES — HARD RULE" placed immediately above the CROSS-BOOK CITATIONS instructions:
+
+> The set of books, chunks, spans, and cross-book edges available to you is EXACTLY what appears in `<library_overview>`, `<book_metadata>`, and `<cross_book_edges>`. You may ONLY cite books whose IDs appear verbatim in one of those blocks. If a user asks about a book that is not in your context, say so explicitly — do NOT invent a bookId, do NOT invent page numbers, do NOT invent edges. Inventing data is a critical failure: clicks built on fabricated bookIds open dead links.
+
+### 8. Edge dedup (`c0a8284`)
+
+Even though the user-reported "5 edges to p.11 redundancy" was hallucinated, the live DB DID have 1 real duplicate (Understanding zeros p2 → Book 2 p1 — same span, two synthetic citation entries). Defensive dedup is the right structural change anyway.
+
+`services/edgeResolverService.js`:
+- New `RELATIONSHIP_PRIORITY` map: `proves > extends > prerequisite > equivalent > contradicts > uses_definition > assumes > missing_proof > annotates`. Tiebreak rule for duplicate edges at the same target.
+- New `confidenceRank()` helper (a → 26, z → 1).
+- `resolveSEdgesForBook()` rewritten to BUFFER candidate edges in a Map keyed by `(sourceBookId, targetChunkId)`, dedup, then write. Tiebreak order: confidence letter → relationship priority → resolver score → earlier source span. Spans that lose the dedup contest are NOT discarded — their span IDs go into the surviving edge's new `relatedSpanIds` field, so a future UI pass can show "N other spans in this book also cite this passage" without re-running the resolver.
+- Result struct gains a `dupsCollapsed` counter so we can see how many duplicates dedup eliminated per book.
+
+`models/Edge.js`: new `relatedSpanIds: [Span]` field. Empty when no duplicates.
+
+Verified on live DB: 16 → 15 edges, 0 remaining duplicates, 1 edge with +1 related span attached.
+
 
 ## 2026-04-11 late evening — Synonym normalization layer (the architectural fix for vocabulary alignment)
 
