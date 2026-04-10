@@ -121,6 +121,36 @@ app.delete('/api/chat/:chatId', async (req, res) => {
   }
 });
 
+// Copy a chat into another collection. Creates a new Chat record with
+// the same messages/title/bookId/pageNumber/highlightText but a different
+// collectionId, so the original remains untouched. The copy inherits its
+// scope (book list, instructions) from its new collection automatically,
+// since claudeService's context builder keys off chat.collectionId. Used
+// by the sidebar chat-actions popup "Copy to…" action.
+app.post('/api/chat/:chatId/copy', async (req, res) => {
+  try {
+    const Chat = require('./models/Chat');
+    const Collection = require('./models/Collection');
+    const { collectionId } = req.body || {};
+    const original = await Chat.findById(req.params.chatId).lean();
+    if (!original) return res.status(404).json({ error: 'Chat not found' });
+    const copy = await Chat.create({
+      title: original.title ? original.title + ' (copy)' : undefined,
+      messages: original.messages || [],
+      collectionId: collectionId || null,
+      bookId: original.bookId || null,
+      pageNumber: original.pageNumber || null,
+      highlightText: original.highlightText || null,
+    });
+    if (copy.collectionId) {
+      await Collection.findByIdAndUpdate(copy.collectionId, { $addToSet: { chatIds: copy._id } });
+    }
+    res.json({ ok: true, chat: copy });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // API: reprocess book with vision
 app.post('/api/books/:bookId/reprocess-vision', async (req, res) => {
   try {

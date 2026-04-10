@@ -23,19 +23,32 @@
 
     <% if (typeof collections !== 'undefined') { %>
       <% (collections || []).forEach(function(col) { %>
-        <div class="sidebar-collection-group">
-          <a href="/collection/<%= col._id %>"
-             class="sidebar-context-item collection-item <%= (typeof activeCollection !== 'undefined' && activeCollection && activeCollection._id.toString() === col._id.toString()) ? 'active' : '' %>">
-            <span class="col-dot" style="background:<%= col.color %>"></span>
-            <span class="nav-label"><%= col.title %></span>
-            <svg class="collection-toggle nav-label" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-          </a>
+        <div class="sidebar-collection-group" data-collection-id="<%= col._id %>">
+          <div class="sidebar-context-item-wrap">
+            <a href="/collection/<%= col._id %>"
+               class="sidebar-context-item collection-item <%= (typeof activeCollection !== 'undefined' && activeCollection && activeCollection._id.toString() === col._id.toString()) ? 'active' : '' %>">
+              <span class="col-dot" style="background:<%= col.color %>"></span>
+              <span class="nav-label"><%= col.title %></span>
+            </a>
+            <button class="collection-chevron-btn nav-label" aria-label="Toggle chats" type="button">
+              <svg class="collection-toggle" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+          </div>
           <% if (col.chats && col.chats.length > 0) { %>
             <div class="sidebar-collection-chats">
               <% col.chats.slice(0, 5).forEach(function(chat) { %>
-                <a href="/chat/<%= chat._id %>" class="sidebar-chat-item">
-                  <span class="nav-label"><%= chat.title || 'Untitled' %></span>
-                </a>
+                <div class="sidebar-chat-item-wrap">
+                  <a href="/chat/<%= chat._id %>" class="sidebar-chat-item">
+                    <span class="nav-label"><%= chat.title || 'Untitled' %></span>
+                  </a>
+                  <button class="chat-menu-btn nav-label"
+                          data-chat-id="<%= chat._id %>"
+                          data-chat-title="<%= (chat.title || 'Untitled').replace(/"/g, '&quot;') %>"
+                          data-collection-id="<%= col._id %>"
+                          aria-label="Chat options" type="button">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="5" r="0.5"/><circle cx="12" cy="12" r="0.5"/><circle cx="12" cy="19" r="0.5"/></svg>
+                  </button>
+                </div>
               <% }); %>
             </div>
           <% } %>
@@ -62,7 +75,71 @@
     </div>
   </div>
 
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="settingsModal" style="display:none;">
+    <div class="modal settings-modal">
+      <h2>Settings</h2>
+      <div class="settings-section">
+        <label class="settings-label">Theme</label>
+        <div class="theme-picker">
+          <button type="button" class="theme-option" data-theme="space">
+            <div class="theme-preview theme-preview-space"></div>
+            <span class="theme-option-label">Space</span>
+          </button>
+          <button type="button" class="theme-option" data-theme="nebula">
+            <div class="theme-preview theme-preview-nebula"></div>
+            <span class="theme-option-label">Nebula</span>
+          </button>
+          <button type="button" class="theme-option" data-theme="midnight">
+            <div class="theme-preview theme-preview-midnight"></div>
+            <span class="theme-option-label">Midnight</span>
+          </button>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="settingsCloseBtn">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chat Actions Popup (floating, positioned next to kebab on click) -->
+  <div class="chat-actions-popup" id="chatActionsPopup" style="display:none;">
+    <div class="chat-actions-main">
+      <button type="button" class="chat-action-btn" data-action="move">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        Move to…
+      </button>
+      <button type="button" class="chat-action-btn" data-action="copy">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        Copy to…
+      </button>
+      <button type="button" class="chat-action-btn chat-action-danger" data-action="delete">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+        Delete
+      </button>
+    </div>
+    <div class="chat-actions-collections" style="display:none;">
+      <button type="button" class="chat-action-back">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        Back
+      </button>
+      <div class="chat-actions-collections-title" id="chatActionsModeTitle">Select collection</div>
+      <div class="chat-collections-list" id="chatCollectionsList"></div>
+    </div>
+  </div>
+
+  <div class="sidebar-bottom">
+    <div class="sidebar-user">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="nav-label">Jonathan Valenzuela</span>
+    </div>
+    <button class="sidebar-settings-btn" id="sidebarSettingsBtn" title="Settings" type="button">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+  </div>
+
   <script>
+  // ─── NEW COLLECTION MODAL ──────────────────────────────────────
   (function() {
     var btn = document.getElementById('sidebarNewCollectionBtn');
     var modal = document.getElementById('newCollectionModal');
@@ -112,10 +189,252 @@
   })();
   </script>
 
-  <div class="sidebar-bottom">
-    <div class="sidebar-user">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-      <span class="nav-label">Jonathan Valenzuela</span>
-    </div>
-  </div>
+  <script>
+  // ─── COLLECTION CHEVRON TOGGLE (B1) ────────────────────────────
+  // Per-collection expand/collapse state persisted to localStorage.
+  // Default is "expanded" (show chats); only collapsed-state collections
+  // are stored, so new collections start expanded automatically.
+  (function() {
+    var STORAGE_KEY = 'gyde-collection-expanded';
+
+    function getState() {
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); }
+      catch (e) { return {}; }
+    }
+    function saveState(s) {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch (e) {}
+    }
+
+    var state = getState();
+    document.querySelectorAll('.sidebar-collection-group').forEach(function(g) {
+      var id = g.getAttribute('data-collection-id');
+      if (id && state[id] === false) g.classList.add('collapsed');
+    });
+
+    document.querySelectorAll('.collection-chevron-btn').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var group = btn.closest('.sidebar-collection-group');
+        if (!group) return;
+        group.classList.toggle('collapsed');
+        var id = group.getAttribute('data-collection-id');
+        if (id) {
+          var s = getState();
+          // Store true for expanded, false for collapsed. We could prune
+          // true entries for brevity but keeping them is clearer.
+          s[id] = !group.classList.contains('collapsed');
+          saveState(s);
+        }
+      });
+    });
+  })();
+  </script>
+
+  <script>
+  // ─── SETTINGS MODAL + THEME PICKER (B3 + B4) ───────────────────
+  (function() {
+    var btn = document.getElementById('sidebarSettingsBtn');
+    var modal = document.getElementById('settingsModal');
+    var closeBtn = document.getElementById('settingsCloseBtn');
+    if (!btn || !modal) return;
+
+    function markActive() {
+      var current = document.documentElement.getAttribute('data-theme') || 'space';
+      modal.querySelectorAll('.theme-option').forEach(function(opt) {
+        if (opt.getAttribute('data-theme') === current) opt.classList.add('active');
+        else opt.classList.remove('active');
+      });
+    }
+
+    function open() { modal.style.display = ''; markActive(); }
+    function close() { modal.style.display = 'none'; }
+
+    btn.addEventListener('click', function(e) { e.preventDefault(); open(); });
+    closeBtn.addEventListener('click', close);
+    modal.addEventListener('click', function(e) { if (e.target === modal) close(); });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && modal.style.display !== 'none') close();
+    });
+
+    modal.querySelectorAll('.theme-option').forEach(function(opt) {
+      opt.addEventListener('click', function(e) {
+        e.preventDefault();
+        var theme = opt.getAttribute('data-theme');
+        if (!theme) return;
+        document.documentElement.setAttribute('data-theme', theme);
+        try { localStorage.setItem('gyde-theme', theme); } catch (err) {}
+        markActive();
+      });
+    });
+  })();
+  </script>
+
+  <script>
+  // ─── CHAT ACTIONS POPUP (B2) ───────────────────────────────────
+  // Wires every .chat-menu-btn in the sidebar to a floating popup with
+  // Delete / Move to… / Copy to… actions. Move and Copy show a collection
+  // picker inline within the same popup.
+  (function() {
+    var popup = document.getElementById('chatActionsPopup');
+    if (!popup) return;
+    var mainView = popup.querySelector('.chat-actions-main');
+    var collView = popup.querySelector('.chat-actions-collections');
+    var backBtn = popup.querySelector('.chat-action-back');
+    var modeTitle = document.getElementById('chatActionsModeTitle');
+    var listEl = document.getElementById('chatCollectionsList');
+
+    // Collection list for the move/copy picker — same `collections`
+    // array the sidebar iterates, but minimized to just id/title/color.
+    // Serialized directly so the popup has a full target list (not just
+    // the five visible in the sidebar under each group).
+    var COLLECTIONS = <%- JSON.stringify((typeof collections !== 'undefined' ? (collections || []).map(function(c){ return { _id: String(c._id), title: c.title, color: c.color }; }) : [])) %>;
+
+    var activeChat = null; // { id, title, collectionId }
+    var activeMode = null; // "move" | "copy"
+
+    function showMain() {
+      mainView.style.display = '';
+      collView.style.display = 'none';
+    }
+    function showCollections(mode) {
+      activeMode = mode;
+      mainView.style.display = 'none';
+      collView.style.display = '';
+      modeTitle.textContent = mode === 'move' ? 'Move to collection' : 'Copy to collection';
+      listEl.innerHTML = '';
+      COLLECTIONS.forEach(function(col) {
+        if (mode === 'move' && activeChat && String(col._id) === String(activeChat.collectionId)) {
+          return; // don't show current collection as a move target
+        }
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'chat-action-btn';
+        b.innerHTML =
+          '<span class="col-dot" style="background:' + (col.color || '#666') + '"></span>' +
+          '<span>' + escapeHtml(col.title || 'Untitled') + '</span>';
+        b.addEventListener('click', function() {
+          performAction(mode, col._id);
+        });
+        listEl.appendChild(b);
+      });
+      if (mode === 'move') {
+        // Offer a "no collection" (orphan) destination when moving.
+        var orphan = document.createElement('button');
+        orphan.type = 'button';
+        orphan.className = 'chat-action-btn';
+        orphan.style.color = 'var(--app-text-muted)';
+        orphan.textContent = '— No collection (orphan)';
+        orphan.addEventListener('click', function() { performAction('move', null); });
+        listEl.appendChild(orphan);
+      }
+    }
+
+    function escapeHtml(s) {
+      return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function openPopup(anchorBtn, chat) {
+      activeChat = chat;
+      showMain();
+      popup.style.display = '';
+      // Position: anchor to the kebab button, open to the right of it if
+      // there's room, otherwise to the left. Vertically align the popup
+      // top with the button top, clamp to viewport.
+      var rect = anchorBtn.getBoundingClientRect();
+      var pw = 200; // approx width
+      var left = rect.right + 6;
+      if (left + pw > window.innerWidth - 8) {
+        left = Math.max(8, rect.left - pw - 6);
+      }
+      var top = rect.top;
+      // Clamp vertically after render to get real height.
+      popup.style.left = left + 'px';
+      popup.style.top = top + 'px';
+      setTimeout(function() {
+        var ph = popup.offsetHeight;
+        if (top + ph > window.innerHeight - 8) {
+          popup.style.top = Math.max(8, window.innerHeight - ph - 8) + 'px';
+        }
+      }, 0);
+    }
+
+    function closePopup() {
+      popup.style.display = 'none';
+      activeChat = null;
+      activeMode = null;
+    }
+
+    function performAction(action, targetCollectionId) {
+      if (!activeChat) { closePopup(); return; }
+      var id = activeChat.id;
+      if (action === 'delete') {
+        if (!confirm('Delete chat "' + activeChat.title + '"? This cannot be undone.')) {
+          closePopup();
+          return;
+        }
+        fetch('/api/chat/' + encodeURIComponent(id), { method: 'DELETE' })
+          .then(function(r) { return r.json(); })
+          .then(function() { closePopup(); location.reload(); })
+          .catch(function() { alert('Failed to delete chat.'); closePopup(); });
+        return;
+      }
+      if (action === 'move') {
+        fetch('/api/chat/' + encodeURIComponent(id), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ collectionId: targetCollectionId }),
+        }).then(function(r) { return r.json(); })
+          .then(function() { closePopup(); location.reload(); })
+          .catch(function() { alert('Failed to move chat.'); closePopup(); });
+        return;
+      }
+      if (action === 'copy') {
+        fetch('/api/chat/' + encodeURIComponent(id) + '/copy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ collectionId: targetCollectionId }),
+        }).then(function(r) { return r.json(); })
+          .then(function() { closePopup(); location.reload(); })
+          .catch(function() { alert('Failed to copy chat.'); closePopup(); });
+        return;
+      }
+    }
+
+    // Wire each kebab button
+    document.querySelectorAll('.chat-menu-btn').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var chatId = btn.getAttribute('data-chat-id');
+        var chatTitle = btn.getAttribute('data-chat-title') || 'Untitled';
+        var colId = btn.getAttribute('data-collection-id') || null;
+        openPopup(btn, { id: chatId, title: chatTitle, collectionId: colId });
+      });
+    });
+
+    // Top-level action handlers
+    popup.querySelectorAll('.chat-actions-main .chat-action-btn').forEach(function(b) {
+      b.addEventListener('click', function(e) {
+        e.preventDefault();
+        var action = b.getAttribute('data-action');
+        if (action === 'delete') performAction('delete');
+        else if (action === 'move') showCollections('move');
+        else if (action === 'copy') showCollections('copy');
+      });
+    });
+    backBtn.addEventListener('click', function(e) { e.preventDefault(); showMain(); });
+
+    // Close on outside click / escape
+    document.addEventListener('click', function(e) {
+      if (popup.style.display === 'none') return;
+      if (popup.contains(e.target)) return;
+      if (e.target.closest && e.target.closest('.chat-menu-btn')) return;
+      closePopup();
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && popup.style.display !== 'none') closePopup();
+    });
+  })();
+  </script>
 </aside>
