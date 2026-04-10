@@ -1,4 +1,32 @@
-Continue annotating in the same DSL format. One line per span:
-SENTENCE_RANGE CONTEXT_TAGS [DECLARATIVE_TAGS] [SEARCH_CLASS]
+Continue annotating in the compressed DSL format. One line per span.
 
-Annotate this text:
+FORMAT: SENTENCE_RANGE CONTEXT_TAGS ROLE_TAG [DECLARATIVE_TAGS] [SEARCH_CLASS]
+
+Every span MUST include:
+• A sentence range ("1-3" or "5") — 1-indexed within this chunk
+• At least one context tag (lowercase_underscored concept labels: free_propagator, amplitude_zero, zariski_topology)
+• Exactly one role tag from: claim, background, conjecture, result, review, definition, equation, application, citation, preview, proof, remark, example, figure_ref
+• A search-class tag WHEN the span makes a claim the text does not fully justify:
+    L{a-z} = logical gap (needs notes). "it can be shown", "the reader may verify", etc.
+    I{a-z} = internal same-book reference. "see Section 3.2", "by Theorem 4.1".
+    S      = specific external source cited. "[Hart77]", "[26-31]". No confidence suffix.
+    B{a-z} = broad external search needed. Uncited assertion from the literature.
+  Omit the search-class tag for routine self-contained sentences (implicit N).
+
+Declarative tags (optional, precision over recall): p/a/c/e/r/q/s/k/x/d/v followed by chunk.tag (e.g. p14.3, r7.2). ONLY use when the sentence literally performs that relation — when in doubt, omit.
+
+Example:
+[1] In [15] the conjecture was proposed that Tr(φ³) amplitudes are uniquely fixed by their zeros.
+[2] We prove this conjecture for Tr(φ³) in Section 4.
+[3] The proof relies on the hidden zero identity of Theorem 3.2.
+[4] It is obvious from the above that the amplitude admits no alternative form.
+
+Output:
+1 hidden_zeros tr_phi3_conjecture citation Sq
+2 hidden_zeros uniqueness_proof preview
+3 hidden_zero_identity proof r3.2 Iv
+4 amplitude_uniqueness claim Lt
+
+Note: every span has at least one context tag AND exactly one role. Lines 1, 3, 4 carry search-class tags because they make grounded claims. Line 2 is a self-contained preview (implicit N).
+
+Now annotate the following text. Output ONLY the DSL lines, one per span. No explanation.

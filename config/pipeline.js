@@ -15,13 +15,32 @@ module.exports = {
 
   // ─── SPAN GENERATION ─────────────────────────────────────────
   SPAN_MODEL: process.env.SPAN_MODEL || 'gpt-4o',
-  SPAN_MAX_SENTENCES_PER_CALL: 30,
+  SPAN_MAX_SENTENCES_PER_CALL: 60,
   SPAN_TEMPERATURE: 0.3,
   SPAN_PROMPT_FULL: 'prompts/span-generation-full.txt',
   SPAN_PROMPT_SHORT: 'prompts/span-generation-short.txt',
-  SPAN_SESSION_RESET_THRESHOLD: 6,
-  SPAN_JUDGE_SAMPLE_RATE: 10,
-  SPAN_SESSION_MAX_CHUNKS: 200,
+  // Force a session reset (i.e. re-inject the FULL prompt) after this many
+  // pages have been processed with the short prompt. Previously this was
+  // 200 which meant the session never reset for any book in the library,
+  // so the full prompt was only seen once on page 1 and every subsequent
+  // page got the 3-line short prompt — the LLM stopped emitting tags,
+  // role, and search-class after chunk 1-2. 8 pages is short enough that
+  // the full prompt is re-seen frequently on any real book but long
+  // enough to amortize the extra tokens.
+  SPAN_SESSION_MAX_PAGES: 8,
+  // Quality gate: a page's output is considered "drift" if fewer than
+  // this fraction of its parsed spans carry ANY metadata (contextTags,
+  // role, declarativeTags, or searchClass != N). Pages that fail the
+  // gate are automatically retried once with the full prompt. 0.5 means
+  // "at least half the spans must carry something" — a loose floor that
+  // catches total format collapse without penalizing pages that legitimately
+  // have a lot of connective narrative.
+  SPAN_MIN_ENRICHED_RATIO: 0.5,
+  // If a page returns 0 parsed spans (the LLM output was empty, the
+  // parser rejected every line, or the page is all noise), retry once
+  // with the full prompt before giving up. Was previously silent — the
+  // page was just skipped, contributing to 14-33% coverage.
+  SPAN_RETRY_ON_EMPTY: true,
 
   // ─── CHUNK DERIVATION ────────────────────────────────────────
   CHUNK_MAX_SPANS: 3,

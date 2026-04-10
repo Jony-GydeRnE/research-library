@@ -55,19 +55,47 @@ function stripHtml(html) {
 }
 
 // ─── SESSION STATE ───────────────────────────────────────────────
+// A "session" is one continuous run of span-generation LLM calls where
+// the model is expected to retain format memory from an initial full
+// prompt. We track sessions at PAGE granularity (one generateSpansForPage
+// call per page) — the variable was previously named `chunksInSession`
+// which was misleading since it was always a page counter.
 
 let currentSessionId = null;
-let chunksInSession = 0;
+let pagesInSession = 0;
 
-function startNewSession() {
+function startNewSession(reason) {
   currentSessionId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-  chunksInSession = 0;
-  console.log(`[spanService] New session: ${currentSessionId}`);
+  pagesInSession = 0;
+  console.log(`[spanService] New session: ${currentSessionId}${reason ? ' (reason: ' + reason + ')' : ''}`);
   return currentSessionId;
 }
 
 function shouldResetSession() {
-  return chunksInSession >= pipeline.SPAN_SESSION_MAX_CHUNKS;
+  return pagesInSession >= (pipeline.SPAN_SESSION_MAX_PAGES || 8);
+}
+
+// ─── QUALITY GATE ────────────────────────────────────────────────
+// A parsed span is considered "enriched" if it carries ANY metadata
+// beyond its bare sentence range. Spans that have only a sentence range
+// (no context tags, no role, no declarative tags, and searchClass N
+// which is the implicit default) are format-collapse artifacts from a
+// drifted session and must trigger a retry with the full prompt.
+function isSpanEnriched(span) {
+  if (span.contextTags && span.contextTags.length > 0) return true;
+  if (span.role) return true;
+  if (span.declarativeTags && span.declarativeTags.length > 0) return true;
+  if (span.searchClass && span.searchClass !== 'N') return true;
+  return false;
+}
+
+// Fraction of parsed spans that are enriched. Returns 1 for empty input
+// so the caller can distinguish "no spans parsed" (handled by a separate
+// empty-output retry) from "spans parsed but all junk".
+function enrichmentRatio(spans) {
+  if (!spans || spans.length === 0) return 1;
+  const enriched = spans.filter(isSpanEnriched).length;
+  return enriched / spans.length;
 }
 
 // ─── SENTENCE NUMBERING ─────────────────────────────────────────
@@ -190,13 +218,57 @@ function parseSpanOutput(dslOutput, bookId, pageNumber) {
 // ─── GENERATE SPANS FOR A PAGE ───────────────────────────────────
 
 /**
+ * Run a single LLM call for span generation on a page's text and return
+ * the parsed (but not yet persisted) span objects plus the raw DSL output
+ * for diagnostics. Does not touch the database. Separated from the main
+ * generateSpansForPage so we can invoke it twice in the quality-gated
+ * retry path without duplicating DB work.
+ */
+async function runSpanLLMCall(client, systemPrompt, input, sentences, bookId, pageNumber) {
+  const response = await client.chat.completions.create({
+    model: pipeline.SPAN_MODEL,
+    max_tokens: 800,
+    temperature: pipeline.SPAN_TEMPERATURE,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: input },
+    ],
+  });
+  const dslOutput = response.choices[0]?.message?.content || '';
+  const spanData = parseSpanOutput(dslOutput, bookId, pageNumber);
+  // Materialize spanText from the numbered sentences so chat context +
+  // metadata listing always see the actual text. The DSL parser only
+  // stores indices.
+  for (const s of spanData) {
+    if (!s.spanText) {
+      const start = Math.max(0, (s.sentenceStart || 1) - 1);
+      const end = Math.min(sentences.length, s.sentenceEnd || s.sentenceStart || 1);
+      if (end > start) {
+        s.spanText = sentences.slice(start, end).map(x => x.text).join(' ').trim();
+      }
+    }
+  }
+  return { spanData, dslOutput };
+}
+
+/**
  * Generate spans for a page's text.
- * @param {string} bookId
- * @param {number} pageNumber
- * @param {string} rawText - The page's rawText
- * @param {Array} preAnnotations - From regexService (structuralAnnotations)
- * @param {boolean} isNewSession - Whether to use the full prompt
- * @returns {Array} Created Span documents
+ *
+ * Quality pipeline on every call:
+ *   1. Run the LLM with the full or short prompt based on session state.
+ *   2. Parse the DSL output.
+ *   3. If the parse returned 0 spans AND SPAN_RETRY_ON_EMPTY is set,
+ *      retry ONCE with the full prompt (drift so severe the LLM emitted
+ *      nothing parseable).
+ *   4. Compute enrichment ratio (fraction of spans with at least one
+ *      tag/role/searchClass).
+ *   5. If enrichment is below SPAN_MIN_ENRICHED_RATIO AND we haven't
+ *      already used the full prompt, retry ONCE with the full prompt.
+ *   6. If the retry is still below the ratio floor, save what we got
+ *      AND force a session reset so the next page starts clean.
+ *   7. Save spans, link to page, return.
+ *
+ * @returns {Array} Created Span documents. Empty array on total failure.
  */
 async function generateSpansForPage(bookId, pageNumber, rawText, preAnnotations, isNewSession) {
   const client = getOpenAI();
@@ -214,6 +286,9 @@ async function generateSpansForPage(bookId, pageNumber, rawText, preAnnotations,
   const truncatedNumbered = sentences.length > maxSentences
     ? sentences.slice(0, maxSentences).map(s => `[${s.index}] ${s.text}`).join('\n')
     : numbered;
+  if (sentences.length > maxSentences) {
+    console.warn(`[spanService] Page ${pageNumber}: ${sentences.length} sentences truncated to ${maxSentences} (consider raising SPAN_MAX_SENTENCES_PER_CALL)`);
+  }
 
   // Build input with pre-annotations as hints
   let input = truncatedNumbered;
@@ -222,62 +297,84 @@ async function generateSpansForPage(bookId, pageNumber, rawText, preAnnotations,
     input += `\n\nPre-detected signals:\n${hints}`;
   }
 
-  const systemPrompt = isNewSession ? FULL_PROMPT : SHORT_PROMPT;
-
+  // ── PASS 1: initial LLM call (full prompt at session start, short otherwise)
+  let usedFullPrompt = !!isNewSession;
+  let systemPrompt = usedFullPrompt ? FULL_PROMPT : SHORT_PROMPT;
+  let result;
   try {
-    const response = await client.chat.completions.create({
-      model: pipeline.SPAN_MODEL,
-      max_tokens: 800,
-      temperature: pipeline.SPAN_TEMPERATURE,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: input },
-      ],
-    });
-
-    const dslOutput = response.choices[0]?.message?.content || '';
-
-    // Log raw DSL output for debugging
-    console.log(`[spanService] Page ${pageNumber} RAW DSL OUTPUT (${sentences.length} sentences, model: ${pipeline.SPAN_MODEL}):\n${dslOutput}\n---`);
-
-    const spanData = parseSpanOutput(dslOutput, bookId, pageNumber);
-
-    // Materialize spanText from the numbered sentences so the LLM
-    // (and downstream chat context) always has the actual text. The
-    // DSL parser only stores indices, so without this step spanText
-    // would stay null.
-    for (const s of spanData) {
-      if (!s.spanText) {
-        const start = Math.max(0, (s.sentenceStart || 1) - 1);
-        const end = Math.min(sentences.length, s.sentenceEnd || s.sentenceStart || 1);
-        if (end > start) {
-          s.spanText = sentences.slice(start, end).map(x => x.text).join(' ').trim();
-        }
-      }
-    }
-
-    // Save spans
-    const savedSpans = [];
-    for (const s of spanData) {
-      const span = await Span.create(s);
-      savedSpans.push(span);
-    }
-
-    // Link spans to page
-    if (savedSpans.length > 0) {
-      await Page.findOneAndUpdate(
-        { bookId, pageNumber },
-        { $push: { spanIds: { $each: savedSpans.map(s => s._id) } } }
-      );
-    }
-
-    chunksInSession++;
-    return savedSpans;
-
+    result = await runSpanLLMCall(client, systemPrompt, input, sentences, bookId, pageNumber);
   } catch (err) {
     console.error(`[spanService] Page ${pageNumber} failed: ${err.message}`);
     return [];
   }
+
+  let { spanData, dslOutput } = result;
+  console.log(`[spanService] Page ${pageNumber} PASS 1 (${usedFullPrompt ? 'full' : 'short'} prompt, ${sentences.length} sentences): ${spanData.length} spans parsed`);
+  if (spanData.length === 0 || dslOutput.trim().length < 10) {
+    console.log(`[spanService] Page ${pageNumber} PASS 1 raw DSL:\n${dslOutput}\n---`);
+  }
+
+  // ── PASS 2: empty-output retry with the full prompt
+  const retryOnEmpty = pipeline.SPAN_RETRY_ON_EMPTY !== false;
+  if (spanData.length === 0 && retryOnEmpty && !usedFullPrompt) {
+    console.warn(`[spanService] Page ${pageNumber}: 0 spans parsed — retrying with full prompt`);
+    try {
+      result = await runSpanLLMCall(client, FULL_PROMPT, input, sentences, bookId, pageNumber);
+      spanData = result.spanData;
+      dslOutput = result.dslOutput;
+      usedFullPrompt = true;
+      console.log(`[spanService] Page ${pageNumber} PASS 2 (empty-retry, full prompt): ${spanData.length} spans parsed`);
+      // After an empty-retry, force the next session to start fresh too.
+      startNewSession('empty-output recovery on page ' + pageNumber);
+    } catch (err) {
+      console.error(`[spanService] Page ${pageNumber} empty-retry failed: ${err.message}`);
+    }
+  }
+
+  // ── PASS 3: low-enrichment retry with the full prompt
+  const minRatio = pipeline.SPAN_MIN_ENRICHED_RATIO != null ? pipeline.SPAN_MIN_ENRICHED_RATIO : 0.5;
+  const ratio = enrichmentRatio(spanData);
+  if (spanData.length > 0 && ratio < minRatio && !usedFullPrompt) {
+    console.warn(`[spanService] Page ${pageNumber}: enrichment ratio ${ratio.toFixed(2)} < ${minRatio} — retrying with full prompt`);
+    try {
+      const retryResult = await runSpanLLMCall(client, FULL_PROMPT, input, sentences, bookId, pageNumber);
+      const retryRatio = enrichmentRatio(retryResult.spanData);
+      console.log(`[spanService] Page ${pageNumber} PASS 3 (low-enrichment retry): ${retryResult.spanData.length} spans parsed, ratio ${retryRatio.toFixed(2)}`);
+      // Accept the retry result if it beats the original (even if still
+      // below floor — something is better than junk).
+      if (retryRatio > ratio) {
+        spanData = retryResult.spanData;
+        dslOutput = retryResult.dslOutput;
+      }
+      usedFullPrompt = true;
+      // Always reset the session after a quality retry so subsequent
+      // pages start with the full prompt too.
+      startNewSession('low-enrichment recovery on page ' + pageNumber);
+    } catch (err) {
+      console.error(`[spanService] Page ${pageNumber} enrichment retry failed: ${err.message}`);
+    }
+  }
+
+  // Final diagnostic log — the raw DSL of whatever we're saving.
+  console.log(`[spanService] Page ${pageNumber} final: ${spanData.length} spans, enrichment ${enrichmentRatio(spanData).toFixed(2)}, model: ${pipeline.SPAN_MODEL}`);
+
+  // Save spans
+  const savedSpans = [];
+  for (const s of spanData) {
+    const span = await Span.create(s);
+    savedSpans.push(span);
+  }
+
+  // Link spans to page
+  if (savedSpans.length > 0) {
+    await Page.findOneAndUpdate(
+      { bookId, pageNumber },
+      { $push: { spanIds: { $each: savedSpans.map(s => s._id) } } }
+    );
+  }
+
+  pagesInSession++;
+  return savedSpans;
 }
 
 /**
@@ -316,14 +413,14 @@ async function generateSpansForBook(bookId) {
   await Span.deleteMany({ bookId });
   await Page.updateMany({ bookId }, { $set: { spanIds: [] } });
 
-  startNewSession();
+  startNewSession('book start');
   let totalSpans = 0;
   let pagesProcessed = 0;
 
   for (let i = 0; i < sources.length; i++) {
     const { page, text, source } = sources[i];
     const isNew = i === 0 || shouldResetSession();
-    if (isNew && i > 0) startNewSession();
+    if (isNew && i > 0) startNewSession('SPAN_SESSION_MAX_PAGES cap reached');
 
     if (!text) {
       console.log('[spanService] SKIPPING page ' + page.pageNumber + ' — no source text (vision=' + page.visionProcessed + ', html=' + !!page.htmlContent + ', raw=' + !!page.rawText + ')');
