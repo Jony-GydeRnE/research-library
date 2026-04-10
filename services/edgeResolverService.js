@@ -382,6 +382,33 @@ function overlapToConfidence(overlap) {
   return 'z';
 }
 
+// Relationship-type priority for dedup tiebreaks. When two edges
+// from the same source book point at the same target chunk and
+// have equal confidence, prefer the more specific relationship —
+// "proves" beats "assumes", "extends" beats "uses_definition", etc.
+// This matches the user's intuition: a proof-of-result citation
+// is a stronger claim than an assumes-the-result citation.
+const RELATIONSHIP_PRIORITY = {
+  proves: 100,
+  extends: 90,
+  prerequisite: 85,
+  equivalent: 80,
+  contradicts: 75,
+  uses_definition: 70,
+  assumes: 60,
+  missing_proof: 50,
+  annotates: 40, // notes-to-paper edges sit lowest in dedup
+};
+function relationshipRank(rel) {
+  return RELATIONSHIP_PRIORITY[rel] || 0;
+}
+
+// Confidence letter to numeric ordering. 'a' is highest, 'z' lowest.
+function confidenceRank(letter) {
+  if (!letter) return 0;
+  return 26 - (letter.charCodeAt(0) - 'a'.charCodeAt(0));
+}
+
 // ─── Main resolver ──────────────────────────────────────────────
 //
 // Walk every S-tagged span in a source book and create Edge
@@ -411,7 +438,28 @@ async function resolveSEdgesForBook(sourceBookId) {
     .select('_id chunkId pageNumber contextTags role spanText sentenceStart sentenceEnd')
     .lean();
 
-  let edgesCreated = 0;
+  // ── Buffer candidate edges, dedup by (sourceBook, targetChunk) ──
+  //
+  // Without dedup, multiple spans in the same source book that all
+  // happen to land on the same target chunk produce N near-identical
+  // edges. The user reported this in the first round of click-through
+  // testing — five separate edges all pointing at the same Hidden
+  // zeros p.11 chunk, which is noisy without adding signal.
+  //
+  // Dedup rule: keep one edge per (sourceBookId, targetChunkId).
+  // Tiebreaks, in order:
+  //   1. Higher confidence letter wins (a > c > f > j)
+  //   2. More specific relationship wins (proves > extends > … > assumes)
+  //   3. Higher resolver score wins (the original tag-overlap+text
+  //      score from findBestTargetChunk)
+  //   4. Earlier source span wins (lower sentenceStart)
+  //
+  // Spans that lose the dedup contest are NOT discarded entirely —
+  // their span IDs are tracked in the surviving edge as
+  // `relatedSpanIds`, so the chat UI / future ranking pass can
+  // surface them as "N other spans in this book also cite this
+  // chunk" rather than emitting N separate edges.
+  const buffered = new Map(); // key: "<srcBookId>:<tgtChunkId>" -> edge candidate
   const examples = [];
 
   for (const span of spans) {
@@ -424,7 +472,8 @@ async function resolveSEdgesForBook(sourceBookId) {
       if (!target) continue;
       const relationshipType = relationshipFromRole(span.role);
       const confidence = overlapToConfidence(target.overlap);
-      const edge = await Edge.create({
+
+      const candidate = {
         fromChunkId: span.chunkId,
         fromSpanId: span._id,
         toChunkId: target.chunk._id,
@@ -432,26 +481,80 @@ async function resolveSEdgesForBook(sourceBookId) {
         toBookId: targetBookId,
         relationshipType,
         confidence,
-        relevance: confidence,
-        method: 'lexical',
-        resolved: true,
-      });
-      edgesCreated++;
-      if (examples.length < 5) {
-        examples.push({
-          edgeId: edge._id,
-          fromBook: String(sourceBookId).substring(0, 8),
-          toBook: String(targetBookId).substring(0, 8),
-          citationKey: key,
-          spanText: (span.spanText || '').substring(0, 80),
-          targetChunkIndex: target.chunk.chunkIndex,
-          targetPage: target.chunk.pageNumber,
-          relationshipType,
-          confidence,
-          score: target.score,
-          scoreDetail: target.scoreDetail,
-        });
+        score: target.score,
+        scoreDetail: target.scoreDetail,
+        sentenceStart: span.sentenceStart || 0,
+        spanText: span.spanText || '',
+        targetPage: target.chunk.pageNumber,
+        targetChunkIndex: target.chunk.chunkIndex,
+      };
+
+      const dedupKey = String(sourceBookId) + ':' + String(target.chunk._id);
+      const existing = buffered.get(dedupKey);
+      if (!existing) {
+        candidate.relatedSpanIds = [];
+        buffered.set(dedupKey, candidate);
+        continue;
       }
+
+      // Compare candidate vs existing on (confidence, relationship, score)
+      const aConf = confidenceRank(candidate.confidence);
+      const bConf = confidenceRank(existing.confidence);
+      const aRel = relationshipRank(candidate.relationshipType);
+      const bRel = relationshipRank(existing.relationshipType);
+      const winner =
+        aConf > bConf ? 'candidate' :
+        aConf < bConf ? 'existing' :
+        aRel > bRel ? 'candidate' :
+        aRel < bRel ? 'existing' :
+        candidate.score > existing.score ? 'candidate' :
+        candidate.score < existing.score ? 'existing' :
+        candidate.sentenceStart < existing.sentenceStart ? 'candidate' :
+        'existing';
+
+      if (winner === 'candidate') {
+        candidate.relatedSpanIds = [...(existing.relatedSpanIds || []), existing.fromSpanId];
+        buffered.set(dedupKey, candidate);
+      } else {
+        existing.relatedSpanIds = [...(existing.relatedSpanIds || []), candidate.fromSpanId];
+      }
+    }
+  }
+
+  // Write the surviving candidates as edges. relatedSpanIds is
+  // stored on the Edge document so a downstream UI can show
+  // "N other spans cite this passage" without re-running the
+  // resolver.
+  let edgesCreated = 0;
+  for (const candidate of buffered.values()) {
+    const edge = await Edge.create({
+      fromChunkId: candidate.fromChunkId,
+      fromSpanId: candidate.fromSpanId,
+      toChunkId: candidate.toChunkId,
+      fromBookId: candidate.fromBookId,
+      toBookId: candidate.toBookId,
+      relationshipType: candidate.relationshipType,
+      confidence: candidate.confidence,
+      relevance: candidate.confidence,
+      method: 'lexical',
+      resolved: true,
+      relatedSpanIds: candidate.relatedSpanIds || [],
+    });
+    edgesCreated++;
+    if (examples.length < 5) {
+      examples.push({
+        edgeId: edge._id,
+        fromBook: String(candidate.fromBookId).substring(0, 8),
+        toBook: String(candidate.toBookId).substring(0, 8),
+        spanText: candidate.spanText.substring(0, 80),
+        targetChunkIndex: candidate.targetChunkIndex,
+        targetPage: candidate.targetPage,
+        relationshipType: candidate.relationshipType,
+        confidence: candidate.confidence,
+        score: candidate.score,
+        scoreDetail: candidate.scoreDetail,
+        relatedSpanCount: (candidate.relatedSpanIds || []).length,
+      });
     }
   }
 
@@ -459,6 +562,7 @@ async function resolveSEdgesForBook(sourceBookId) {
     edgesCreated,
     spansProcessed: spans.length,
     resolvedKeys: resolvedKeys.length,
+    dupsCollapsed: spans.length > 0 ? Math.max(0, [...buffered.values()].reduce((s, e) => s + (e.relatedSpanIds?.length || 0), 0)) : 0,
     examples,
   };
 }

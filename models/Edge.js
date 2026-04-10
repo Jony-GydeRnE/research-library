@@ -32,6 +32,12 @@ const edgeSchema = new mongoose.Schema({
     enum: ['lexical', 'embedding', 'llm', 'manual', 'note-citation']
   },
   resolved: { type: Boolean, default: false },
+  // Other Span IDs from the SAME source book that also point at
+  // this target chunk but lost the dedup tiebreak. The primary
+  // edge is rendered to the user; relatedSpanIds is the long tail
+  // a UI can fetch to show "N other passages in this book also
+  // cite this target". Empty when there were no duplicates.
+  relatedSpanIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Span' }],
   createdAt: { type: Date, default: Date.now }
 });
 
