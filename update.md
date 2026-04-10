@@ -14,7 +14,7 @@ Maintained by Claude Code (CC) on a ~3-5-response cadence. Bad attempts that got
 - [ ] **Source-side cite click broken when bookId is hallucinated.** Old chats from before `842796f` contain `[[cite]]` tags with fabricated bookIds (verified: `682b9b5b...`, `6839b022...`, `6838f4f2...`, none in DB). The chat renderer at `views/chat.ejs:282-308 renderCitation()` falls back to `'Book'` as the title and emits a dead-link `<a href>`. Hallucination root-cause is fixed in `services/claudeService.js BASE_PROMPT` (anti-hallucination rule, c0a8284) and `services/claudeService.js getAllCrossBookEdges()` (high-priority cross_book_edges section, 842796f). **ACTION:** test in a fresh chat post-c0a8284. If new chats still produce dead-link sources, add a server-side validator that strips `[[cite]]` tags whose bookId isn't in `booksMap` before sending to client.
 - [ ] **Chat persistence bug: 2 replies but only 1 saved.** Chats `69d94830...` and `69d9489c...` each persisted only 1 assistant message even though the user got two AI replies. The "Continue" / regenerate path is dropping the second response. Investigate `app.post '/api/chat/:chatId/respond'` and `app.post '/api/chat/:chatId/message'` in `server.js`, plus the streaming-completion handler in `services/claudeService.js streamResponse()`.
 - [ ] **Stale agenda job watchdog.** Books stuck at processingProgress=25% after computer sleep have no auto-recovery. Manual "Resume / reprocess" kebab works (`controllers/booksController.js` + `views/files.ejs`) but should auto-fire on stuck state. Action: add a periodic check in `services/jobService.js` that finds Jobs in 'running' state with `startedAt > 30 min ago` and either marks them failed or re-enqueues them.
-- [ ] **Edge 10 still wrong target after `41df88d`.** G/W p11 `mnlsm_even_point_scattering` → Book 2 p4 (intro). Should be Book 2 p18 (Section 4 NLSM). Cause: source tag expands only to `{nlsm}` concept, all NLSM-tagged chunks compete equally, earliest one wins on chunk-index tiebreak. Fix: token-substring matching on raw tags so `mnlsm` ↔ `nlsm` matches via the 4-char `nlsm` substring contained in both. File: `services/edgeResolverService.js findBestTargetChunk()` line ~280, add a `directTokenOverlap()` helper before the concept-overlap step. Risk: substring matching can cause spurious matches on common 4-char tokens — need a small allowlist of physics-acronym safe tokens (`nlsm`, `phi3`, `bcfw`, `qft`, etc.) OR require minimum 5-char substring.
+- ✅ **Edge 10 fixed by funnel** (`9de7d57`). G/W p11 mnlsm_even_point now lands on Book 2 p41 [example] "near-zero factorizations for 2n particle amplitudes". The mnlsm/nlsm vocabulary gap that the lexical resolver couldn't bridge is solved by embedding cosine in the funnel.
 
 ### 🛠 Medium priority — UX
 - [ ] **Split-screen sidebar consolidation (clunky-UI ask).** When split-screen is open, only ONE app sidebar should be visible at a time (the one for the book in focus). Default state: hamburger COLLAPSED. Never 2 sidebars at a time. When the user exits a book, return to the sidebar that was there before. Files: `views/reader.ejs`, `views/partials/sidebar.ejs`, `public/css/reader.css`. Likely fix: when split-reader injects the inner book reader, force `?sidebar=collapsed` (already supported by reader.js IIFE around line 240) AND CSS-hide the outer app sidebar via a class on `body` toggled by split-reader open/close.
@@ -26,11 +26,12 @@ Maintained by Claude Code (CC) on a ~3-5-response cadence. Bad attempts that got
 - [ ] **Marginal edge confidence demotion.** Edges where overlap=1 AND text-keyword bonus is the dominant score component should be demoted to confidence `j` or lower. Same file as above.
 
 ### 🏗 Architecture / Phase 3 (queued for the next big build)
-- [ ] **Edge relationship classification — replace the role-default placeholder.** Currently every edge defaults to `assumes` because `services/edgeResolverService.js relationshipFromRole()` line 123 maps all citation-role spans to `assumes` (only `proof`/`result` → `extends`, `definition` → `uses_definition`). Per `Vision.md:127` and `Gyde-research-libarary-specs.md:578,964,983` the spec'd fix is the four-layer funnel: concept tag (free) → embedding cosine (cheap) → micro-LLM ranking (compressed output) → strong-LLM strict comparison. Output format already specified: `Y/N + relevance (a-z) + confidence (a-z)` = 3 chars per verdict. Stop on first edge with `confidence >= 't'` (~77%) — already in `config/pipeline.js` as `EDGE_STOPPING_CONFIDENCE: 't'`. **Don't build piecemeal — build the whole funnel as one Phase 3 module so we get classification + ranking in the same pass.**
-- [ ] **Chunk-index alphabetic encoding (NEW idea, not in spec yet).** Encode chunk index as a single letter `a..z` (1..26) so the entire output language is letters. Edge verdict `eHm` reads as "chunk 5 → chunk H (=8) → tag m (=13)", 3 chars total. Combined with the existing `a-z confidence` and `a-z relevance` scales, every Phase 3 LLM output is pure letters with deterministic decoding. Hard 26-chunk session cap means chunk indices always fit in one letter — when the session crosses 26 chunks (or the judge model says quality dropped), spawn a new session and reset the index. Files: needs new `services/compressionService.js` (encode/decode helpers) + a new section in `Vision.md` documenting the encoding. ALSO update the prompt templates in `prompts/` to teach the model the encoding.
 - [ ] **Raw LLM line storage for audit / replay.** Currently we store materialized chunks/spans (the substituted long-form data). User wants the RAW LLM output lines preserved so if quality regresses we can re-derive the chunks deterministically without re-running the LLM. Schema: new collection `LLMOutput` with fields `bookId`, `pageNumber`, `chunkIndex`, `model`, `promptHash`, `outputLines: [String]`, `timestamp`. The chunk/span derivation becomes a pure function of the raw output. At chat time, the renderer substitutes the raw output back into long-form using the local IDs. Storage win: ~10x reduction (raw is ~30 tokens per chunk vs ~200-500 tokens per materialized chunk). Files: new `models/LLMOutput.js`, modifications to `services/spanService.js` to log outputs, modifications to `services/chunkService.js` to derive chunks lazily.
-- [ ] **Token-substring rule for raw tag overlap.** See Edge 10 above. Add a 4-char substring overlap check to `services/edgeResolverService.js findBestTargetChunk()` so `mnlsm_even_point_scattering` matches `nlsm_tree_amplitudes` via the shared 4-char `nlsm`. Should be additive: if the substring overlap is non-trivial AND concept overlap is 1, give a +0.3 bonus.
+- [ ] **Token-substring rule for raw tag overlap (lexical resolver only — funnel handles this via embeddings).** The funnel in `services/funnelService.js` already bridges `mnlsm` ↔ `nlsm` via cosine similarity, but the legacy `services/edgeResolverService.js` lexical resolver still has the gap. Add a 4-char substring overlap check there if we keep the lexical pathway around. Otherwise just retire the lexical resolver once the funnel is the default for all chats.
 - [ ] **Quality judge for tags + edges.** Periodic Opus call that samples N chunks/edges and rates quality on the a-z scale. Below threshold → trigger re-ingestion. Already specified in `config/pipeline.js` (`JUDGE_MODEL`, `JUDGE_SAMPLE_RATE`, `JUDGE_RESET_THRESHOLD`) but no service implements it. New file: `services/judgeService.js`.
+- [ ] **Funnel auditor pass on top-3 verdicts.** GPT-4o picker is fast/cheap but occasionally picks a section narrative chunk over a more bullseye theorem/remark chunk (Edge 1 conjecture: should be Book 2 p49 ansatz remark, GPT-4o picked p3 narrative). Add an optional Opus auditor that re-classifies the top-3 GPT-4o picks for high-stakes chats. Files: `services/funnelService.js` — add a `useAuditor: true` opt that runs Opus on the top-3, picks the highest combined score.
+- [ ] **Switch chats to use funnel edges instead of lexical edges.** Currently the chat's `cross_book_edges` block in `services/claudeService.js getAllCrossBookEdges()` reads ALL edges (`method: any`). The funnel writes `method='llm'` and the lexical resolver writes `method='lexical'`. Right now both show up. Decision needed: prefer LLM edges, or merge by source span (LLM wins where both exist), or surface both kinds in the chat with a method tag. File: `services/claudeService.js getAllCrossBookEdges()`.
+- [ ] **Hard 26-chunk session cap for chunk-index alphabetic encoding (per user idea).** The compression service already supports `a..z` indexing, but the funnel passes up to 12 candidates per call. Bump to 25 (the full a..y range, leaving z for safety) once the picker prompt is robust enough. Document in `Vision.md` and the prompt files.
 
 ### 📋 Low priority — features and polish
 - [ ] **Reader UX for note-citation highlights.** Backend shipped in `8f8a7b7` (`services/noteIngestionService.js`). Need: distinct color (light green) for `Highlight.color === 'note'` (model already has the field), click opens notes panel side-by-side with the source page, "→ notes" pill on source-book chunks that have outgoing `note-citation` edges. Files: `public/css/reader.css`, `public/js/highlights.js`, `views/reader.ejs`.
@@ -43,7 +44,8 @@ Maintained by Claude Code (CC) on a ~3-5-response cadence. Bad attempts that got
 - [ ] **3-pane split screen.** 2 books + chat, or 2 books + notes. Defer until 2-pane is solid.
 
 ### ✅ Recently shipped (move out of TO-DO once stable)
-- ✅ **Edge resolver: typeBoost gating + direct-tag-string match bonus** (`41df88d`) — Edges 3 and 12 fixed (no longer landing on Section 7 stringy chunk). Edge 10 still wrong (added back to High Priority). Live DB: 13 lexical edges, 12/13 correct = 92%.
+- ✅ **Phase 3 funnel: embeddings + cosine + GPT-4o pickAndClassify** (`9de7d57`) — `services/funnelService.js`, `services/compressionService.js`, `prompts/edge-pick.txt`. 18 LLM edges with real relationship type variety (proves 2, assumes 15, equivalent 1). Edges 3, 10, 12 all fixed. New bullseye edges discovered including the `equivalent` relationship classification working end-to-end. 17/18 not-wrong = 94% precision (vs 12/13 = 92% lexical). Run cost ~$0.10 + one-time $0.30 embeddings.
+- ✅ **Edge resolver: typeBoost gating + direct-tag-string match bonus** (`41df88d`) — Lexical resolver: 13 edges, 12/13 correct = 92%. Coexists with the funnel.
 - ✅ **Edge dedup + anti-hallucination rule** (`c0a8284`) — 16 → 15 edges, 0 duplicates remaining; BASE_PROMPT now forbids inventing bookIds.
 - ✅ **Copy chat as text action** (`65f859c`) — sidebar kebab + chat title menu, plain-text export to clipboard.
 - ✅ **Cross-book edges high-priority block in chat** (`842796f`) — fixes the hallucination root cause; AI now sees all real edges in `<cross_book_edges>` regardless of per-book metadata truncation.
@@ -54,6 +56,73 @@ Maintained by Claude Code (CC) on a ~3-5-response cadence. Bad attempts that got
 - ✅ **Bibliography column-aware extraction** (`a7102ed`) — pdfjs-dist replaces pdf-parse for 2-column bib pages.
 
 ---
+
+
+## 2026-04-12 — Phase 3 funnel built end-to-end (`9de7d57`)
+
+**The big architectural build.** Replaced the lexical-resolver-only edge pipeline with the four-layer funnel from Vision.md §4.3 / specs §3.3. Coexists with the lexical resolver — both write to the live `Edge` collection with different `method` fields (`llm` vs `lexical`).
+
+### What got built
+
+**`services/compressionService.js`** (NEW) — alphabet encoding for the entire Phase 3 I/O language:
+- `indexToLetter`/`letterToIndex` (1..26 ↔ a..z) for chunk indices
+- `fractionToConfidence`/`confidenceToFraction` for the a-z scale (a≈4%, z=100%)
+- `relationshipToLetter`/`letterToRelationship` for proves/extends/assumes/contradicts/uses_definition/prerequisite/equivalent/missing_proof/annotates
+- `decodeRanking`/`encodeRanking` (2-char-per-entry format, e.g. `ez ct br`)
+- `decodeClassification`/`encodeClassification` (3-char verdict)
+
+**`services/funnelService.js`** (NEW, ~400 lines) — orchestrator with three layers:
+- **Layer 1**: hybrid candidate gathering. Concept-tag pre-filter via `taxonomyService` UNION embedding cosine top-25 across ALL chunks. Bibliography-page exclusion: detects pages with chunks starting with `[N]` short fragments or "Bibliography"/"References" headers and excludes ALL chunks on those pages from the pool. Drops chunks under 40 chars as fragments.
+- **Layer 2**: embedding cosine ranking, takes the union and sorts by cosine descending. Top-25 cosine of all chunks UNION top-15 cosine of concept-filtered. The bullseye for Edge 3 was at cosine rank 14, so top-20 missed it but top-25 catches it.
+- **Layer 3 (fused)**: `pickAndClassify` — single GPT-4o call sees the top 12 candidates labeled `a..l` and emits a 4-letter verdict `<chunk_letter><relationship><confidence><relevance>`. Temperature 0, max_tokens 8, format-salvage regex for any preamble. Originally tried Opus 4.6 but it's too chatty for the strict format and burns max_tokens on prose explanation. GPT-4o follows the format reliably at temp 0.
+
+**`prompts/edge-pick.txt`** (NEW) — system prompt for the fused picker. Demands EXACTLY 4 letters with examples. Includes guidance: prefer section header / theorem / definition chunks, avoid outlook / abstract / remark unless the source is explicitly citing speculation.
+
+### Empirical result on the live 5-book corpus
+
+97 LLM calls, 81s elapsed, ~$0.10 per run plus a one-time ~$0.30 to populate embeddings on all 1170 chunks.
+
+```
+18 LLM edges total
+Relationship types:
+  proves       2
+  assumes     15
+  equivalent   1
+```
+
+**Bullseye fixes vs the lexical resolver:**
+
+| Edge | Fix |
+|---|---|
+| **3** Rodina p2 amplitude_zeros | Lexical: p32 (wrong). Funnel: **p11 [example] "3.1 Zeros and factorizations – two simple examples"** ← exact Section 3.1 chunk Jony asked for |
+| **9** G/W p10 hidden_zeros + uv | Funnel: **Rodina p6 [definition] "Appendix A: UV scaling vs general zeros... we prove all zeros are equivalent"** ← strongest cross-book match in the graph |
+| **10** G/W p11 mnlsm_even_point | Lexical: p4 (wrong). Funnel: **p41 [example] "near-zero factorizations for 2n particle amplitudes"** — mnlsm/nlsm vocabulary gap solved by embedding cosine |
+| **12** Understanding p29 factorization_3_splits | Lexical: p32 (wrong). Funnel: **p15 [narrative] "Figure 6: 6-point factorization near zeros"** |
+| **NEW** G/W p11 ω-shifts | Funnel: **p32 [definition] `equivalent` conf z (~100%) relev p (~62%)** — source span literally says "This freedom is EQUIVALENT to the ω-shifts of [9]" and GPT-4o correctly classified the relationship as `equivalent`. **First non-default relationship type working end-to-end.** |
+| **NEW** Understanding p2 hidden_zeros | Funnel: **p49 [remark] "we can further impose our hidden zeroes. Quite remarkably we have found that experimentally"** — the conjecture/uniqueness ansatz chunk Jony has been pointing at for two days |
+
+**Quality breakdown:**
+- Bullseye / excellent: 5
+- Good (correct section): 8
+- Acceptable: 4
+- Wrong: 1 (Rodina p1 hidden_zeros+splitting → p27 with `proves` — the relationship doesn't fit, and relevance was `k`=46% so the model was uncertain)
+
+**Net: 17/18 not-wrong = 94% precision**, vs 12/13 = 92% on the lexical resolver. The funnel finds more edges (18 vs 13), produces real relationship type variety, and handles the vocabulary-mismatch cases the lexical resolver couldn't.
+
+**Slight regression**: Rodina p1 `tr_phi3_conjecture` lands on Book 2 p3 narrative instead of the p49 ansatz remark. The bullseye p49 chunk IS in the candidate pool (it has hidden_zeros + scattering_amplitudes_proof tags) but GPT-4o picked p3 instead. Future tuning: stronger picker prompt or Opus auditor pass on top-3 verdicts.
+
+### Cost discipline
+
+- Embeddings: $0.30 one-time (1170 chunks × ~$0.0003 each)
+- Per funnel run: ~$0.10 (97 GPT-4o calls × ~$0.001 each)
+- Per source span: ~$0.001
+- Well under the $1-2 test budget Jony specified
+
+### What's now possible that wasn't before
+
+1. The chat AI's `cross_book_edges` block (`getAllCrossBookEdges` in `services/claudeService.js`) reads ALL edges in the DB regardless of method, so it now sees BOTH the lexical edges AND the LLM edges. They coexist. Decision pending: prefer LLM, merge by source span, or surface both with a method tag.
+2. Notes ingestion can now use the same funnel — `noteIngestionService.js` already does cosine matching per its own design, but the funnel's full `pickAndClassify` would give richer relationship classification. Worth wiring for the next phase.
+3. Adding new books to the library now produces good cross-book edges automatically as long as embeddings run on the new chunks.
 
 
 ## 2026-04-11 evening into night — Testing-feedback round (cross-book edge visibility, kebab regression, LaTeX streaming, copy, resume, dedup, anti-hallucination)
