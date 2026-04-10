@@ -332,6 +332,28 @@ async function buildContext(chat) {
     if (colCtx) sections.push({ priority: 6, text: colCtx });
   }
 
+  // ─── CROSS-BOOK EDGES (high priority — always survives budget) ─
+  // Compact, flat list of every Edge in the user's library, with
+  // both source and target context packed into ~4 lines per edge.
+  // Lifted out of per-book metadata so the AI sees the full edge
+  // graph even when individual book metadata blocks get truncated
+  // by the budget assembler — see getAllCrossBookEdges header for
+  // the rationale.
+  //
+  // Scope filter: in collection scope, only edges involving books
+  // in the collection. In book scope, only edges involving the
+  // anchored book. Otherwise (library / page / highlight), every
+  // edge in the library.
+  let edgeScopeBookIds = null;
+  if (scope === 'collection' && chat.collectionId) {
+    const col = await Collection.findById(chat.collectionId).select('bookIds').lean();
+    if (col && col.bookIds) edgeScopeBookIds = col.bookIds;
+  } else if ((scope === 'book' || scope === 'page' || scope === 'highlight') && chat.bookId) {
+    edgeScopeBookIds = [chat.bookId];
+  }
+  const edgesBlock = await getAllCrossBookEdges({ bookIds: edgeScopeBookIds });
+  if (edgesBlock) sections.push({ priority: 2, text: edgesBlock });
+
   // ─── LIBRARY OVERVIEW (always included at lowest priority) ─────
   const libraryCtx = await getLibraryOverview();
   if (libraryCtx) sections.push({ priority: 10, text: libraryCtx });
@@ -759,6 +781,103 @@ async function getLibraryOverview() {
     return line;
   }).join('\n');
   return `Library (${books.length} books) — use the id values in [[cite bookId="…"]] tags:\n${list}`;
+}
+
+/**
+ * Render every cross-book Edge in the library as a flat, compact
+ * block that lives at high priority in the chat context.
+ *
+ * Why this is its own section: per-book metadata is added at
+ * priority 5 and can blow the context budget on a 4-book corpus,
+ * causing whole books — and therefore their outgoing edges — to
+ * silently drop. The user reported the AI saw only 3 edges (out
+ * of 16) because the metadata for the other source books was
+ * truncated. The fix is to lift the EDGE GRAPH out of the
+ * per-book metadata blocks into its own dedicated, much smaller
+ * section that's added at priority 2 and always survives the
+ * budget cut.
+ *
+ * Each entry packs both source and target context (book titles,
+ * pages, span text, target quote) so the AI doesn't need the
+ * full per-book metadata to render a [[cite]] tag — it can lift
+ * everything from this block alone.
+ *
+ * Filter: when scope is collection or book, restrict to edges
+ * whose source OR target is in scope so we don't waste budget on
+ * irrelevant edges. Library/All Files scope dumps all edges.
+ */
+async function getAllCrossBookEdges(opts = {}) {
+  const filter = {};
+  // Only edges that are real cross-paper citations or note links —
+  // skip lexical edges that the resolver dropped to a-z scoring
+  // already, which we want, and skip pending-stub edges (they have
+  // toBookId pointing at a stub Book with status='pending-citation').
+  // Method filter keeps both 'lexical' (cross-paper) and
+  // 'note-citation' (notes-to-paper) so the AI sees both kinds.
+  const edges = await Edge.find(filter)
+    .select('fromChunkId fromSpanId toChunkId toBookId fromBookId relationshipType confidence method')
+    .lean();
+  if (edges.length === 0) return null;
+
+  // If scope is restricted, filter edges by whether either side
+  // is in scope. opts.bookIds is the set of in-scope book ids.
+  let inScope = edges;
+  if (opts.bookIds && opts.bookIds.length > 0) {
+    const setIds = new Set(opts.bookIds.map(String));
+    inScope = edges.filter(e =>
+      setIds.has(String(e.fromBookId)) || setIds.has(String(e.toBookId))
+    );
+  }
+  if (inScope.length === 0) return null;
+
+  // Batch-load every referenced span, chunk, and book in one round-trip
+  const spanIds = [...new Set(inScope.map(e => String(e.fromSpanId)).filter(Boolean))];
+  const chunkIds = [...new Set(inScope.flatMap(e => [String(e.fromChunkId), String(e.toChunkId)]).filter(Boolean))];
+  const bookIds = [...new Set(inScope.flatMap(e => [String(e.fromBookId), String(e.toBookId)]).filter(Boolean))];
+
+  const [spans, chunks, books] = await Promise.all([
+    Span.find({ _id: { $in: spanIds } }).select('_id pageNumber spanText contextTags').lean(),
+    Chunk.find({ _id: { $in: chunkIds } }).select('_id pageNumber sourceText structuralType contextTags chunkIndex').lean(),
+    Book.find({ _id: { $in: bookIds } }).select('_id title author').lean(),
+  ]);
+  const spanMap = new Map(spans.map(s => [String(s._id), s]));
+  const chunkMap = new Map(chunks.map(c => [String(c._id), c]));
+  const bookMap = new Map(books.map(b => [String(b._id), b]));
+
+  // Render compact, fixed format the AI can read line-by-line
+  const lines = [];
+  lines.push(`<cross_book_edges count="${inScope.length}">`);
+  lines.push(`This block lists every verified cross-document edge in the user's library. Each edge connects a span in a source book to a chunk in another book. When the user asks about cross-references / citations / connections between books, render edges as [[cite bookId="…" page="…"]]quoted text[[/cite]] tags using the EXACT format described in the BASE_PROMPT. Prefer this block as your source of truth for which edges exist; do not invent edges that are not listed here.`);
+  lines.push('');
+
+  let i = 0;
+  for (const e of inScope) {
+    i++;
+    const fromBook = bookMap.get(String(e.fromBookId));
+    const toBook = bookMap.get(String(e.toBookId));
+    const fromSpan = spanMap.get(String(e.fromSpanId));
+    const fromChunk = chunkMap.get(String(e.fromChunkId));
+    const toChunk = chunkMap.get(String(e.toChunkId));
+    if (!fromBook || !toBook || !toChunk) continue;
+
+    const fromTitle = (fromBook.title || '?').substring(0, 60);
+    const toTitle = (toBook.title || '?').substring(0, 60);
+    const fromPage = fromSpan?.pageNumber ?? fromChunk?.pageNumber ?? '?';
+    const toPage = toChunk.pageNumber ?? '?';
+    const fromText = (fromSpan?.spanText || fromChunk?.sourceText || '').replace(/\s+/g, ' ').trim().substring(0, 220);
+    const toText = (toChunk.sourceText || '').replace(/\s+/g, ' ').trim().substring(0, 220);
+    const fromTags = (fromSpan?.contextTags || []).slice(0, 4).join(',');
+    const toTags = (toChunk.contextTags || []).slice(0, 4).join(',');
+
+    lines.push(`edge #${i}: ${e.relationshipType || 'assumes'} (conf=${e.confidence || '?'}, method=${e.method || '?'})`);
+    lines.push(`  from_book_id="${e.fromBookId}" from_book_title="${fromTitle}" from_page=${fromPage}${fromTags ? ' from_tags=[' + fromTags + ']' : ''}`);
+    lines.push(`  source_text: "${fromText}"`);
+    lines.push(`  to_book_id="${e.toBookId}" to_book_title="${toTitle}" to_page=${toPage} to_type=${toChunk.structuralType || '?'}${toTags ? ' to_tags=[' + toTags + ']' : ''}`);
+    lines.push(`  target_quote: "${toText}"`);
+    lines.push('');
+  }
+  lines.push(`</cross_book_edges>`);
+  return lines.join('\n');
 }
 
 // ─── STREAM RESPONSE ─────────────────────────────────────────────

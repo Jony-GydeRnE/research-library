@@ -14,10 +14,19 @@
   <% } else { %>
     <div class="chat-list">
       <% chats.forEach(function(chat) { %>
-        <a href="/chat/<%= chat._id %>" class="chat-list-item">
-          <div class="chat-item-title"><%= chat.title || 'Untitled Chat' %></div>
-          <div class="chat-item-preview"><%= chat.messages && chat.messages.length > 0 ? chat.messages[chat.messages.length-1].content.substring(0, 100) : '' %></div>
-        </a>
+        <div class="chat-list-row">
+          <a href="/chat/<%= chat._id %>" class="chat-list-item">
+            <div class="chat-item-title"><%= chat.title || 'Untitled Chat' %></div>
+            <div class="chat-item-preview"><%= chat.messages && chat.messages.length > 0 ? chat.messages[chat.messages.length-1].content.substring(0, 100) : '' %></div>
+          </a>
+          <button class="chat-menu-btn"
+                  data-chat-id="<%= chat._id %>"
+                  data-chat-title="<%= (chat.title || 'Untitled').replace(/"/g, '&quot;') %>"
+                  data-collection-id="<%= chat.collectionId || '' %>"
+                  aria-label="Chat options" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+          </button>
+        </div>
       <% }); %>
     </div>
   <% } %>

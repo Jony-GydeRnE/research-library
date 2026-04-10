@@ -401,16 +401,20 @@
       }
     }
 
-    // Wire each kebab button
-    document.querySelectorAll('.chat-menu-btn').forEach(function(btn) {
-      btn.addEventListener('click', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        var chatId = btn.getAttribute('data-chat-id');
-        var chatTitle = btn.getAttribute('data-chat-title') || 'Untitled';
-        var colId = btn.getAttribute('data-collection-id') || null;
-        openPopup(btn, { id: chatId, title: chatTitle, collectionId: colId });
-      });
+    // Wire kebab buttons via event delegation so the popup picks
+    // up buttons rendered by ANY view, not just the sidebar
+    // partial — the chats page list and the collection right-panel
+    // both render their own .chat-menu-btn buttons and expect this
+    // popup to handle them. Delegation also survives DOM updates.
+    document.addEventListener('click', function(e) {
+      var btn = e.target.closest && e.target.closest('.chat-menu-btn');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var chatId = btn.getAttribute('data-chat-id');
+      var chatTitle = btn.getAttribute('data-chat-title') || 'Untitled';
+      var colId = btn.getAttribute('data-collection-id') || null;
+      openPopup(btn, { id: chatId, title: chatTitle, collectionId: colId });
     });
 
     // Top-level action handlers

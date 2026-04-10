@@ -580,8 +580,34 @@
   gap: 0.3rem;
 }
 
+/* Row wrapper that holds the chat link + the kebab button. */
+.right-panel-chat-row, .chat-list-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  position: relative;
+}
+.right-panel-chat-row .chat-menu-btn,
+.chat-list-row .chat-menu-btn {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--app-text-muted);
+  cursor: pointer;
+  padding: 0.35rem 0.4rem;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+.right-panel-chat-row:hover .chat-menu-btn,
+.chat-list-row:hover .chat-menu-btn { opacity: 1; }
+.right-panel-chat-row .chat-menu-btn:hover,
+.chat-list-row .chat-menu-btn:hover { background: var(--app-surface-hover); color: var(--app-text-bright); }
+
 .right-panel-chat-item {
   display: block;
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 0.55rem 0.7rem;
   background: var(--app-bg);
   border-radius: 6px;
@@ -951,6 +977,8 @@
 
 .chat-list-item {
   display: block;
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 0.6rem 0.85rem;
   background: var(--app-surface);
   border-radius: 8px;

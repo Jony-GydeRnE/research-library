@@ -73,6 +73,12 @@ window.MathJax = {
       <div class="chat-message chat-message-<%= msg.role %>">
         <div class="chat-message-label"><%= msg.role === 'user' ? 'You' : 'Claude' %></div>
         <div class="chat-message-content"><%= msg.role === 'user' ? msg.content : '' %></div>
+        <div class="chat-message-actions">
+          <button class="msg-action-btn msg-copy-btn" type="button" title="Copy message">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <span>Copy</span>
+          </button>
+        </div>
       </div>
     <% }); %>
   </div>
@@ -121,11 +127,40 @@ window.MathJax = {
     var div = document.createElement('div');
     div.className = 'chat-message chat-message-' + role;
     div.innerHTML = '<div class="chat-message-label">' + (role === 'user' ? 'You' : 'Claude') + '</div>' +
-                    '<div class="chat-message-content">' + content + '</div>';
+                    '<div class="chat-message-content">' + content + '</div>' +
+                    '<div class="chat-message-actions">' +
+                      '<button class="msg-action-btn msg-copy-btn" type="button" title="Copy message">' +
+                        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>' +
+                        '<span>Copy</span>' +
+                      '</button>' +
+                    '</div>';
     messagesEl.appendChild(div);
     scrollToBottom();
     return div;
   }
+
+  // Single delegated handler for copy buttons across all messages.
+  // Uses the rendered text (innerText) so users get the same content
+  // they see, not the raw HTML with placeholders.
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest && e.target.closest('.msg-copy-btn');
+    if (!btn) return;
+    var msg = btn.closest('.chat-message');
+    if (!msg) return;
+    var content = msg.querySelector('.chat-message-content');
+    if (!content) return;
+    var text = content.innerText || content.textContent || '';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function() {
+        var label = btn.querySelector('span');
+        if (label) {
+          var prev = label.textContent;
+          label.textContent = 'Copied';
+          setTimeout(function() { label.textContent = prev; }, 1200);
+        }
+      });
+    }
+  });
 
   function finishStream(contentDiv) {
     sending = false;
@@ -137,9 +172,43 @@ window.MathJax = {
     }
   }
 
+  // Throttled MathJax typesetting during streaming. Re-typesets the
+  // assistant message at most every 700 ms — frequent enough that
+  // equations appear as the text grows but slow enough to avoid
+  // flicker on every chunk. Final typeset happens in finishStream.
+  function makeThrottledTypeset(contentDiv) {
+    var pending = false;
+    var lastRun = 0;
+    var DELAY = 700;
+    return function() {
+      if (!window.MathJax || !MathJax.typesetPromise) return;
+      var now = Date.now();
+      if (now - lastRun >= DELAY && !pending) {
+        lastRun = now;
+        // Clear and retypeset just this message div
+        if (MathJax.typesetClear) {
+          try { MathJax.typesetClear([contentDiv]); } catch(e) {}
+        }
+        MathJax.typesetPromise([contentDiv]).catch(function(){});
+        return;
+      }
+      if (pending) return;
+      pending = true;
+      setTimeout(function() {
+        pending = false;
+        lastRun = Date.now();
+        if (MathJax.typesetClear) {
+          try { MathJax.typesetClear([contentDiv]); } catch(e) {}
+        }
+        MathJax.typesetPromise([contentDiv]).catch(function(){});
+      }, DELAY - (now - lastRun));
+    };
+  }
+
   function streamFrom(url, method, body) {
     var assistantDiv = addMessage('assistant', '<span class="typing-indicator">Thinking...</span>');
     var contentDiv = assistantDiv.querySelector('.chat-message-content');
+    var typesetSoon = makeThrottledTypeset(contentDiv);
     var opts = { method: method, headers: { 'Content-Type': 'application/json' } };
     if (body) opts.body = JSON.stringify(body);
 
@@ -163,6 +232,7 @@ window.MathJax = {
                 fullText += data.text;
                 contentDiv.innerHTML = formatResponse(fullText);
                 scrollToBottom();
+                typesetSoon();
               } else if (data.type === 'error') {
                 contentDiv.innerHTML = '<span style="color:#e55;">Error: ' + escapeHtml(data.error) + '</span>';
               }
@@ -421,6 +491,35 @@ window.MathJax = {
 .chat-message-label { font-size:0.7rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--app-text-muted); margin-bottom:0.25rem; }
 .chat-message-user .chat-message-content { background:var(--app-accent); color:#fff; padding:0.65rem 0.9rem; border-radius:12px 12px 4px 12px; }
 .chat-message-assistant .chat-message-content { background:var(--app-surface); color:var(--app-text); padding:0.75rem 1rem; border-radius:12px 12px 12px 4px; }
+
+/* Per-message action row (copy, etc) */
+.chat-message-actions {
+  display: flex;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.chat-message:hover .chat-message-actions { opacity: 1; }
+.chat-message-user .chat-message-actions { justify-content: flex-end; }
+.msg-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--app-text-muted);
+  font-size: 0.7rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 5px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.msg-action-btn:hover {
+  background: var(--app-surface-hover);
+  border-color: var(--app-border);
+  color: var(--app-text-bright);
+}
 
 /* Chat markdown rendering */
 .chat-message-assistant p { margin:0 0 0.6em; }

@@ -87,10 +87,19 @@
           <p class="right-panel-empty">No chats yet. Use the input bar below.</p>
         <% } else { %>
           <% activeCollection.chats.forEach(function(chat) { %>
-            <a href="/chat/<%= chat._id %>?from=collection&id=<%= activeCollection._id %>" class="right-panel-chat-item">
-              <div class="chat-item-title"><%= chat.title || 'Untitled Chat' %></div>
-              <div class="chat-item-preview"><%= chat.messages && chat.messages.length > 0 ? chat.messages[chat.messages.length-1].content.substring(0, 70) : '' %></div>
-            </a>
+            <div class="right-panel-chat-row">
+              <a href="/chat/<%= chat._id %>?from=collection&id=<%= activeCollection._id %>" class="right-panel-chat-item">
+                <div class="chat-item-title"><%= chat.title || 'Untitled Chat' %></div>
+                <div class="chat-item-preview"><%= chat.messages && chat.messages.length > 0 ? chat.messages[chat.messages.length-1].content.substring(0, 70) : '' %></div>
+              </a>
+              <button class="chat-menu-btn"
+                      data-chat-id="<%= chat._id %>"
+                      data-chat-title="<%= (chat.title || 'Untitled').replace(/"/g, '&quot;') %>"
+                      data-collection-id="<%= activeCollection._id %>"
+                      aria-label="Chat options" type="button">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+              </button>
+            </div>
           <% }); %>
         <% } %>
       </div>
@@ -124,6 +133,10 @@
   <button class="action-item" data-action="link-as-notes">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
     Link to source book
+  </button>
+  <button class="action-item" data-action="resume-processing">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+    Resume / reprocess
   </button>
   <div class="action-divider"></div>
   <button class="action-item action-danger" data-action="delete">
@@ -270,6 +283,14 @@
             body: JSON.stringify({ fromCollectionId: activeCollectionId, targetCollectionId: targetId }),
           }).then(function() { location.reload(); });
         });
+      } else if (action === 'resume-processing') {
+        if (!confirm('Resume processing for "' + currentBookTitle + '"? This re-runs vision + spans + chunks + embeddings on the book.')) return;
+        fetch('/api/books/' + currentBookId + '/reprocess-vision', { method: 'POST' })
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            if (d.error) alert('Resume failed: ' + d.error);
+            else alert('Reprocessing started in the background. Refresh in a minute to see progress.');
+          });
       } else if (action === 'link-as-notes') {
         showSourceBookPicker(function(sourceId) {
           fetch('/api/books/' + currentBookId + '/link-as-notes', {
