@@ -24,6 +24,189 @@
 
 const Book = require('../models/Book');
 const Page = require('../models/Page');
+const path = require('path');
+const fs = require('fs');
+
+// ─── Column-aware PDF text extraction ───────────────────────────
+//
+// pdf-parse reads multi-column PDFs left-to-right-then-top-to-bottom
+// which catastrophically scrambles 2-column bibliographies — entries
+// from the left and right columns get merged together and the arxiv
+// IDs from one entry end up adjacent to another entry's author list.
+// The result: our bib parser picks up the WRONG arxiv ID for half
+// the entries on a 2-column bib page.
+//
+// pdfjs-dist exposes the raw text items with their (x, y) positions
+// so we can sort properly: group items by line (y-coord), then
+// within each line assign them to a column by x-coord, then
+// concatenate left-column lines first and right-column lines second.
+//
+// Returns the cleaned text for the requested page range as one
+// string with entries separated by newlines. Falls back gracefully
+// if pdfjs-dist throws.
+
+async function extractPagesWithColumns(pdfPath, startPage, endPage) {
+  if (!pdfPath || !fs.existsSync(pdfPath)) return null;
+  let pdfjs;
+  try {
+    pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  } catch (e) {
+    console.warn('[bibliographyService] pdfjs-dist not available: ' + e.message);
+    return null;
+  }
+  try {
+    const buf = fs.readFileSync(pdfPath);
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
+    const total = doc.numPages;
+    const s = Math.max(1, startPage || 1);
+    const e = Math.min(total, endPage || total);
+    const outLines = [];
+    for (let pn = s; pn <= e; pn++) {
+      const page = await doc.getPage(pn);
+      const viewport = page.getViewport({ scale: 1 });
+      const pageWidth = viewport.width;
+      const content = await page.getTextContent();
+      // Group items into lines by y-coordinate. Items within 3
+      // pixels of each other vertically are considered the same
+      // line. Items are sorted by x within each line.
+      const lines = []; // { y, items: [...] }
+      for (const it of content.items) {
+        if (!it.str) continue;
+        const x = it.transform[4];
+        const y = it.transform[5];
+        let line = lines.find(l => Math.abs(l.y - y) < 3);
+        if (!line) {
+          line = { y, items: [] };
+          lines.push(line);
+        }
+        line.items.push({ x, str: it.str });
+      }
+      // Sort lines by y descending (top to bottom in PDF coords)
+      // and sort items within each line by x.
+      lines.sort((a, b) => b.y - a.y);
+      for (const line of lines) {
+        line.items.sort((a, b) => a.x - b.x);
+      }
+
+      // Detect whether this page is 1-column or 2-column.
+      //
+      // Primary signal: how many item starts cluster in the MIDDLE
+      // band of the page (x between 0.4*width and 0.6*width). On a
+      // 2-column page, the right column's text starts around
+      // pageWidth/2 — so many items have x in that band. On a
+      // 1-column page, items start either at the left margin
+      // (x ~= 79 for letter-size) or at a continuation indent
+      // (x ~= 100) — almost nothing starts in the middle.
+      //
+      // Crossing lines (G/W has [9] on left and [31] on right at
+      // the same y) are COUNTED AS TWO items for detection
+      // purposes — each item is in its own column, they just
+      // happen to share a y coordinate.
+      let itemsStartingMidBand = 0;
+      let itemsStartingLeftMargin = 0;
+      let totalItems = 0;
+      const midBandLow = pageWidth * 0.40;
+      const midBandHigh = pageWidth * 0.60;
+      const leftMarginMax = pageWidth * 0.20;
+      for (const line of lines) {
+        for (let i = 0; i < line.items.length; i++) {
+          const it = line.items[i];
+          // Count only items that START a new text run, not ones
+          // that continue a previous item on the same line. An
+          // item starts a new run if it's the first in the line
+          // OR its preceding item ends far away (significant gap).
+          const isNewRun = i === 0 ||
+            (it.x - (line.items[i - 1].x + (line.items[i - 1].str.length * 4))) > 20;
+          if (!isNewRun) continue;
+          totalItems++;
+          if (it.x >= midBandLow && it.x <= midBandHigh) itemsStartingMidBand++;
+          else if (it.x <= leftMarginMax) itemsStartingLeftMargin++;
+        }
+      }
+      // 2-column if at least 15% of new-run starts are in the
+      // middle band AND the middle band has at least 8 such starts
+      // (avoids false positives on pages with one or two
+      // centered headers).
+      const isTwoColumn = itemsStartingMidBand >= 8 &&
+        totalItems > 0 &&
+        (itemsStartingMidBand / totalItems) >= 0.15;
+
+      if (isTwoColumn) {
+        // Split each line into its left / right portions by the
+        // midpoint. Output all left pieces first, then all right
+        // pieces. Lines that DO cross (rare on a 2-column page —
+        // usually wide figures or headers) are output in the
+        // left-column stream with their full content.
+        const leftOut = [];
+        const rightOut = [];
+        const boundary = pageWidth / 2;
+        // A line "crosses" both columns only if it has a single
+        // contiguous item starting well left of the boundary and
+        // extending well past it (e.g. a wide header or figure
+        // caption). Use generous guards: a true 2-col entry
+        // never starts past 0.30*width or ends before 0.70*width
+        // on the same physical line.
+        const leftGuard = pageWidth * 0.30;
+        const rightGuard = pageWidth * 0.70;
+        for (const line of lines) {
+          if (line.items.length === 0) continue;
+          const minX = Math.min(...line.items.map(it => it.x));
+          const maxX = Math.max(...line.items.map(it => it.x));
+          // Only treat as a crossing line if it has NO gap near
+          // the column boundary — otherwise the "single line" is
+          // actually two separate column entries that share a y.
+          const hasGapAtBoundary = line.items.some((it, i) => {
+            if (i === 0) return false;
+            const prev = line.items[i - 1];
+            const prevEnd = prev.x + (prev.str.length * 4);
+            return prev.x < boundary && it.x >= boundary && (it.x - prevEnd) > 10;
+          });
+          if (minX < leftGuard && maxX > rightGuard && !hasGapAtBoundary) {
+            leftOut.push(line.items.map(it => it.str).join(''));
+            continue;
+          }
+          const left = line.items.filter(it => it.x < boundary).map(it => it.str).join('');
+          const right = line.items.filter(it => it.x >= boundary).map(it => it.str).join('');
+          if (left) leftOut.push(left);
+          if (right) rightOut.push(right);
+        }
+        outLines.push(...leftOut);
+        outLines.push('');
+        outLines.push(...rightOut);
+      } else {
+        // Single column: output each line as its full concatenated
+        // text in y-descending order. This is the normal "read the
+        // page top to bottom" behavior.
+        for (const line of lines) {
+          if (line.items.length === 0) continue;
+          outLines.push(line.items.map(it => it.str).join(''));
+        }
+      }
+      outLines.push(''); // page separator
+    }
+    return outLines.join('\n');
+  } catch (err) {
+    console.warn('[bibliographyService] pdfjs-dist extraction failed: ' + err.message);
+    return null;
+  }
+}
+
+// Resolve the local filesystem path for a book's PDF given its
+// s3Key ("pdfs/12345_filename.pdf"). Returns null if no local
+// copy exists.
+function resolveBookPdfPath(book) {
+  if (!book || !book.s3Key) return null;
+  const basename = book.s3Key.replace(/^pdfs\//, '');
+  const projectDir = path.join(__dirname, '..');
+  const candidates = [
+    path.join(projectDir, 'uploads', 'pdfs', basename),
+    path.join(projectDir, book.s3Key),
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return null;
+}
 
 // ─── arXiv / DOI normalization ──────────────────────────────────
 //
@@ -68,7 +251,13 @@ function normalizeDoi(raw) {
 // Used both for the book's own identifier (front matter scan) and
 // for individual bibliography entries.
 
+// Arxiv ID with explicit "arxiv:" prefix (most reliable, first choice).
 const ARXIV_REGEX = /arxiv\s*[:\s]?\s*((?:[a-z\-]+(?:\.[A-Z]{2})?\/\d{7})|(?:\d{4}\.\d{4,5}))(?:v\d+)?/gi;
+// Arxiv ID without "arxiv:" prefix, wrapped in square brackets. This is
+// the JHEP style (and Zhou's bibliography): [hep-th/0412308] or
+// [2312.16282]. Strict format to avoid matching citation keys like
+// [15] or category markers like [hep-th].
+const ARXIV_BRACKET_REGEX = /\[((?:[a-z\-]+(?:\.[A-Z]{2})?\/\d{7})|(?:\d{4}\.\d{4,5}))\]/gi;
 // DOI regex: match anything starting with 10.NNNN/ followed by allowed
 // DOI characters. Crucially we ALLOW parens because JHEP-style DOIs are
 // of the form 10.1007/JHEP03(2025)154 — physics's most-cited journal.
@@ -78,9 +267,15 @@ const DOI_REGEX = /(?:doi\s*[:\s]+|https?:\/\/(?:dx\.)?doi\.org\/)?(10\.\d{4,9}\
 
 function findArxivId(text) {
   if (!text) return null;
+  // First try the "arxiv:ID" form
   ARXIV_REGEX.lastIndex = 0;
-  const m = ARXIV_REGEX.exec(text);
-  return m ? normalizeArxivId(m[1]) : null;
+  let m = ARXIV_REGEX.exec(text);
+  if (m) return normalizeArxivId(m[1]);
+  // Then try the "[ID]" form (Zhou-style, JHEP-style)
+  ARXIV_BRACKET_REGEX.lastIndex = 0;
+  m = ARXIV_BRACKET_REGEX.exec(text);
+  if (m) return normalizeArxivId(m[1]);
+  return null;
 }
 
 function findDoi(text) {
@@ -105,21 +300,28 @@ function pickBibSource(page) {
  * Scan the first few pages of a book for an arXiv ID and DOI on the
  * book itself. Persists arxivId / doi back onto the Book document.
  *
- * The arXiv ID can live in the front-matter (page 1), in a
- * page-margin watermark on every page (Rodina-style), or — for
- * older preprints — only on the cover. We scan the first 3 pages
- * and stop at the first hit. The first hit wins because the
- * front-matter ID is canonical; later page-margin watermarks would
- * just duplicate it.
- *
- * Uses pdf-parse rawTextLegacy when available — see pickBibSource.
+ * Prefers pdfjs-dist column-aware extraction when the local PDF is
+ * available — the front matter often has the arXiv ID on a
+ * single-line watermark that's easy to misparse if 2-column
+ * layout scrambles things. Falls back to pdf-parse rawTextLegacy.
  */
 async function extractBookIdentifiers(bookId) {
-  const pages = await Page.find({ bookId, pageNumber: { $lte: 3 } })
-    .select('rawText rawTextLegacy')
-    .sort({ pageNumber: 1 })
-    .lean();
-  const combined = pages.map(pickBibSource).join('\n\n');
+  const book = await Book.findById(bookId).select('s3Key').lean();
+  let combined = '';
+
+  const pdfPath = book ? resolveBookPdfPath(book) : null;
+  if (pdfPath) {
+    const colText = await extractPagesWithColumns(pdfPath, 1, 3);
+    if (colText) combined = colText;
+  }
+  if (!combined) {
+    const pages = await Page.find({ bookId, pageNumber: { $lte: 3 } })
+      .select('rawText rawTextLegacy')
+      .sort({ pageNumber: 1 })
+      .lean();
+    combined = pages.map(pickBibSource).join('\n\n');
+  }
+
   const arxivId = findArxivId(combined);
   const doi = findDoi(combined);
   const update = {};
@@ -186,24 +388,58 @@ function parseBibEntries(text) {
  * Extract the bibliography for a book and persist it on
  * Book.bibEntries. Returns the parsed entries.
  *
- * Reads rawTextLegacy (pdf-parse) instead of rawText (vision) — see
- * pickBibSource for the rationale. Vision is unreliable for the dense
- * digit sequences in arXiv IDs and DOIs.
+ * Two source paths, tried in order:
+ *   1. pdfjs-dist column-aware extraction from the local PDF file
+ *      (if available) — this is the ONLY correct path for 2-column
+ *      bibliographies. pdf-parse reads across columns horizontally
+ *      which mixes entries from different columns together and
+ *      causes arxiv IDs to be assigned to the wrong reference key.
+ *   2. Fallback to rawTextLegacy (pdf-parse output) joined across
+ *      the tail pages. Good enough for single-column books and
+ *      any edge case where the local PDF isn't on disk.
  */
 async function extractBibliography(bookId) {
-  const book = await Book.findById(bookId).select('pageCount').lean();
+  const book = await Book.findById(bookId).select('pageCount s3Key').lean();
   if (!book) return [];
-  // Walk pages from the END backwards collecting any with [N] entries.
+
+  // ── Path 1: column-aware extraction from local PDF ──────────
+  const pdfPath = resolveBookPdfPath(book);
+  if (pdfPath) {
+    // Bibliography typically lives in the last 3-8 pages. Scan the
+    // tail by default — cheap since pdfjs only loads requested pages.
+    const total = book.pageCount || 0;
+    const lookback = Math.min(total || 8, 10);
+    const startPage = Math.max(1, total - lookback + 1);
+    try {
+      const colText = await extractPagesWithColumns(pdfPath, startPage, total || undefined);
+      if (colText) {
+        // Find where [1] starts and cut everything before it. This
+        // avoids capturing non-bib content from the pages above the
+        // references section.
+        const bibStart = colText.search(/\[\s*1\s*\]\s+[A-Z]/);
+        const bibText = bibStart > 0 ? colText.substring(bibStart) : colText;
+        const entries = parseBibEntries(bibText);
+        if (entries.length >= 3) {
+          // Accept only if we got a reasonable count. Less than 3
+          // suggests something went wrong and we should fall through
+          // to the rawTextLegacy path.
+          await Book.findByIdAndUpdate(bookId, { bibEntries: entries });
+          console.log('[bibliographyService] ' + String(bookId).substring(0, 8) + ': extracted ' + entries.length + ' bib entries via pdfjs-dist column-aware');
+          return entries;
+        }
+      }
+    } catch (err) {
+      console.warn('[bibliographyService] pdfjs-dist path failed for ' + bookId + ': ' + err.message);
+    }
+  }
+
+  // ── Path 2: rawTextLegacy fallback ──────────────────────────
   const lookback = Math.min(book.pageCount || 5, 8);
   const startPage = Math.max(1, (book.pageCount || lookback) - lookback + 1);
   const pages = await Page.find({ bookId, pageNumber: { $gte: startPage } })
     .select('pageNumber rawText rawTextLegacy')
     .sort({ pageNumber: 1 })
     .lean();
-  // Find the FIRST page in this window that has a [1] entry — that's
-  // the start of the references section. Concatenate from there to
-  // the end of the book. Use pickBibSource so detection runs against
-  // the same text stream we'll parse.
   let bibStartIdx = -1;
   for (let i = 0; i < pages.length; i++) {
     if (/\[1\]\s/.test(pickBibSource(pages[i]))) {
@@ -211,8 +447,6 @@ async function extractBibliography(bookId) {
       break;
     }
   }
-  // Fallback: if no [1] anchor, take pages whose text starts with [N]
-  // entries. This handles cases where the bib starts mid-page.
   if (bibStartIdx < 0) {
     for (let i = 0; i < pages.length; i++) {
       if (/\[\d+\][^\[]{20,}/.test(pickBibSource(pages[i]))) {
@@ -225,6 +459,7 @@ async function extractBibliography(bookId) {
   const combined = pages.slice(bibStartIdx).map(pickBibSource).join('\n');
   const entries = parseBibEntries(combined);
   await Book.findByIdAndUpdate(bookId, { bibEntries: entries });
+  console.log('[bibliographyService] ' + String(bookId).substring(0, 8) + ': extracted ' + entries.length + ' bib entries via pdf-parse fallback');
   return entries;
 }
 
