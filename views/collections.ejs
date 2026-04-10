@@ -101,6 +101,10 @@
 
 <!-- Book Actions Menu (popup) -->
 <div class="book-actions-menu" id="bookActionsMenu" style="display:none;">
+  <button class="action-item" data-action="info">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+    Info & stats
+  </button>
   <button class="action-item" data-action="edit-cover">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
     Edit thumbnail
@@ -135,6 +139,19 @@
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="document.getElementById('collectionPickerModal').style.display='none'">Cancel</button>
     </div>
+  </div>
+</div>
+
+<!-- Book stats modal -->
+<div class="modal-overlay" id="bookStatsModal" style="display:none;">
+  <div class="modal modal-wide">
+    <div class="stats-modal-header">
+      <h2 id="statsBookTitle">Book stats</h2>
+      <button class="btn-icon" onclick="document.getElementById('bookStatsModal').style.display='none'" title="Close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="statsBody" class="stats-body">Loading...</div>
   </div>
 </div>
 
@@ -217,7 +234,9 @@
       var action = item.dataset.action;
       menu.style.display = 'none';
 
-      if (action === 'edit-cover') {
+      if (action === 'info') {
+        openStatsModal(currentBookId, currentBookTitle);
+      } else if (action === 'edit-cover') {
         document.getElementById('coverFileInput').click();
       } else if (action === 'copy') {
         showCollectionPicker('Copy to collection', function(targetId) {
@@ -259,6 +278,62 @@
         else alert('Upload failed: ' + (data.error || 'unknown'));
       });
   });
+
+  // ─── STATS MODAL ────────────────────────────────────────
+  function fmtBytes(n) {
+    if (n == null) return '—';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(2) + ' MB';
+  }
+  function fmtNum(n, digits) {
+    if (n == null || isNaN(n)) return '—';
+    return Number(n).toFixed(digits == null ? 1 : digits);
+  }
+  function distRow(label, d) {
+    return '<tr><td>' + label + '</td><td>' + fmtNum(d.mean, 2) + '</td><td>' + fmtNum(d.median, 1) + '</td><td>' + fmtNum(d.stddev, 2) + '</td><td>' + d.min + '–' + d.max + '</td></tr>';
+  }
+  function openStatsModal(bookId, title) {
+    var modal = document.getElementById('bookStatsModal');
+    var body = document.getElementById('statsBody');
+    document.getElementById('statsBookTitle').textContent = title || 'Book stats';
+    body.innerHTML = 'Loading...';
+    modal.style.display = '';
+    fetch('/api/books/' + bookId + '/stats').then(function(r) { return r.json(); }).then(function(s) {
+      if (s.error) { body.innerHTML = '<p>Error: ' + s.error + '</p>'; return; }
+      var html = '';
+      html += '<div class="stats-grid">';
+      html += '<div class="stat-card"><div class="stat-num">' + s.pageCount + '</div><div class="stat-label">pages (' + s.visionPages + ' vision)</div></div>';
+      html += '<div class="stat-card"><div class="stat-num">' + s.chunkCount + '</div><div class="stat-label">chunks</div></div>';
+      html += '<div class="stat-card"><div class="stat-num">' + s.spanCount + '</div><div class="stat-label">spans</div></div>';
+      html += '<div class="stat-card"><div class="stat-num">' + s.tagCount + '</div><div class="stat-label">tags</div></div>';
+      html += '<div class="stat-card"><div class="stat-num">' + (s.edgeCount.in + s.edgeCount.out) + '</div><div class="stat-label">edges (' + s.edgeCount.in + ' in / ' + s.edgeCount.out + ' out)</div></div>';
+      html += '<div class="stat-card"><div class="stat-num">$' + s.cost.total.toFixed(3) + '</div><div class="stat-label">est. ingest cost</div></div>';
+      html += '</div>';
+      html += '<h3>Distributions</h3>';
+      html += '<table class="stats-table"><thead><tr><th></th><th>mean</th><th>median</th><th>stddev</th><th>range</th></tr></thead><tbody>';
+      html += distRow('chunks / page', s.distributions.chunksPerPage);
+      html += distRow('spans / page', s.distributions.spansPerPage);
+      html += distRow('tags / chunk', s.distributions.tagsPerChunk);
+      html += distRow('tags / span', s.distributions.tagsPerSpan);
+      html += '</tbody></table>';
+      html += '<h3>Cost breakdown (rough)</h3>';
+      html += '<ul class="stats-list">';
+      html += '<li>Vision (page render + GPT-4o): <strong>$' + s.cost.vision.toFixed(3) + '</strong></li>';
+      html += '<li>Span generation: <strong>$' + s.cost.spans.toFixed(3) + '</strong></li>';
+      html += '<li>Metadata extraction: <strong>$' + s.cost.metadata.toFixed(3) + '</strong></li>';
+      html += '<li>Total: <strong>$' + s.cost.total.toFixed(3) + '</strong></li>';
+      html += '</ul>';
+      html += '<h3>Storage</h3>';
+      html += '<ul class="stats-list">';
+      html += '<li>Source ' + (s.storage.sourceFromPdf ? 'PDF' : 'extracted text') + ': <strong>' + fmtBytes(s.storage.sourceBytes) + '</strong></li>';
+      html += '<li>Metadata in MongoDB: <strong>' + fmtBytes(s.storage.metadataBytes) + '</strong></li>';
+      html += '<li>Total / source ratio: <strong>' + (s.storage.ratio ? s.storage.ratio.toFixed(2) + '×' : '—') + '</strong></li>';
+      html += '</ul>';
+      html += '<p class="stats-note">Stats query took ' + s.retrievalMs + ' ms. Cost is an estimate based on per-page constants in <code>booksController.js</code>; treat as order-of-magnitude.</p>';
+      body.innerHTML = html;
+    }).catch(function(err) { body.innerHTML = '<p>Failed to load stats: ' + err.message + '</p>'; });
+  }
 
   // Collection picker
   function showCollectionPicker(title, onPick) {

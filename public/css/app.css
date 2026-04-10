@@ -985,6 +985,27 @@
 .modal-input:focus { border-color: var(--app-accent); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 0.4rem; }
 
+/* Wide variant for the stats modal */
+.modal.modal-wide { width: 640px; max-width: 92vw; max-height: 86vh; overflow-y: auto; }
+.stats-modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+.stats-modal-header h2 { margin: 0; font-size: 1.05rem; }
+.stats-body h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--app-text-muted); margin: 1.25rem 0 0.5rem; }
+.stats-body p, .stats-body li { font-size: 0.85rem; color: var(--app-text); }
+.stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin-bottom: 0.5rem; }
+.stat-card { background: var(--app-bg); border: 1px solid var(--app-border); border-radius: 8px; padding: 0.7rem 0.6rem; text-align: center; }
+.stat-num { font-size: 1.35rem; font-weight: 600; color: var(--app-text-bright); line-height: 1.1; }
+.stat-label { font-size: 0.7rem; color: var(--app-text-muted); margin-top: 0.2rem; }
+.stats-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.stats-table th, .stats-table td { padding: 0.35rem 0.5rem; text-align: right; border-bottom: 1px solid var(--app-border); }
+.stats-table th:first-child, .stats-table td:first-child { text-align: left; color: var(--app-text-muted); }
+.stats-table th { font-weight: 500; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--app-text-muted); }
+.stats-list { list-style: none; padding: 0; margin: 0; }
+.stats-list li { padding: 0.25rem 0; border-bottom: 1px solid var(--app-border); display: flex; justify-content: space-between; }
+.stats-list li:last-child { border-bottom: none; }
+.stats-list strong { color: var(--app-text-bright); font-variant-numeric: tabular-nums; }
+.stats-note { margin-top: 0.75rem; color: var(--app-text-muted); font-size: 0.75rem; font-style: italic; }
+.stats-note code { font-family: monospace; background: var(--app-bg); padding: 0 0.25rem; border-radius: 3px; }
+
 /* ─── UPLOAD / DROP ZONE (dark) ───────────────────── */
 
 .app-body .drop-zone {
