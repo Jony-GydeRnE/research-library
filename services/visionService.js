@@ -6,6 +6,16 @@ const pipeline = require('../config/pipeline');
 
 const PROMPT_PATH = path.join(__dirname, '..', 'prompts', 'page-to-html.txt');
 const PROMPT_TEMPLATE = fs.readFileSync(PROMPT_PATH, 'utf-8');
+// Notes-variant prompt for handwritten / whiteboard pages. Uses a
+// completely different system prompt that tells the model the
+// page is a stylus capture, asks for explicit uncertainty markers,
+// and forbids attempting Feynman diagram TikZ generation (just
+// describe diagrams in note-figure blocks). Routed via the
+// `kind: 'notes'` flag on the source Book.
+const NOTES_PROMPT_PATH = path.join(__dirname, '..', 'prompts', 'page-to-html-notes.txt');
+const NOTES_PROMPT_TEMPLATE = fs.existsSync(NOTES_PROMPT_PATH)
+  ? fs.readFileSync(NOTES_PROMPT_PATH, 'utf-8')
+  : PROMPT_TEMPLATE;
 const SWIFT_RENDERER = path.join(__dirname, '..', 'scripts', 'pdf2png.swift');
 const IMAGE_DIR = path.join(__dirname, '..', 'uploads', 'images');
 
@@ -39,8 +49,13 @@ async function renderPageToImage(pdfPath, pageNumber, bookId, scale = 2.5) {
 
 /**
  * Send a page image to GPT-4o and get back structured HTML with LaTeX.
+ *
+ * @param {Buffer} pngBuffer  - the rendered page image
+ * @param {number} pageNumber - 1-indexed page number
+ * @param {boolean} isFirstPage - true for page 1 (adds title-block instructions)
+ * @param {string}  kind - 'paper' (default) or 'notes' for handwritten content
  */
-async function convertPageWithVision(pngBuffer, pageNumber, isFirstPage) {
+async function convertPageWithVision(pngBuffer, pageNumber, isFirstPage, kind = 'paper') {
   const client = getOpenAI();
   if (!client) {
     throw new Error('OPENAI_API_KEY not configured');
@@ -49,8 +64,12 @@ async function convertPageWithVision(pngBuffer, pageNumber, isFirstPage) {
   const base64Image = pngBuffer.toString('base64');
   const dataUri = `data:image/png;base64,${base64Image}`;
 
-  let prompt = PROMPT_TEMPLATE;
-  if (isFirstPage) {
+  // Notes books get the handwriting/whiteboard variant prompt that
+  // tells the model the page is a stylus capture, asks for
+  // uncertainty markers, and forbids Feynman-diagram TikZ
+  // generation. Paper books get the standard typesetting prompt.
+  let prompt = kind === 'notes' ? NOTES_PROMPT_TEMPLATE : PROMPT_TEMPLATE;
+  if (isFirstPage && kind !== 'notes') {
     prompt += '\n\nThis is page 1 of the paper. Wrap the paper title in <h1 class="paper-title">, author names in <div class="paper-authors">, affiliations in <div class="paper-affiliations">, and the abstract in <div class="paper-abstract"><span class="abstract-label">Abstract</span>...</div>.';
   }
 

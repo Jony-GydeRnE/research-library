@@ -10,8 +10,26 @@ module.exports = {
 
   // ─── VISION PROCESSING ───────────────────────────────────────
   VISION_MODEL: process.env.VISION_MODEL || 'gpt-4o',
-  VISION_BATCH_SIZE: 20,
+  // Concurrent vision calls per batch. SIZED FOR THE OPENAI
+  // ACCOUNT TIER. Each vision call burns ~5,000 tokens (4000
+  // input image + ~1000 output). At Tier 1 (30,000 TPM) we can
+  // fit ~6 concurrent calls before hitting the per-minute cap.
+  // Tier 2+ raises this limit substantially — bump
+  // VISION_BATCH_SIZE in env when the user upgrades.
+  //
+  // Override via env: VISION_BATCH_SIZE=12 npm start
+  VISION_BATCH_SIZE: parseInt(process.env.VISION_BATCH_SIZE, 10) || 6,
   VISION_TEMPERATURE: 0.1,
+  // Inter-batch delay in milliseconds. With Tier 1's 30K TPM cap,
+  // each batch of 6 burns ~30K tokens, so we need a ~60s wait
+  // before the next batch fires or we'll just stack 429s. The
+  // retry logic handles individual failures but inter-batch
+  // pacing is what keeps the average throughput sustainable.
+  VISION_BATCH_DELAY_MS: parseInt(process.env.VISION_BATCH_DELAY_MS, 10) || 12000,
+  // Max retry attempts per page on transient failures (rate
+  // limits, network blips, vision API hiccups). Each retry uses
+  // exponential backoff up to 8s.
+  VISION_MAX_RETRIES: 3,
 
   // ─── SPAN GENERATION ─────────────────────────────────────────
   SPAN_MODEL: process.env.SPAN_MODEL || 'gpt-4o',

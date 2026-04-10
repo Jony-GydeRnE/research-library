@@ -51,10 +51,10 @@ function htmlToPlainText(html) {
     .trim();
 }
 
-async function visionProcessPage(pdfTmpPath, page, bookId, isFirstPage) {
+async function visionProcessPage(pdfTmpPath, page, bookId, isFirstPage, kind = 'paper') {
   const pageNum = page.pageNumber;
   const pngBuffer = await renderPageToImage(pdfTmpPath, pageNum, bookId);
-  let html = await convertPageWithVision(pngBuffer, pageNum, isFirstPage);
+  let html = await convertPageWithVision(pngBuffer, pageNum, isFirstPage, kind);
   html = await detectAndCropFigures(html, bookId, pageNum, [], 792);
 
   const h2 = html.match(/<h2[^>]*>([^<]+)<\/h2>/);
@@ -66,18 +66,26 @@ async function visionProcessPage(pdfTmpPath, page, bookId, isFirstPage) {
   return { html, plainText, chapterTitle: h2 ? h2[1] : null, sectionTitle: h3 ? h3[1] : null };
 }
 
-async function visionProcessWithRetry(pdfTmpPath, page, bookId, isFirstPage) {
-  try {
-    return await visionProcessPage(pdfTmpPath, page, bookId, isFirstPage);
-  } catch (err) {
-    if (err.status === 429) {
-      await new Promise(r => setTimeout(r, 2000));
-      try {
-        return await visionProcessPage(pdfTmpPath, page, bookId, isFirstPage);
-      } catch (e2) { return { error: e2.message }; }
+async function visionProcessWithRetry(pdfTmpPath, page, bookId, isFirstPage, kind = 'paper') {
+  // Retry up to VISION_MAX_RETRIES times on transient errors. Each
+  // retry waits longer (exponential backoff capped at 8s). Hard
+  // failures (Swift renderer crash, file not found, etc.) are not
+  // retried — they'll fail the same way every time.
+  const maxRetries = pipeline.VISION_MAX_RETRIES || 3;
+  let lastError = null;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await visionProcessPage(pdfTmpPath, page, bookId, isFirstPage, kind);
+    } catch (err) {
+      lastError = err;
+      // Only retry on rate limits and transient network errors
+      const retriable = err.status === 429 || err.status === 503 || err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT';
+      if (!retriable) break;
+      const delay = Math.min(8000, 1000 * Math.pow(2, attempt));
+      await new Promise(r => setTimeout(r, delay));
     }
-    return { error: err.message };
   }
+  return { error: lastError ? lastError.message : 'unknown error' };
 }
 
 // ─── SHARED: Re-map highlights after rawText changes ─────────────
@@ -204,22 +212,32 @@ function defineJobs() {
       book.processingStatus = 'vision-processing';
       await book.save();
 
-      const pages = await Page.find({ bookId }).sort({ pageNumber: 1 });
-      const totalPages = pages.length;
+      const allPages = await Page.find({ bookId }).sort({ pageNumber: 1 });
+      const totalPages = allPages.length;
+      // Skip already-processed pages on resume — the user's
+      // reported case is a sleep-killed job that left half the
+      // book mid-vision. Re-running from scratch is wasted work
+      // AND wasted dollars.
+      const pages = allPages.filter(p => !p.visionProcessed);
+      let alreadyDone = totalPages - pages.length;
 
       const pdfBuffer = await getPdfBuffer(book.s3Key);
       pdfTmpPath = path.join(os.tmpdir(), `gyde-${book._id}.pdf`);
       fs.writeFileSync(pdfTmpPath, pdfBuffer);
 
-      // Process in parallel batches of 20
-      const BATCH = 20;
-      let processed = 0;
+      // Process in parallel batches. Bumped from 20 to
+      // VISION_BATCH_SIZE (60) for the speed win — most books fit
+      // in one batch instead of three sequential ones.
+      const BATCH = pipeline.VISION_BATCH_SIZE || 60;
+      let processed = alreadyDone;
+      let succeeded = alreadyDone;
 
-      for (let i = 0; i < totalPages; i += BATCH) {
+      const interBatchDelay = pipeline.VISION_BATCH_DELAY_MS || 12000;
+      for (let i = 0; i < pages.length; i += BATCH) {
         const batch = pages.slice(i, i + BATCH);
 
         const results = await Promise.all(batch.map(async (page) => {
-          const result = await visionProcessWithRetry(pdfTmpPath, page, book._id.toString(), page.pageNumber === 1);
+          const result = await visionProcessWithRetry(pdfTmpPath, page, book._id.toString(), page.pageNumber === 1, book.kind || 'paper');
           return { page, ...result };
         }));
 
@@ -237,6 +255,7 @@ function defineJobs() {
             r.page.hasImages = true;
             r.page.visionProcessed = true;
             await r.page.save();
+            succeeded++;
 
             // Update book title from page 1 vision output if better
             if (r.page.pageNumber === 1) {
@@ -254,7 +273,10 @@ function defineJobs() {
               }
             }
           } else if (r.error) {
-            // Vision failed — keep pdf-parse rawText, log error
+            // Vision failed — keep pdf-parse rawText, log error.
+            // Don't increment succeeded for failed pages — the
+            // visionProgress string should reflect ACTUAL successes
+            // not "we tried" so the user can see real progress.
             r.page.visionProcessed = false;
             await r.page.save();
             console.warn(`  Page ${r.page.pageNumber}: vision failed — ${r.error}`);
@@ -263,11 +285,17 @@ function defineJobs() {
           processed++;
         }
 
-        book.processingProgress = 25 + Math.round((processed / totalPages) * 75);
-        book.visionProgress = `${processed}/${totalPages} pages`;
+        book.processingProgress = 25 + Math.round((succeeded / totalPages) * 75);
+        book.visionProgress = `${succeeded}/${totalPages} pages`;
         await book.save();
         jobDoc.progress = book.processingProgress;
         await jobDoc.save();
+
+        // Inter-batch pause to keep us under TPM. Without this,
+        // the next batch fires immediately and stacks 429s.
+        if (i + BATCH < pages.length && interBatchDelay > 0) {
+          await new Promise(r => setTimeout(r, interBatchDelay));
+        }
       }
 
       // Clean up temp PDF
@@ -348,7 +376,7 @@ function defineJobs() {
         const batch = pages.slice(i, i + BATCH);
 
         const results = await Promise.all(batch.map(async (page) => {
-          const result = await visionProcessWithRetry(pdfTmpPath, page, book._id.toString(), page.pageNumber === 1);
+          const result = await visionProcessWithRetry(pdfTmpPath, page, book._id.toString(), page.pageNumber === 1, book.kind || 'paper');
           return { page, ...result };
         }));
 

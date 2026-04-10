@@ -123,7 +123,15 @@ async function ensureEmbeddings(chunks) {
 
 /**
  * For each chunk in the notes Book, find the best-matching chunks
- * across all linked source Books and create note-citation Edges.
+ * across the entire library (not just linkedBookIds) and create
+ * note-citation Edges.
+ *
+ * Per the user's "all-to-all" rule (2026-04-12): a notes book
+ * should be matched against EVERY other library book — papers
+ * AND other notes books. The `linkedBookIds` field still hints
+ * at "primary" sources for the user's mental model, but matching
+ * happens against the full corpus so the user discovers
+ * connections they didn't anticipate.
  *
  * Idempotent: clears any existing note-citation edges from this
  * notes Book before re-matching, so callers can re-run safely
@@ -136,9 +144,6 @@ async function matchNotesToSourceBooks(notesBookId) {
   }
   if (notesBook.kind !== 'notes') {
     return { error: 'book is not a notes book (kind=' + notesBook.kind + ')' };
-  }
-  if (!notesBook.linkedBookIds || notesBook.linkedBookIds.length === 0) {
-    return { error: 'notes book has no linkedBookIds — link a source book first' };
   }
 
   // Pull every note chunk and ensure embeddings exist
@@ -154,11 +159,24 @@ async function matchNotesToSourceBooks(notesBookId) {
   // re-runs are deterministic.
   await Edge.deleteMany({ fromBookId: notesBookId, method: 'note-citation' });
 
+  // ALL-TO-ALL: target every paper book AND every OTHER notes
+  // book in the library, not just the user's linkedBookIds. The
+  // linkedBookIds list is preserved for the UI ("these notes
+  // primarily annotate Rodina") but the matching pass uses the
+  // full library so the user discovers cross-references they
+  // didn't anticipate. Excludes the notes book itself and any
+  // pending-citation stub books.
+  const allLibraryBooks = await Book.find({
+    _id: { $ne: notesBookId },
+    status: { $ne: 'pending-citation' },
+  }).select('_id title kind').lean();
+
   let edgesCreated = 0;
   const perSourceStats = [];
 
-  for (const sourceBookId of notesBook.linkedBookIds) {
-    const sourceBook = await Book.findById(sourceBookId).select('title').lean();
+  for (const lookupBook of allLibraryBooks) {
+    const sourceBookId = lookupBook._id;
+    const sourceBook = lookupBook;
     if (!sourceBook) continue;
 
     let sourceChunks = await Chunk.find({ bookId: sourceBookId })
