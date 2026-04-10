@@ -5,6 +5,61 @@ A rolling knowledge log of the project. **Newest entries at the top.** Read top-
 Maintained by Claude Code (CC) on a ~3-5-response cadence. Bad attempts that got fixed in the same session are not listed — only the final state of each session's work matters. Older sections are trimmed to one-line summaries when their detail is fully superseded; key decisions and target metrics are preserved so future sessions can recall them. Commit messages handle the comprehensive change record.
 
 
+## 2026-04-11 late evening — Synonym normalization layer (the architectural fix for vocabulary alignment)
+
+The fix the user wanted after the morning's "manual patches don't survive a regen" finding. Built a concept layer in `services/taxonomyService.js` so the edge resolver matches on canonical concepts instead of raw tag strings. **Result: 16 cross-book edges, 0 wrong, on a clean LLM-regenerated Book 2 with all manual patches reverted — i.e. higher edge precision than the manual-patch state, AND it works for any future regen automatically.**
+
+### Approach — concept catalog, not alias map
+
+Each context tag is mapped to a SET of canonical concepts via marker-substring matching. The set model (not single canonical) is intentional: a compound tag like `hidden_zero_factorisation` legitimately belongs to BOTH `hidden_zeros` and `factorization`. Two tags match when their concept sets intersect.
+
+Concept catalog covers the physics topics in our current corpus:
+`hidden_zeros, splitting, factorization, kinematic_mesh, abhy_associahedron, nlsm, tr_phi3, yang_mills, string_amplitude, uv_scaling, bcfw, adler_zero, uniqueness_conjecture, soft_theorem, causal_diamond, kinematic_shift, scaffolding, planar_variables, discovery`
+
+Markers were bootstrapped from the actual frequency distribution of contextTags in MongoDB (1326 distinct strings across the 4-book corpus). Coverage philosophy: a tag with no concept matches maps to itself as a singleton, so unknown tags retain exact-match behavior. The concept layer is **strictly additive — never lossy**.
+
+### Two side-fixes that were necessary
+
+The synonym layer alone got us to 16 edges with 1 still wrong (Rodina p1 tr_phi3_conjecture → Book 2 p50 Outlook instead of p49 ansatz). Two pieces of resolver scoring needed tightening:
+
+1. **Removed the tag-richness bonus.** It was capped at +0.05 for 5+ tags but outweighed the order tiebreaker (capped at 0.001), making tag-stuffed Outlook chunks beat correct body chunks on the same overlap. The right tiebreak is "earlier chunk wins" (closer to the definition), not "more tags wins".
+
+2. **Stem-tolerant text matching.** The chunk text matcher used `phrase = "hidden zeros"` substring search. Half the corpus spells it `"hidden zeroes"` (British). The token fallback gave only 0.5 partial credit, which let an American-spelling chunk in the Outlook beat a British-spelling chunk in the body on textBonus alone. Now token-prefix matching gives full credit, so `"factorize" ≈ "factorization"`, `"zeros" ≈ "zeroes"`, etc.
+
+### Empirical result (no manual chunk patches at all — clean LLM regen state + synonym layer)
+
+**16 edges total** (was 11 with exact-string matching). **5 NEW edges** that were impossible before:
+
+| New edge | Target | Verdict |
+|---|---|---|
+| G/W p4 nlsm + massless_zeros | Book 2 p19 Section 4.1 NLSM zeros | bullseye |
+| G/W p11 mNLSM even-point | Book 2 p4 NLSM intro | acceptable |
+| Understanding p29 factorization_3_splits | Book 2 p32 zero causal diamond factorization | bullseye |
+| Understanding p29 factorization_near_zero | Book 2 p12 amplitude_vanishing | bullseye |
+| **Understanding p34 YM zeros + splitting** | **Book 2 p45 gluon amplitude zeros** | **bullseye** |
+
+**Bullseye improvements on existing edges:**
+
+- **Rodina p1 tr_phi3_conjecture → Book 2 p49 ansatz/uniqueness**: "we can further impose our hidden zeroes. Quite remarkably we have found..." (was: previously landed on Outlook)
+- **G/W p1 kinematic_mesh → Book 2 p6 "2.1 The kinematic mesh"**: the actual section header (was: Section 5 gluon-zeros chunk)
+- **G/W p10 UV behaviour → Rodina p6 OUTLOOK literally saying "we showed hidden amplitude zeros are in fact closely related to UV scaling"**: the most semantically perfect cross-book match in the entire graph
+
+**Final tally: 11 bullseye / 3 acceptable / 2 routing-to-abstract / 0 wrong.** The two abstract-routing cases (Understanding p2 → Book 2 p1) are arguably semantically correct: the source says "discovered in [6]" and the abstract IS the discovery announcement.
+
+### What this enables architecturally
+
+- Future Book 2 regens won't destroy edge quality the way they did this morning. The resolver normalizes vocabulary at match time — the LLM only needs to be locally consistent.
+- New books added to the library will produce good edges automatically, as long as their LLM-tagged concepts overlap with the catalog markers.
+- The catalog can grow as new concepts appear. Bootstrap query is in the file header for refreshing when the corpus shifts.
+- **No more per-chunk manual patches needed.** The 95% precision target is reachable through pure resolver code, not data hand-tuning.
+
+### Open follow-ups
+1. Live click-through test of all 16 cross-book citations in the app.
+2. Notes ingestion (LaTeX OCR + auto-citation to Rodina passages). Architecture is ready.
+3. Process geometric-background through the span pipeline so G/W [31] gets a real body target.
+4. Defer: upload speed, arXiv crawler, multi-tier prompt system.
+
+
 ## 2026-04-11 evening — Book 2 LLM regen experiment + per-book Info & stats modal
 
 Two pieces this round. The first one is the more important finding: **a clean LLM regeneration of Book 2 produced WORSE edge precision than the manual targeted tag patch from earlier in the day, contradicting Claude's prediction.** The second is a UX feature the user asked for so they can sense-check ingestion quality and rough $ spend per book.
