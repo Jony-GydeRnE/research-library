@@ -118,8 +118,28 @@
       <div class="reader-content" id="readerContent">
         <% if (page && page.htmlContent) { %>
           <%- page.htmlContent %>
+        <% } else if (page && (page.rawTextLegacy || page.rawText)) { %>
+          <%
+            // Vision processing hasn't completed yet for this page.
+            // Render the pdf-parse text as paragraphs so the user
+            // can read and interact with the page immediately —
+            // upload no longer blocks reader interaction. The page
+            // will be silently upgraded to vision-rendered HTML
+            // (with proper LaTeX) once vision finishes.
+            var fallbackText = page.rawTextLegacy || page.rawText || '';
+            var paras = fallbackText.split(/\n\n+/).filter(function(p) { return p.trim(); });
+          %>
+          <div class="page-content vision-pending" data-page-number="<%= pageNumber %>">
+            <div class="vision-pending-banner">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+              <span>Showing fast text extraction. Vision processing in progress — equations and figures will appear as soon as they finish.</span>
+            </div>
+            <% paras.forEach(function(p) { %>
+              <p><%= p.replace(/\s+/g, ' ').trim() %></p>
+            <% }); %>
+          </div>
         <% } else { %>
-          <div class="page-content"><p class="empty-page">No content available for this page.</p></div>
+          <div class="page-content"><p class="empty-page">No content available for this page yet.</p></div>
         <% } %>
       </div>
 

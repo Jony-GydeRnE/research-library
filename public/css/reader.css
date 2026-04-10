@@ -1365,3 +1365,36 @@ mjx-container {
   from { opacity: 0; transform: translateY(-4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* Vision-pending banner — shown at the top of any page that's
+   currently rendered from pdf-parse rawText because vision
+   processing hasn't completed for it yet. The user can read and
+   interact with the page immediately; the banner explains that
+   equations and figures will upgrade when vision finishes. */
+.page-content.vision-pending {
+  position: relative;
+}
+.page-content.vision-pending .vision-pending-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.55rem 0.85rem;
+  margin-bottom: 1.1rem;
+  background: rgba(255, 213, 79, 0.10);
+  border: 1px solid rgba(255, 213, 79, 0.35);
+  border-radius: 8px;
+  font-size: 0.78rem;
+  color: var(--r-text-muted);
+  font-style: italic;
+}
+.page-content.vision-pending .vision-pending-banner svg {
+  flex-shrink: 0;
+  color: #ffd54f;
+}
+.page-content.vision-pending p {
+  /* Plain pdf-parse text often has weird line breaks; tighten the
+     paragraph spacing so it doesn't sprawl while waiting for the
+     proper vision render. */
+  margin-bottom: 0.9em;
+  line-height: 1.6;
+}
