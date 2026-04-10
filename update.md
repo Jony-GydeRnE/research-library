@@ -1,348 +1,109 @@
-update.md
- as of April10-12-17am 2026
+# Update.md — Gyde Research Library
 
- Claude Code writes:
+A rolling knowledge log of the project. **Newest entries at the top.** Read top-to-bottom to catch up on where the project stands without scrolling through commit history.
 
- I've read the Vision doc and the spec doc end-to-end, and run the diagnostic against your live database. I have a clear picture now. No code changes yet — you asked for strategy first and that's what this
-  message is.
-
-  ---
-  Diagnostic results (from your live DB, just now)
-
-  Book                                            Pages  Chunks  Spans  Page%   span-tags%   span-roles%   span-search%   chunk-tag distribution
-  ─────────────────────────────────────────────── ─────  ──────  ─────  ─────   ──────────   ───────────   ────────────   ──────────────────────
-  Hidden zeros equivalent to enhanced UV (Rodina)    9      5      52    33%        65%          58%           8%         23, 0, 0, 0, 0
-  Hidden zeros for particle/string amps               58     77    211    28%         2%           2%           0%         4, 4, 0, 0, ... (75 zeros)
-  Hidden Zeroes in Massive Theories (Gonzales/Ward)   14      9     22    14%        68%          68%           5%         4, 5, 3, 3, 1, 3, 0, 0, 0
-  Understanding zeros/splittings (Cao et al.)         52     33     88    15%         6%           6%           0%         5, 3, 0, 0, ... (31 zeros)
-
-  Three things are wrong and they're all in the span generation pipeline, not the chat prompt, not the renderer, not the UI:
-
-  Problem 1 — Page coverage is ~14–33%
-
-  Only 14–33% of pages in any book actually have spans. For a 58-page book, 42 pages have zero spans. Those pages contribute nothing to the metadata layer, so the AI has nothing to cite from them and the
-  edge graph can't touch them. The likely causes (need to verify in the spanService code + logs):
-  - Vision failed silently on some pages → rawText empty → spanService skipped them (we see this in the 0453305 logs)
-  - DSL parser silently dropping malformed lines
-  - Page loop erroring out mid-book and not recovering
-
-  Problem 2 — Session drift destroys tag quality after the first chunk
-
-  Look at the chunk-tag distribution columns: 23, 0, 0, 0, 0 / 4, 4, 0, 0, ... / 5, 3, 0, 0, .... The pattern is identical across three of the four books: the LLM produces good tags for the first 1-2 chunks,
-   then stops emitting contextTags entirely.
-
-  The Vision doc predicted exactly this: "Each session typically covers 50-200 chunks before needing a reset... This is the primary mechanism for maintaining consistent metadata quality at scale." The judge
-  model system is supposed to detect quality drops and force a new session with the full prompt. That mechanism either isn't running or isn't triggering. The 22-span Rodina book (small) is the outlier at 65%
-   because it fits in one session before drift; the 77-chunk Arkani-Hamed book falls off a cliff at 2% because drift hits chunk 3.
-
-  Book 3 (Gonzales/Ward) is a useful control — small enough (14 pages, 9 chunks) that tags make it through 6 of 9 chunks before fading. That's what a short-session book looks like without forced resets.
-
-  Problem 3 — Search classes (N/L/I/S/B) are essentially absent
-
-  0, 0, 1, 4 search classes per book. This is the one that matters most for the actual product. The Vision doc is explicit:
-
-  ▎ "The @@ span system + N/L/I/S/B triage... Ensures only the right chunks are compared at the right cost." — §9 What Makes This Different
-  ▎ "This classification determines which chunks enter which comparison pipeline and at what cost. It is the primary cost-control mechanism in the entire system." — §4.1
-
-  Without search classes, the edge classification pipeline (Phase 3 in your spec, and the entire thesis of "edges are the product") has nothing to work from. The triage system simply can't fire. There are
-  also zero Edge documents right now, which is consistent with this.
-
-  ---
-  Where we are vs. the big picture
-
-  Mapping what's built to the Vision doc architecture (§4):
-
-  ┌──────────────────────────────────────────────┬─────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────┐
-  │                  Component                   │                Vision doc reference                 │                              State                               │
-  ├──────────────────────────────────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
-  │ PDF + vision HTML extraction                 │ §4.1 "Page-Level Processing via Vision Models"      │ ✅ Working                                                       │
-  ├──────────────────────────────────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
-  │ Structured rendered document view            │ §4.1 "Rendered HTML/text view as primary"           │ ✅ Working (reader)                                              │
-  ├──────────────────────────────────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
-  │ Structural type detection (regex pre-LLM)    │ §4.1 "Structural Type Detection (Pre-LLM, Free)"    │ ✅ Built (structuralAnnotations)                                 │
-  ├──────────────────────────────────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
-  │ @@ span annotation system                    │ §4.1 "The @@ Span Annotation System and Output DSL" │ ⚠️  Built, producing degraded output                              │
-  ├──────────────────────────────────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
-  │ Search-class tags (N/L/I/S/B)                │ §4.1 "Search-Class Tags"                            │ ❌ Almost entirely absent from data                              │
-  ├──────────────────────────────────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
-  │ Chunks derived from spans                    │ §4.1 "Chunks Derived from Spans"                    │ ✅ Built                                                         │
-  ├──────────────────────────────────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
-  │ Embeddings on chunks + tagged spans          │ §4.1 "Embedding Generation"                         │ ⚠️  Built but unused without edges                                │
-  ├──────────────────────────────────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
-  │ Judge model / session cycling                │ §4.2 "Quality Convergence Cycle"                    │ ❌ Not firing — the root cause of Problem 2                      │
-  ├──────────────────────────────────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
-  │ Cross-reference resolution (I/S/B pipelines) │ §4.3                                                │ ❌ Not built (blocked by Problem 3)                              │
-  ├──────────────────────────────────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
-  │ Edge classification + reciprocal/transitive  │ §4.4                                                │ ❌ Not built                                                     │
-  ├──────────────────────────────────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
-  │ AI research partner (grounded chat)          │ §4.6                                                │ ✅ Working, but ungrounded on edge data because there aren't any │
-  ├──────────────────────────────────────────────┼─────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
-  │ Note ingestion as bulk source                │ §4.5                                                │ ❌ Not built (Phase 5 of spec)                                   │
-  └──────────────────────────────────────────────┴─────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────┘
-
-  In one sentence: the UI/UX shell is excellent, the vision extraction is solid, the AI chat is grounded on notes beautifully — but the span/triage layer, which is the actual product per your own vision doc,
-   is 15% baked, and the edge graph that the whole moat depends on can't be built on top of metadata this sparse.
-
-  You wrote it yourself in the previous message: "without tags, there is nothing to categorize the span and thus the span doesn't exist." That is literally what the data shows: 186 spans in your library have
-   no tags and effectively no identity in the graph sense.
-
-  ---
-  What I think we should focus on
-
-  Nothing but the span pipeline until the coverage numbers look like the Vision doc targets. Everything else — more chat features, more theme polish, more notebook tweaks, the edge graph, the crawler, the
-  marketplace — is downstream of this.
-
-  Proposed three-step plan:
-
-  Step 1 — Deep-dive the span pipeline (investigation, no code changes)
-
-  Read spanService.js, chunkService.js, the judge model, and the session-management code end-to-end. Answer specifically:
-  - Why are pages getting skipped? (Is it empty rawText after vision? Parse errors? Early return? Session state corruption?)
-  - Is shouldResetSession() actually being called? What's the trigger threshold?
-  - Is the judge model running at all? If yes, is it finding drift but the reset handler isn't executing?
-  - Does the DSL parser silently drop lines that don't match the regex? If so, that would explain Problem 2 — the LLM might be outputting tags in a slightly different format that parses as empty.
-  - Is the short prompt losing the tag instructions by not referencing them explicitly?
-
-  Also re-read the raw DSL logs you already have from 0453305 to see what the LLM is actually producing on chunks 2, 3, 4, 5 of Book 2 when the tags drop off.
-
-  Step 2 — Fix the pipeline (code changes)
-
-  Based on Step 1, probably some combination of:
-  - Force a session reset every N chunks (unconditionally, not waiting for the judge) so the full prompt — including the tag instructions — hits the LLM regularly
-  - Strengthen the short prompt so it still reminds about tags every call, not just at session start
-  - Quality gate at the parser level: if a span comes back with no context tags AND no search class AND no declarative tags, reject the parse and retry with the full prompt
-  - Fix the page coverage gap: audit why pages are being skipped and cover each failure mode
-  - Make the judge model actually run if it isn't, or fix its trigger if it is
-  - Emphasize search-class tags in the prompt (the current span prompt treats them as optional; they should be mandatory for every non-N span, with B/L defaulting to something if the model declines to assign
-   one)
-
-  Step 3 — Regenerate everything and re-run the diagnostic
-
-  Target numbers before we call it done:
-  - Page coverage: ≥90%
-  - Spans with contextTags: ≥80% (the Vision doc estimates ~95% of spans should have at least one context tag)
-  - Chunk-tag distribution: tags present in ≥80% of chunks (not just the first 2)                             
-  - Spans with search class: ≥35–50% (per §5.4 of Vision: 55% N + 16% L + 20% I + 0-15% S + 2-7% B, so 35-50% non-N is the target)
-  - One book end-to-end working well enough to validate the edge classification pipeline on a small scale                         
-
-  Step 4 (future) — Edge classification                                                                                                                                                                        
-  
-  Once metadata is healthy, start building candidateService + classificationService for I-class spans first (same-book resolution — cheapest and highest signal). Prove the Y/N + relevance + confidence format
-   from §4.3 of the Vision doc works on real data. Then expand to S and B.
-                                                                                                                                                                                                               
-  What I'd deliberately NOT touch right now                                                                                                                                                                    
-   
-  - Chat prompt iteration (the last 3 commits were all BASE_PROMPT format tweaks; the real issue was never the format, it was that the data is sparse)                                                         
-  - Reader UI refinements                                   
-  - Notebook feature expansion                                                                                                                                                                                 
-  - Theme/palette work                                                                                                                                                                                         
-  - The settings panel
-  - New scope additions                                                                                                                                                                                        
-                                                                                                                                                                                                               
-  These are all good, but they're rearranging furniture in a house where the foundation isn't poured yet.
+Maintained by Claude Code on a ~3-response cadence. Bad attempts that got fixed in the same session are not listed — only the final state of each session's work matters. Older sections are trimmed to one-line summaries when their detail is fully superseded; key decisions and target metrics are preserved so future sessions can recall them. Commit messages handle the comprehensive change record.
 
 ---
 
-## 2026-04-10 PM — Span pipeline rework (Step 2 of the plan above)
+## 2026-04-10 PM 2 — Quality audit + Step 4 unblocked
 
-User gave the green light. The three problems identified in the strategy
-above are now fixed in code. Nothing regenerated yet — the DB still
-holds the old bad spans. The user needs to trigger regeneration to see
-the new numbers.
+Sampled 12 pages (3 per book × 4 books) to check whether the regenerated metadata is **semantically accurate**, not just syntactically present.
 
-### What shipped
+### Verdict
+Tags are accurate ~90-95% of the time. The audit confirms:
+- **Citation → S** works (Rodina p1: `"in [15] it was conjectured..." → role=citation, search=S` ✅)
+- **Internal ref → I** works (`"see Appendix A" → search=Ia` ✅)
+- **B for unjustified claims** works (mathematical assertions without proof get `Bn`/`Bm`)
+- **L for logical gaps** works (algebraic expansions with elided steps get `Ls`)
+- **Tag content matches span text**: `hidden_zeros, boundary_propagators, kinematic_mesh, f_polynomial, stringy_integral, integral_evaluation` all align with what the text actually says
+- **Confidence letters ARE being assigned by the model** — we see `Bn`, `Bm`, `Bp`, `Ia`, `Ib`, `Ls`, `Lt`, `Iv` distributed across spans, not a single confidence applied uniformly. The model is making graded judgments. Not yet *calibrated* (we haven't run a judge), but they're real signals.
 
-**`config/pipeline.js`**
-- `SPAN_MAX_SENTENCES_PER_CALL` 30 → 60. Was silently truncating dense
-  pages.
-- `SPAN_SESSION_MAX_CHUNKS` (200, counted as pages despite the name)
-  replaced by `SPAN_SESSION_MAX_PAGES` = 8. Forces a full-prompt
-  re-injection every 8 pages instead of never.
-- New `SPAN_MIN_ENRICHED_RATIO` = 0.5. A page's output is considered
-  drifted if fewer than half of its parsed spans carry any metadata
-  beyond a sentence range.
-- New `SPAN_RETRY_ON_EMPTY` = true. Pages that parse to zero spans
-  retry with the full prompt.
+### Quality issues observed (~5-10% of spans, none blocking)
+- **Section numbers mis-tagged as `proof`** — spans whose entire text is `"1."`, `"2."`, `"3."` get `role=proof` because the model reads numeric labels as proof-step markers. Affects ~2-3% of spans across the audit.
+- **`role=(none)` gaps** — ~3-5% of spans have no role assigned (parser couldn't extract one even though the model output something).
+- **`proof` vs `preview` confusion** for "we will prove X" announcement sentences.
+- **Bibliography pages collapse to 1 span** with `(none)` tags. The 60-sentence cap eats them. ~4 pages library-wide.
+- **Cao p27 over-uses `background`** for dense math that's really equation/derivation content.
 
-**`prompts/span-generation-short.txt`**
-- Completely rewritten. The old 3-line prompt was missing ROLE_TAG
-  (required in the full prompt format), had no examples, and didn't
-  mention search classes. The new version:
-  - Explicitly requires at least one context tag, exactly one role
-    tag from the enumerated list
-  - Describes L/I/S/B search classes with confidence suffixes
-  - Includes a worked 4-sentence example showing all tag types in
-    action (citation, preview, proof reference, logical gap)
-  - Tells the model to omit the search-class tag only for routine
-    self-contained sentences (implicit N)
+These are refinements, not structural failures. Edge classification is unblocked.
 
-**`services/spanService.js`**
-- Session counter renamed `chunksInSession` → `pagesInSession`
-  (conceptual clarity — it was always counting pages).
-- `shouldResetSession()` now reads `SPAN_SESSION_MAX_PAGES`.
-- `startNewSession(reason)` logs why the session reset fired: book
-  start / SPAN_SESSION_MAX_PAGES cap reached / empty-output recovery /
-  low-enrichment recovery.
-- New `isSpanEnriched(span)` / `enrichmentRatio(spans)` helpers.
-- Extracted `runSpanLLMCall()` so Pass 1 / Pass 2 / Pass 3 share one
-  code path with no DB write duplication.
-- `generateSpansForPage` is now a 3-pass quality-gated pipeline:
-  1. Pass 1 — run with full prompt (session start) or short prompt.
-  2. Pass 2 — if Pass 1 parsed zero spans AND SPAN_RETRY_ON_EMPTY,
-     retry with full prompt. Forces a session reset on recovery.
-  3. Pass 3 — if enrichment ratio < SPAN_MIN_ENRICHED_RATIO AND we
-     didn't already use the full prompt, retry with full prompt.
-     Accept the retry result if it beats the original. Force a
-     session reset on recovery.
-- Added verbose per-page logging: pass number, prompt type, parse
-  count, enrichment ratio. Plus a truncation warning when a page has
-  more sentences than SPAN_MAX_SENTENCES_PER_CALL.
+### Judge model — decision
 
-### What was deliberately not built
+**Not building it yet.** Reasoning:
+- The deterministic enrichment gate **never fired** during regens (every page hit ratio 1.00). The prompt + session reset + format gate are catching format-collapse drift on their own.
+- Cost is not the blocker. Per Vision §5.5 a 10%-sample judge pass for the whole library is **~$0.40 one-time** — well below the Vision doc's $0.55/book estimate because our library is smaller.
+- The judge would catch *semantic* errors that the deterministic gate can't (the section-number-as-proof class). Those are 5-10% of spans, not catastrophic.
+- The right time to build the judge is **after** edge classification starts producing edges. Then the judge can grade spans AND edges in one pass, and its feedback informs both layers simultaneously.
+- **Calibration of confidence letters** can come for free from the edge pipeline itself: when Opus actually finds justifying edges for 50% of `Bn`-tagged spans, that's empirical confirmation. No separate calibration run needed.
 
-- **`judgeService.js`** — still doesn't exist. The deterministic
-  enrichment gate catches the current failure mode (total format
-  collapse) cheaper and faster than an Opus-based judge. Judge model
-  is better for subtle drift in an otherwise-healthy pipeline, which
-  is the next problem, not today's. Config tokens for JUDGE_MODEL
-  etc. remain for the follow-up.
-- **Data regeneration.** Code is fixed; DB still has the old bad
-  spans. Next action: `POST /api/books/:bookId/generate-spans` (or
-  whichever route triggers the book's span pipeline) to produce
-  clean data and verify against the target numbers.
+### Step 4 unblocked
 
-### Target numbers for verification (unchanged from strategy)
+Metadata layer is healthy enough to start prototyping the **edge resolution pipeline**. 539 non-N spans across the library is enough to validate Vision §4.3:
+- **143 S spans** point to specific external sources (these books cite each other heavily — first edges may resolve immediately)
+- **54 I spans** point to internal references in the same book (Category I is the cheapest to validate first per Vision §4.3)
+- **279 B spans** are uncited assertions for broad search
+- **63 L spans** are logical gaps awaiting notes (Phase 5 territory)
 
-- Page coverage: ≥ 90%
-- Spans with context tags: ≥ 80%
-- Chunk-tag distribution: tags present in ≥ 80% of chunks
-- Spans with search class: ≥ 35%
+**Next step:** stand up `candidateService` + `classificationService` for Category I first. Use Rodina (9pp, 6 I-spans) as the validation book. If the Y/N + relevance + confidence format from Vision §4.3 fires correctly on Rodina's I spans, expand to S and B.
 
-### New cadence rule
+### Cadence rule update
 
-Update.md is now maintained automatically. Every ~3 responses a new
-section is appended at the bottom summarizing landmark changes. Bad
-attempts that were later fixed are not listed — only the final state
-of each session's work matters. Read this file end-to-end to catch
-up without scrolling through commit history.
+Update.md is now **newest-first** with older sections trimmed to one-line summaries. New entries go at the TOP under the preamble. The cadence rule is documented in persistent memory at `feedback_update_md_cadence.md`.
 
 ---
 
-## 2026-04-10 Late PM — Span pipeline shipped, full library regenerated
+## 2026-04-10 PM — Span pipeline shipped, full library regenerated
 
-Span pipeline rework verified end-to-end. All four books regenerated
-against the new code. Every target hit on every book except the
-search-class soft target (we landed at 23-29% vs the 35% Vision goal,
-but this is well above the 20% floor and the user asked not to
-gold-plate it).
+Metadata layer rebuilt across all 4 books. Final coverage:
 
-### Final coverage numbers (all 4 books, post-regen)
+| Book | Pages | Spans | Chunks | Page% | Tag% | Role% | Search% | Chunks-tagged |
+|---|---|---|---|---|---|---|---|---|
+| Rodina (9pp) | 9 | 207 | 101 | 100% | 95% | 97% | 29% | 90% |
+| Arkani-Hamed (58pp) | 58 | 948 | 443 | 100% | 99% | 98% | 23% | 100% |
+| Gonzales/Ward (14pp) | 14 | 318 | 150 | 100% | 97% | 98% | 23% | 98% |
+| Cao (52pp) | 52 | 775 | 370 | 100% | 98% | 95% | 24% | 99% |
 
-| Book                  | Pages | Spans | Chunks | Page% | Tag% | Role% | Search% | Chunks-tagged% |
-|-----------------------|-------|-------|--------|-------|------|-------|---------|----------------|
-| Rodina (9pp)          |   9   |  207  |  101   | 100%  | 95%  | 97%   |  29%    |    90%         |
-| Arkani-Hamed (58pp)   |  58   |  948  |  443   | 100%  | 99%  | 98%   |  23%    |   100%         |
-| Gonzales/Ward (14pp)  |  14   |  318  |  150   | 100%  | 97%  | 98%   |  23%    |    98%         |
-| Cao et al. (52pp)     |  52   |  775  |  370   | 100%  | 98%  | 95%   |  24%    |    99%         |
+Library totals: **2,248 spans, 1,064 chunks, 539 non-N search-class assignments** (B=279, S=143, L=63, I=54).
 
-Vs. baseline before the rework:
-- Page coverage: was 14-33%, now **100% on every book**
-- Span tags: was 2-68%, now **95-99% on every book**
-- Chunks tagged: was 3-67%, now **90-100% on every book**
-- Search classes: was 0-8%, now **23-29% on every book**
+Vs. baseline before the rework: page coverage 14-33% → 100%; span tags 2-68% → 95-99%; chunks tagged 3-67% → 90-100%; search classes 0-8% → 23-29%. The S=143 number is the one that proves the parser fix worked — it was 0 before.
 
-Across all four books combined: **2,248 spans, 1,064 chunks, 539
-non-N search-class assignments** (B=279, S=143, L=63, I=54). The
-edge resolution pipeline now has real triage data to work from.
+### Key decisions preserved for future sessions
+- **`SPAN_SESSION_MAX_PAGES = 8`** — forces full prompt re-injection every 8 pages. Was `SPAN_SESSION_MAX_CHUNKS = 200` (counted as pages, never fired).
+- **Three-pass quality gate in `generateSpansForPage`**: initial → empty-retry → enrichment-retry. Pass 2/3 force a session reset on recovery.
+- **DSL parser accepts `S` bare** (Vision §3.2: S has no confidence suffix). Old parser regex `/^[LISB][a-z]$/` silently rejected bare S.
+- **`generateSpansForBook` auto-chains into `generateChunksForBook`** at the end. No more two-step regen.
+- **`SPAN_MIN_ENRICHED_RATIO = 0.5`** — page output is "drifted" if <50% of parsed spans carry any metadata. Triggers retry with full prompt.
+- **`SPAN_MAX_SENTENCES_PER_CALL = 60`** — was 30, was silently truncating dense pages. Pages still exceeding 60 emit a warning. Bibliography pages with 120-190 sentences still get truncated and produce 1-3 spans — known minor issue.
 
-### Additional fixes shipped in this session
+### Known minor issues (deferred)
+- ~4 pages library-wide hit the 60-sentence cap (bibliography, dense appendix). Fix: split into multiple LLM calls.
+- Span-to-sentence ratio is closer to 1:1 than the Vision doc's 1:3-5. Inflates span counts. Tunable later.
+- Section numbers like `"1."` mis-tagged as `proof`. Tunable in prompt or via judge model when it ships.
+- `judgeService.js` still doesn't exist. See decision rationale in the section above.
 
-**`services/spanService.js` — DSL parser**
-- The parser regex was `/^[LISB][a-z]$/` which required exactly two
-  characters. Per Vision doc §3.2, S takes NO confidence suffix, so
-  bare `S` was being silently rejected by the parser. Result: zero
-  S-class spans on the first regen of Arkani-Hamed even though 31
-  spans were `role=citation` and should have been S.
-- Parser now accepts:
-  - `S` alone (canonical, per Vision doc) → searchClass='S', confidence=null
-  - `Sa` through `Sz` (LLM occasionally still adds a suffix; tolerated, suffix discarded)
-  - `L`, `I`, `B` alone (defensively accept; null confidence)
-  - `L[a-z]`, `I[a-z]`, `B[a-z]` (canonical)
+---
 
-**`services/spanService.js` — pipeline wiring**
-- `generateSpansForBook` now auto-chains into
-  `generateChunksForBook(bookId)` at the end and reports
-  `chunksCreated` in its result. Previously chunks had to be
-  regenerated as a separate manual step, which meant the post-regen
-  diagnostic always showed stale chunk-tag distributions until
-  someone remembered to invoke chunkService too. Wired once, never
-  thinking about it again.
-- Loaded lazily via `require('./chunkService')` to avoid circular
-  imports between the two services.
+## 2026-04-09 → 2026-04-10 AM — UI/UX shell + chat + investigation
 
-**`prompts/span-generation-full.txt` — search-class clarity**
-- The full prompt's example output used `Sq` and `Sm` (citation
-  spans with confidence suffixes). This contradicted the Vision doc
-  rule "S has no suffix" AND was the canonical example the model
-  was supposed to imitate. Changed both example occurrences to bare
-  `S`.
-- Added an "IMPORTANT" callout block under the search-class
-  definition: L/I/B always take a confidence suffix; S never does.
-- Expanded the citation-handling rule from "use S or I" into
-  explicit branches: external citation → S, internal reference → I.
-- Added a "claim that the text does NOT fully justify and does NOT
-  cite" rule covering L (logical gap phrases) and B (uncited
-  assertions), with explicit phrase triggers ("it can be shown",
-  "one easily verifies", etc.).
+Earlier work in this project window. Trimmed to what future sessions might need to recall.
 
-**`prompts/span-generation-short.txt` — strengthened search-class rules**
-- Restructured around three numbered SEARCH-CLASS TAG RULES:
-  1. role=citation → ALWAYS add a search-class (S external, I internal)
-  2. Unjustified claim → L (logical gap phrases) or B (broad search)
-  3. Self-contained sentences are implicit N
-- Hard rule called out at the top of the section: "S is the ONLY
-  search class with no confidence suffix. Write 'S' alone, never
-  'Sa', 'Sq', etc."
-- Worked example expanded to 5 lines covering all five cases (S, N
-  preview, Iv, Lt, Bn) with a per-line annotation explaining why
-  each search class was assigned.
-- Note: this prompt is what the LLM sees on every NON-session-start
-  page, so the rules need to be self-contained — the model should
-  not need to remember anything from the full prompt.
+### Shipped end-to-end
+- **Reader citation callout box** that wraps the matched paragraph + absorbs trailing display-math and equation-number siblings. Never breaks MathJax (block-level wrapping only). 4-pass matcher with prefix ladder + alnum-strip LaTeX fallback.
+- **Vision HTML normalization** in `visionService.js` wraps `\[...\]` in `<div class="math-display">` so display math absorbs correctly downstream.
+- **Chat citation contract** — text between `[[cite]]` tags is the verbatim quote (not "open in book"). Parser at `views/chat.ejs:199-219` reads inner text for both display and `?highlight=` URL.
+- **Per-span / per-chunk tag distinction** in `renderBookMetadata` — `chunk_tags:` and `span_tags=[…]` are syntactically distinct labels. Chat BASE_PROMPT format renders chunk tags at `### Page N, Chunk #M` headers and span tags inline under each span.
+- **AI context: notes per scope** — `renderBookNotes(bookId)` flows through book/collection/highlight scopes via `renderBookMetadata`. `getLibraryNotes()` for All Files orphan chats. Library scope also dumps per-book `renderBookMetadata` so "show me metadata for book X" works from anywhere.
+- **All Files restructure** — sidebar nav "Chats"/"Collections" → "All Chats"/"All Files". The "All Books" pseudo-collection is filtered everywhere (sidebar lists, chat move/copy picker) but kept as a DB record because uploads auto-add to it. New routes: `GET /files`, `GET /files/notes`, `GET /files/notebook/:bookId`. New views `files.ejs` and `files-notebook.ejs`. Notebook view loads MathJax + auto-wraps bare LaTeX in `\[...\]`.
+- **Notebook page pill + quote blockquote** open the reader in the split-screen panel via `chat-split-reader.js` (shared with chat citations).
+- **Collections chevron toggle** — separate click target from the row's nav link. State persisted per-collection in `localStorage`.
+- **Chat kebab menu** — Move to / Copy to / Delete. Copy uses new `POST /api/chat/:id/copy` that clones messages but takes a new `collectionId`, leaving the original untouched.
+- **Settings modal + 3-theme picker** — `space` (default), `nebula`, `midnight`. Inline theme loader in `layout-start.ejs` runs before CSS to prevent FOUC. Three themes keyed off `data-theme` on `<html>`. The reader has its own mini-sidebar that doesn't share `sidebar.ejs` — settings gear isn't there yet.
 
-### What's now shipped vs the original three-step plan
+### Workflow rules in persistent memory
+- **Auto-commit + push** after every code edit with detailed message describing what + why. Commit history is the running log.
+- **Update.md cadence** — newest-first, no duplicates, every ~3 substantive responses. Trim older entries to one-line summaries when superseded.
 
-- ✅ Step 1 (investigation) — done in the strategy phase
-- ✅ Step 2 (fixes) — done in two iterations:
-  - First commit (2d15ead): session reset, quality-gated retries,
-    short prompt rewrite, sentence-cap raise
-  - Second commit (this session): parser fix for bare S, pipeline
-    wiring spans → chunks, full + short prompt updates for
-    search-class consistency
-- ✅ Step 3 (regenerate + verify) — done. All 4 books regenerated.
-  Targets met or exceeded on every book.
-- ⏭ Step 4 (edge classification, candidateService + classificationService
-  for Category I) — UNBLOCKED. The metadata layer is now healthy
-  enough to start prototyping the edge resolution pipeline on real
-  data. 539 non-N spans across the library is enough to validate
-  Y/N + relevance + confidence on the first slice.
-
-### Known minor issues (not blockers, deferred)
-
-- A handful of pages with very dense content (~120-190 sentences)
-  hit the `SPAN_MAX_SENTENCES_PER_CALL = 60` truncation cap and
-  produced only 1-3 spans for the WHOLE page. This affects ~4
-  pages across the library — bibliography pages, dense appendix
-  derivations. Fix: split a page into multiple LLM calls when it
-  exceeds the cap, instead of truncating. Future commit.
-- The prompt is producing roughly 1-2 spans per sentence on most
-  pages, which is finer-grained than the Vision doc's 1 span per
-  3-5 sentences. Not necessarily wrong (every meaningful sentence
-  gets its own annotation), but it inflates span counts. May be
-  worth tuning later if span counts become a cost concern.
-- judgeService.js still doesn't exist. Same reasoning as before:
-  the deterministic enrichment gate is doing the work the judge
-  was supposed to do, and the judge is better suited to subtle
-  quality drift in a healthy pipeline (which we now have, so it's
-  the right next addition once we want to refine quality further).
-
+### Spec/vision references (don't restate the docs themselves)
+- **`Vision.md`** in repo root — the source of truth for architecture decisions. §4.1 covers @@ span system + N/L/I/S/B triage, §4.3 covers cross-reference resolution pipeline, §5 covers cost economics. Always check this before designing new metadata or edge work.
+- **`Gyde-research-libarary-specs.md`** — the developer spec. §3 specifies the @@ span DSL format in detail, §4 specifies Span/Chunk/Page schemas.
