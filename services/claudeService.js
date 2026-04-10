@@ -37,69 +37,98 @@ CRITICAL: Your system prompt contains <book_metadata> XML blocks. These contain 
 USER NOTES:
 Each <book_metadata> block may contain a nested <user_notes> section listing every note the user has written about that book, grouped by page, with the highlighted passage each note is attached to (if any) and the note body. In library-wide (All Files) chats the prompt may instead contain a top-level <library_notes> block covering every book. Treat these as the user's own writing — reference them when the user asks about what they have noted, when a note is directly relevant to the answer, or when the user's prior thinking would change your framing. Do NOT quote from them unless asked, and do NOT treat them as authoritative citations of the underlying book (use [[cite]] tags for that). When the user says "what did I write about X" or "summarize my notes on Y", read and paraphrase from these blocks directly.
 
-You have access to chunk and span metadata for the books in scope (see <book_metadata> blocks below, grouped inside <collection_metadata> when a collection is in scope). When the user asks to list chunks, spans, tags, or annotations, output ONE ENTRY PER SPAN. Tags belong to the span, NOT to the chunk — every span has its own "tags=[…]" field in the metadata block, and you must put those tags DIRECTLY UNDER the span they belong to. Use chunk headers only as visual separators between groups of spans.
+You have access to chunk and span metadata for the books in scope (see <book_metadata> blocks below, grouped inside <collection_metadata> when a collection is in scope). When the user asks to list chunks, spans, tags, or annotations, use the exact format below.
 
-EXACT format:
+Two kinds of tags exist in the metadata and you MUST keep them separate:
 
-  Page N, Chunk #M (chunk type)
+1. **chunk_tags** — appear on the "chunk_tags:" line directly under a chunk header. These are the aggregated tags for the chunk as a whole (the union of every span's tags in that chunk). They describe what the chunk is about. Render them at the CHUNK header level in your output, prefixed with a bold "Chunk tags:" label.
 
-  [[cite bookId="ID" page="N"]]verbatim span text[[/cite]]
-  tags: [this span's tags=[…] from the metadata, comma-separated, or (none)]
-  role: [this span's role=… if present]
-  search: [this span's class=… + confidence if present]
+2. **span_tags=[…]** — appear on individual "• span" lines inside a chunk. These belong to ONE specific span and describe just that passage. Render them directly under the span they belong to. If a span has no "span_tags=[…]" field in its metadata line, that span has no span-specific tags — render nothing for tags on that span. Do NOT copy the chunk_tags onto it. Do NOT copy another span's span_tags onto it. Spans without their own tags are common in this dataset — it is correct to omit a tags line for them.
 
-  [[cite bookId="ID" page="N"]]next span's verbatim text[[/cite]]
-  tags: [this span's own tags, DIFFERENT from the previous span if the metadata says so]
-  role: [this span's role]
+EXACT format for a listing response (use markdown headers so the chunks are visually prominent, and use **bold** for field labels to make the structure readable):
 
-  Page N, Chunk #M+1 (chunk type)
+### Page N, Chunk #M — *chunk type*
 
-  [[cite bookId="ID" page="N"]]first span of the new chunk[[/cite]]
-  tags: [this span's own tags]
-  role: [this span's role]
+**Chunk tags:** tag1, tag2, tag3, ... *(read from "chunk_tags:" — omit this line entirely if the chunk has no chunk_tags)*
 
-CRITICAL — per-span tag rule:
-In the <book_metadata> block, each span is written like:
-  • span role=definition class=B1 tags=[free_propagator,definition] "verbatim span text"
-The "tags=[…]" list belongs ONLY to that one span. When you list spans you MUST read each span's OWN tags=[…] field and put them on the "tags:" line directly under that span. Do NOT dump the first span's tags under every span. Do NOT aggregate every span's tags onto the first span. Do NOT attach chunk-level tags to spans (spans carry their own tags). If a span's metadata line has no "tags=[…]" field, write "tags: (none)" — that is the correct answer for that span. It is better to write "(none)" for 10 spans than to copy the first span's tags onto all of them.
+**Chunk text:** *one-line summary or the chunk_text snippet from the metadata, your choice*
 
-Example output showing FOUR spans across TWO chunks, where each span has its OWN distinct tags:
+**Spans** *(N total)*:
 
-  Page 5, Chunk #0 (definition)
+[[cite bookId="ID" page="N"]]verbatim span text[[/cite]]
+- role: *this span's role=… if present*
+- tags: *this span's span_tags=[…] if present — OMIT this bullet entirely if the span has no span_tags*
+- search: *this span's class=… + confidence if present*
 
-  [[cite bookId="abc123" page="5"]]We define the exact propagator via Δ(x−y) ≡ i⟨0|Tφ(x)φ(y)|0⟩...normalization condition ⟨0|φ(x)|0⟩ = 0.[[/cite]]
-  tags: free_propagator, definition
-  role: definition
+[[cite bookId="ID" page="N"]]next span's verbatim text[[/cite]]
+- role: …
+- *(no tags bullet — span has no span_tags in metadata)*
 
-  [[cite bookId="abc123" page="5"]]The Källén-Lehmann representation follows: ⟨0|Tφ(x)φ(y)|0⟩ = ∫₀^∞ dM² ρ(M²) Δ_F(x−y; M²)[[/cite]]
-  tags: kallen_lehmann, spectral_representation
-  role: theorem
+### Page N, Chunk #M+1 — *chunk type*
 
-  Page 5, Chunk #1 (background)
+**Chunk tags:** *(different tags from the previous chunk, read from this chunk's chunk_tags line)*
 
-  [[cite bookId="abc123" page="5"]]The spectral density function ρ(s) satisfies the completeness relation ∫₀^∞ ρ(s) ds = 1.[[/cite]]
-  tags: spectral_density, completeness_relation
-  role: background
-  search: I (internal ref, confidence v)
+...
 
-  [[cite bookId="abc123" page="5"]]This normalization follows directly from the definition in Section 7.2.[[/cite]]
-  tags: (none)
-  role: remark
+CRITICAL RULES:
 
-Notice how each of the four spans has a DIFFERENT "tags:" line, even though the first two share a chunk and the last two share a chunk. Tags track spans, not chunks. The fourth span has no tags in its metadata so it gets "tags: (none)" — that is the correct answer, not "copy the third span's tags".
+A. **chunk_tags are NOT copied onto spans.** When you see "chunk_tags: hidden_zeros, ultraviolet_scaling, ..." in the metadata, those belong ONLY to the chunk-level **Chunk tags:** line in your output. Do NOT put them on any individual span. The chunk's tags are an aggregate summary; the individual spans may not each carry all of them.
 
-Rules for this format:
-- The text between [[cite]] and [[/cite]] IS the verbatim span text from the metadata block. The UI renders it as a clickable highlighted passage in the chat and uses it to locate and highlight the text in the reader. Do NOT put a label like "open in book" inside the tags — put the actual quote.
-- Every span MUST have its own "tags:" line, read from THAT span's tags=[…] field in the metadata. If the field is absent, write "tags: (none)".
-- Every span MUST have its own "role:" line when the metadata has role=…. Skip the line silently if role is absent.
-- Show the ACTUAL span text from the metadata block, not your summary of it.
+B. **Missing span_tags means omit the line, not fabricate one.** If a span's metadata line has no "span_tags=[…]" field, do NOT write "tags: (none)" for that span and do NOT copy tags from another span. Just drop the tags bullet for that span. Many spans in this dataset legitimately have no span-level tags — the chunk-level chunk_tags already captures the thematic information.
+
+C. **Every chunk gets its own ### header.** Use a markdown "### Page N, Chunk #M — type" line so chunks are visually separated. Use **bold** labels for "Chunk tags:", "Chunk text:", "Spans:".
+
+D. **Each chunk's Chunk tags are DIFFERENT.** Read them from the metadata's "chunk_tags:" line for THAT specific chunk. Do NOT dump every chunk's tags onto the first chunk. If a chunk has no chunk_tags line in the metadata, omit the "Chunk tags:" output line entirely for that chunk.
+
+Example output showing two chunks, each with distinct chunk_tags, and a mix of spans with and without span-level tags:
+
+### Page 5, Chunk #0 — *definition*
+
+**Chunk tags:** free_propagator, definition, green_function, spectral_representation
+
+**Chunk text:** Introduces the exact propagator and its Källén-Lehmann representation
+
+**Spans** *(3 total)*:
+
+[[cite bookId="abc123" page="5"]]We define the exact propagator via Δ(x−y) ≡ i⟨0|Tφ(x)φ(y)|0⟩...normalization condition ⟨0|φ(x)|0⟩ = 0.[[/cite]]
+- role: definition
+- tags: free_propagator, definition
+
+[[cite bookId="abc123" page="5"]]The Källén-Lehmann representation follows: ⟨0|Tφ(x)φ(y)|0⟩ = ∫₀^∞ dM² ρ(M²) Δ_F(x−y; M²)[[/cite]]
+- role: theorem
+
+[[cite bookId="abc123" page="5"]]This motivates the introduction of the Lehmann weight function.[[/cite]]
+- role: remark
+
+### Page 5, Chunk #1 — *background*
+
+**Chunk tags:** spectral_density, completeness_relation, renormalization
+
+**Spans** *(2 total)*:
+
+[[cite bookId="abc123" page="5"]]The spectral density function ρ(s) satisfies the completeness relation ∫₀^∞ ρ(s) ds = 1.[[/cite]]
+- role: background
+- tags: spectral_density
+- search: I (internal ref, confidence v)
+
+[[cite bookId="abc123" page="5"]]This normalization follows directly from the definition in Section 7.2.[[/cite]]
+- role: remark
+
+Notice:
+- The two chunks have DIFFERENT "Chunk tags:" lines — [free_propagator, definition, green_function, spectral_representation] vs [spectral_density, completeness_relation, renormalization]. Each chunk's tags come from its own "chunk_tags:" metadata line.
+- The first chunk has 3 spans. Only the first and second have a span-level tags bullet (because only they had "span_tags=[…]" in their metadata). The third span has no tags bullet at all — it is correct to omit it, not to fabricate "(none)".
+- Span text is the verbatim quote from the metadata, wrapped in [[cite]] tags so the UI renders it as a clickable highlighted passage that opens the reader at the exact location.
+
+Other formatting rules:
+- Use **bold** to emphasize important labels/terms. Use *italic* for section types, chunk types, and metadata field names. These render in the chat UI.
+- The text between [[cite]] and [[/cite]] IS the verbatim span text from the metadata. Do NOT put a label like "open in book" inside the tags — put the actual quote.
 - If span text is longer than 120 chars, show first 80 chars + "..." + last 40 chars of the span verbatim, still inside the [[cite]] tags.
 - Do NOT wrap the span text in extra quotation marks — the UI styles the citation itself.
 - Always include the [[cite]] tag so the quote is clickable.
-- List ALL spans for the requested book/page, in the order they appear in the metadata (which is page order, then span order within each chunk).
-- Include declarative tags ONLY if they exist on the span (most spans won't have them).
-- Do NOT add your own commentary between spans — just list them in the structured format.
-- Do NOT make up span text, tags, or roles — use exactly what's in the metadata block.`;
+- List ALL chunks and ALL spans for the requested book/page, in the order they appear in the metadata.
+- Include declarative tags ONLY if they exist on the span (rare — most spans won't have them).
+- Do NOT add your own commentary between spans — just list them in the structured format above.
+- Do NOT make up span text, chunk_tags, span_tags, or roles — use exactly what's in the metadata block.`;
 
 /**
  * Rough token estimate (~4 chars per token).
@@ -442,12 +471,16 @@ async function renderBookMetadata(book) {
     const type = c.structuralType || c.chunkType || 'unknown';
     const idx = (c.chunkIndex != null) ? `#${c.chunkIndex}` : '';
     out += `\n  Chunk ${idx} (${type})${c.sectionTitle ? ' — ' + c.sectionTitle : ''}`;
+    // Chunk-level aggregated tags. These are the union of every span's
+    // contextTags in this chunk — they describe the chunk as a whole.
+    // Prefixed "chunk_tags:" (distinct from "span_tags:" below) so the
+    // AI can't conflate chunk-level aggregate with span-level specific.
     const tags = [...new Set([...(c.contextTags || []), ...(c.subjectTags || []), ...(c.conceptTags || [])])];
-    if (tags.length) out += `\n    tags: ${tags.slice(0, 20).join(', ')}`;
-    if (c.searchClasses?.length) out += `\n    search: ${c.searchClasses.join(', ')}`;
+    if (tags.length) out += `\n    chunk_tags: ${tags.slice(0, 20).join(', ')}`;
+    if (c.searchClasses?.length) out += `\n    chunk_search: ${c.searchClasses.join(', ')}`;
     if (c.sourceText) {
       const snippet = c.sourceText.replace(/\s+/g, ' ').trim().substring(0, 220);
-      out += `\n    text: "${snippet}${c.sourceText.length > 220 ? '…' : ''}"`;
+      out += `\n    chunk_text: "${snippet}${c.sourceText.length > 220 ? '…' : ''}"`;
     }
     const cs = spansByChunk.get(String(c._id)) || [];
     if (cs.length) {
@@ -456,7 +489,9 @@ async function renderBookMetadata(book) {
         const parts = [];
         if (s.role) parts.push('role=' + s.role);
         if (s.searchClass) parts.push('class=' + s.searchClass + (s.searchConfidence || ''));
-        if (s.contextTags?.length) parts.push('tags=[' + s.contextTags.slice(0, 8).join(',') + ']');
+        // Span-level tags — explicitly labeled "span_tags" to prevent
+        // confusion with the chunk_tags line above.
+        if (s.contextTags?.length) parts.push('span_tags=[' + s.contextTags.slice(0, 8).join(',') + ']');
         if (s.declarativeTags?.length) {
           parts.push('decl=[' + s.declarativeTags.map(d => d.kind + (d.targetChunk != null ? ':' + d.targetChunk : '') + (d.targetTag != null ? '.' + d.targetTag : '')).join(',') + ']');
         }

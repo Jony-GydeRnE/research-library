@@ -253,10 +253,11 @@ window.MathJax = {
         return '<div class="chat-math-display">' + block + '</div>';
       }
 
-      // Headers: ## or ###
-      if (/^###\s/.test(block)) return '<h4 class="chat-heading">' + escapeHtml(block.replace(/^###\s+/, '')) + '</h4>';
-      if (/^##\s/.test(block)) return '<h3 class="chat-heading">' + escapeHtml(block.replace(/^##\s+/, '')) + '</h3>';
-      if (/^#\s/.test(block)) return '<h3 class="chat-heading">' + escapeHtml(block.replace(/^#\s+/, '')) + '</h3>';
+      // Headers: # / ## / ### — run processInline on the heading text so
+      // **bold** and *italic* render (the AI uses italic for chunk type).
+      if (/^###\s/.test(block)) return '<h3 class="chat-heading chat-heading-lg">' + processInline(block.replace(/^###\s+/, '')) + '</h3>';
+      if (/^##\s/.test(block)) return '<h2 class="chat-heading chat-heading-xl">' + processInline(block.replace(/^##\s+/, '')) + '</h2>';
+      if (/^#\s/.test(block)) return '<h2 class="chat-heading chat-heading-xl">' + processInline(block.replace(/^#\s+/, '')) + '</h2>';
 
       // Bullet lists
       var listLines = block.split('\n');
@@ -297,8 +298,11 @@ window.MathJax = {
       else result += text[i];
       i++;
     }
-    // Bold
+    // Bold — must run before italic so **text** wins over *text*
     result = result.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // Italic — single asterisks around a run with no asterisks inside.
+    // Escaped to avoid matching inside code blocks or equations.
+    result = result.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
     // Inline code
     result = result.replace(/`([^`]+)`/g, '<code>$1</code>');
     return result;
@@ -421,7 +425,25 @@ window.MathJax = {
 /* Chat markdown rendering */
 .chat-message-assistant p { margin:0 0 0.6em; }
 .chat-message-assistant p:last-child { margin-bottom:0; }
-.chat-message-assistant h3.chat-heading, .chat-message-assistant h4.chat-heading { margin:0.8em 0 0.3em; font-size:0.95rem; color:var(--app-text-bright); }
+.chat-message-assistant h2.chat-heading,
+.chat-message-assistant h3.chat-heading,
+.chat-message-assistant h4.chat-heading {
+  color: var(--app-text-bright);
+  font-weight: 600;
+}
+.chat-message-assistant h3.chat-heading-lg {
+  margin: 1.1em 0 0.35em;
+  font-size: 1.05rem;
+  padding: 0.35em 0 0.3em;
+  border-bottom: 1px solid var(--app-border);
+}
+.chat-message-assistant h2.chat-heading-xl {
+  margin: 1.3em 0 0.4em;
+  font-size: 1.2rem;
+  padding-bottom: 0.35em;
+  border-bottom: 1px solid var(--app-accent-dim);
+}
+.chat-message-assistant em { color: var(--app-text-muted); font-style: italic; }
 .chat-message-assistant ul.chat-list { margin:0.3em 0 0.6em 1.2em; padding:0; }
 .chat-message-assistant li { margin-bottom:0.2em; }
 .chat-message-assistant code { background:rgba(255,255,255,0.06); padding:0.1em 0.35em; border-radius:3px; font-size:0.85em; }
