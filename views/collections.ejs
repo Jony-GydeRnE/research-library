@@ -121,6 +121,10 @@
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
     Remove from collection
   </button>
+  <button class="action-item" data-action="link-as-notes">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+    Link to source book
+  </button>
   <div class="action-divider"></div>
   <button class="action-item action-danger" data-action="delete">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -138,6 +142,20 @@
     <div class="collection-picker-list" id="collectionPickerList"></div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="document.getElementById('collectionPickerModal').style.display='none'">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Source book picker modal (Link to source book action) -->
+<div class="modal-overlay" id="sourceBookPickerModal" style="display:none;">
+  <div class="modal">
+    <h2>Link notes to source book</h2>
+    <p style="font-size:0.85rem;color:var(--app-text-muted);margin-bottom:0.75rem;">
+      Pick the paper these notes annotate. We'll match each note chunk against the paper's content and create note-citation links.
+    </p>
+    <div class="collection-picker-list" id="sourceBookPickerList"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="document.getElementById('sourceBookPickerModal').style.display='none'">Cancel</button>
     </div>
   </div>
 </div>
@@ -252,6 +270,17 @@
             body: JSON.stringify({ fromCollectionId: activeCollectionId, targetCollectionId: targetId }),
           }).then(function() { location.reload(); });
         });
+      } else if (action === 'link-as-notes') {
+        showSourceBookPicker(function(sourceId) {
+          fetch('/api/books/' + currentBookId + '/link-as-notes', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ linkedBookIds: [sourceId] }),
+          }).then(function(r) { return r.json(); }).then(function(data) {
+            if (data.error) { alert('Link failed: ' + data.error); return; }
+            var m = data.matching || {};
+            alert('Linked. Created ' + (m.edgesCreated || 0) + ' note-citation edges across ' + (m.noteChunks || 0) + ' note chunks.');
+          });
+        });
       } else if (action === 'remove') {
         if (!confirm('Remove "' + currentBookTitle + '" from this collection? (The book stays in your library.)')) return;
         fetch('/collections/api/' + activeCollectionId + '/books', {
@@ -278,6 +307,29 @@
         else alert('Upload failed: ' + (data.error || 'unknown'));
       });
   });
+
+  // ─── SOURCE BOOK PICKER ──────────────────────────────────
+  function showSourceBookPicker(onPick) {
+    var modal = document.getElementById('sourceBookPickerModal');
+    var list = document.getElementById('sourceBookPickerList');
+    list.innerHTML = 'Loading...';
+    modal.style.display = '';
+    fetch('/api/books/list?kind=paper').then(function(r) { return r.json(); }).then(function(books) {
+      list.innerHTML = '';
+      if (!books || books.length === 0) {
+        list.innerHTML = '<p style="color:var(--app-text-muted);font-size:0.85rem;">No source papers in library.</p>';
+        return;
+      }
+      books.forEach(function(b) {
+        if (b._id === currentBookId) return;
+        var btn = document.createElement('button');
+        btn.className = 'collection-picker-item';
+        btn.innerHTML = '<span class="col-dot" style="background:#6aabdb"></span>' + (b.title || 'Untitled');
+        btn.addEventListener('click', function() { modal.style.display = 'none'; onPick(b._id); });
+        list.appendChild(btn);
+      });
+    });
+  }
 
   // ─── STATS MODAL ────────────────────────────────────────
   function fmtBytes(n) {

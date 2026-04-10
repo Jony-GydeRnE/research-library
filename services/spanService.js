@@ -556,6 +556,33 @@ async function generateSpansForBook(bookId) {
     result.edgeError = err.message;
   }
 
+  // ── Note re-matching ──────────────────────────────────────
+  // Regenerating a paper Book invalidates every note-citation
+  // Edge that pointed at its old chunk IDs (the chunks were
+  // just deleted and recreated). Walk every notes Book whose
+  // linkedBookIds includes this paper and re-run matching so
+  // note citations always anchor to the latest chunk IDs.
+  // Same pattern as the pending-stub reconciliation block above.
+  try {
+    const { rematchNotesPointingAt } = require('./noteIngestionService');
+    const Book = require('../models/Book');
+    const book = await Book.findById(bookId).select('kind').lean();
+    // Only run rematch when the regenerated book is a PAPER, not
+    // a notes book (notes books trigger their own matching when
+    // linked, and re-running here would be wasted work).
+    if (book && book.kind !== 'notes') {
+      const r = await rematchNotesPointingAt(bookId);
+      if (r.rematched) {
+        console.log(`[spanService] Re-matched notes: ${r.rematched} notes books, ${r.edgesCreated} note-citation edges`);
+        result.notesRematched = r.rematched;
+        result.noteEdgesCreated = r.edgesCreated;
+      }
+    }
+  } catch (err) {
+    console.error(`[spanService] Note re-matching failed: ${err.message}`);
+    result.noteRematchError = err.message;
+  }
+
   return result;
 }
 

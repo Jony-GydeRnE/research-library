@@ -68,6 +68,70 @@ exports.moveToCollection = async (req, res) => {
   }
 };
 
+// ─── List books ────────────────────────────────────────────────
+//
+// Lightweight endpoint used by pickers (e.g. "Link to source book").
+// Filters by kind and excludes pending-citation stubs and books
+// without files. Returns just _id + title + author for the picker UI.
+
+exports.listBooks = async (req, res) => {
+  try {
+    const filter = { status: { $ne: 'pending-citation' } };
+    if (req.query.kind === 'paper') {
+      // Include books with kind unset — they pre-date the schema
+      // addition and are semantically papers (the default).
+      filter.$or = [{ kind: 'paper' }, { kind: { $exists: false } }];
+    } else if (req.query.kind) {
+      filter.kind = req.query.kind;
+    }
+    const books = await Book.find(filter)
+      .select('_id title author kind')
+      .sort({ uploadedAt: -1 })
+      .lean();
+    res.json(books);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ─── Notes linking ─────────────────────────────────────────────
+//
+// "Link to book" kebab action: marks a Book as kind='notes',
+// sets linkedBookIds, and runs noteIngestionService to populate
+// note-citation Edges. Used for the workflow:
+//
+//   1. User uploads handwritten notes PDF normally
+//   2. Standard pipeline runs (vision → spans → chunks → embeddings)
+//   3. User clicks kebab → "Link to book" → picks the source paper
+//   4. This endpoint flips kind to 'notes', stores linkedBookIds,
+//      and triggers the matching pass
+//
+// Returns the matching result so the caller can show "created N
+// note-citation edges" feedback.
+
+exports.linkBookAsNotes = async (req, res) => {
+  try {
+    const bookId = req.params.id;
+    const { linkedBookIds } = req.body;
+    if (!Array.isArray(linkedBookIds) || linkedBookIds.length === 0) {
+      return res.status(400).json({ error: 'linkedBookIds required (array of source book ids)' });
+    }
+    const book = await Book.findByIdAndUpdate(
+      bookId,
+      { kind: 'notes', linkedBookIds },
+      { new: true }
+    ).lean();
+    if (!book) return res.status(404).json({ error: 'book not found' });
+
+    const { matchNotesToSourceBooks } = require('../services/noteIngestionService');
+    const result = await matchNotesToSourceBooks(bookId);
+    res.json({ ok: true, book, matching: result });
+  } catch (err) {
+    console.error('[booksController.linkBookAsNotes]', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 // ─── Stats ─────────────────────────────────────────────────────
 //
 // Per-book stats: counts, distributions, cost estimate, storage.

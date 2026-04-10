@@ -81,4 +81,13 @@ module.exports = {
   TRANSITIVE_MAX_DEPTH_ASSUMES: 3,
   TRANSITIVE_MAX_DEPTH_EXTENDS: 5,
   TRANSITIVITY_JOB_INTERVAL: '1 hour',
+
+  // ─── NOTE-INGESTION MATCHING ─────────────────────────────────
+  // Thresholds for noteIngestionService.matchNotesToSourceBooks.
+  // Generous defaults so the user can SEE the matches and judge
+  // quality visually via confidence letters; tighten later if too
+  // much noise.
+  NOTE_MATCH_MIN_OVERLAP: 1,        // shared canonical concepts
+  NOTE_MATCH_MIN_COSINE: 0.72,      // text-embedding-3-small floor
+  NOTE_MATCH_MAX_PER_CHUNK: 3,      // top-K source matches per note chunk
 };

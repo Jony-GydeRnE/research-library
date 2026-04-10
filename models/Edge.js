@@ -14,14 +14,22 @@ const edgeSchema = new mongoose.Schema({
   toBookId: { type: mongoose.Schema.Types.ObjectId, ref: 'Book' },
   relationshipType: {
     type: String,
+    // 'annotates' = a notes-PDF chunk anchors to a source-paper
+    //   chunk discussing the same idea. Created by
+    //   noteIngestionService when a notes-kind Book is linked to
+    //   one or more source books.
     enum: ['proves', 'assumes', 'contradicts', 'extends',
-           'prerequisite', 'equivalent', 'uses_definition', 'missing_proof']
+           'prerequisite', 'equivalent', 'uses_definition',
+           'missing_proof', 'annotates']
   },
   confidence: String,   // single letter a-z (a=most confident)
   relevance: String,    // single letter a-z
   method: {
     type: String,
-    enum: ['lexical', 'embedding', 'llm', 'manual']
+    // 'note-citation' = produced by noteIngestionService via
+    //   concept-overlap (synonym layer) + embedding cosine ranking.
+    //   Always paired with relationshipType='annotates'.
+    enum: ['lexical', 'embedding', 'llm', 'manual', 'note-citation']
   },
   resolved: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now }

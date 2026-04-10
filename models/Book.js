@@ -56,6 +56,25 @@ const bookSchema = new mongoose.Schema({
     doi: String,        // normalized
     resolvedBookId: { type: mongoose.Schema.Types.ObjectId, ref: 'Book' },
   }],
+
+  // ─── Notes-as-books support ────────────────────────────────────
+  // A Book is either a normal paper/book ('paper') or a personal
+  // notes PDF that annotates one or more papers ('notes'). Notes
+  // PDFs go through the SAME ingestion pipeline (vision → spans →
+  // chunks → embeddings → bibliography) so the only difference is
+  // a flag and the optional linkedBookIds list. After processing,
+  // noteIngestionService matches each note chunk against the linked
+  // source books' chunks and creates 'note-citation' Edges that
+  // light up in the source-book reader as note-anchored highlights.
+  kind: {
+    type: String,
+    enum: ['paper', 'notes'],
+    default: 'paper',
+  },
+  // Source books these notes annotate. Empty for ordinary papers.
+  // Populated either at upload time (?linkedBookId=...) or later
+  // via the "Link to book" kebab action on a notes-kind book.
+  linkedBookIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Book' }],
 });
 
 bookSchema.index({ arxivId: 1 });
