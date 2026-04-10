@@ -33,6 +33,7 @@ const Edge = require('../models/Edge');
 const Span = require('../models/Span');
 const Chunk = require('../models/Chunk');
 const Book = require('../models/Book');
+const { expandTags } = require('./taxonomyService');
 
 // ─── Bibliography-line detection ────────────────────────────────
 //
@@ -160,6 +161,12 @@ function relationshipFromRole(role) {
 function tagTextMatchScore(sourceTags, targetText) {
   if (!sourceTags || !sourceTags.length || !targetText) return 0;
   const lowerText = targetText.toLowerCase();
+  // Pre-tokenize the chunk text once. We do prefix matching against
+  // these tokens so that "zeros" in a tag matches "zeroes" in text
+  // (American vs British spelling — the LLM sometimes spells one
+  // way in tags and the other way in source text), and so that
+  // "factorization" matches "factorizations" / "factorising" etc.
+  const textWords = lowerText.split(/[^a-z0-9]+/).filter(Boolean);
   let matches = 0;
   for (const rawTag of sourceTags) {
     if (!rawTag) continue;
@@ -168,16 +175,24 @@ function tagTextMatchScore(sourceTags, targetText) {
       matches += 1;
       continue;
     }
-    // Token-by-token: require every length-4+ token to appear (in
-    // any order, anywhere in the text). 0.5 partial credit because
-    // it's a weaker signal than the literal phrase.
+    // Token-by-token: require every length-4+ token to be a prefix
+    // of some word in the text (in any order). Full credit, not
+    // half — prefix matching is robust enough to be the primary
+    // signal when substring fails (the only reason substring
+    // fails is plural/spelling variants like zeros↔zeroes which
+    // are NOT semantically weaker matches).
     const tokens = phrase.split(/\s+/).filter(t => t.length >= 4);
     if (tokens.length === 0) continue;
     let allPresent = true;
     for (const t of tokens) {
-      if (!lowerText.includes(t)) { allPresent = false; break; }
+      const prefix = t.slice(0, 4);
+      let found = false;
+      for (const w of textWords) {
+        if (w.startsWith(prefix)) { found = true; break; }
+      }
+      if (!found) { allPresent = false; break; }
     }
-    if (allPresent) matches += 0.5;
+    if (allPresent) matches += 1;
   }
   return matches;
 }
@@ -246,6 +261,13 @@ async function findBestTargetChunk(targetBookId, citingSpan) {
 
   const sourceTags = new Set((citingSpan.contextTags || []).map(t => t.toLowerCase()));
   if (sourceTags.size === 0) return null;
+  // Concept-normalized version of the source tags. The resolver
+  // counts overlap on the canonical concept space, not the raw
+  // string space, so synonymous tags from different LLM passes
+  // (e.g. "amplitude_zeros" vs "tr_phi3_zeros" vs "hidden_zeros")
+  // are treated as a match. See services/taxonomyService.js for
+  // the concept catalog.
+  const sourceConcepts = expandTags(citingSpan.contextTags || []);
 
   let best = null;
   for (const c of chunks) {
@@ -253,8 +275,14 @@ async function findBestTargetChunk(targetBookId, citingSpan) {
     // targets. See isBibliographyChunk for the heuristic.
     if (isBibliographyChunk(c)) continue;
     const targetTags = new Set((c.contextTags || []).map(t => t.toLowerCase()));
+    // Overlap is now computed in concept space. Counts how many
+    // canonical concepts the citing span and the candidate chunk
+    // share. Backfills with the raw exact-string overlap as a
+    // floor when the concept layer happens to add nothing — the
+    // concept layer is strictly additive.
+    const targetConcepts = expandTags(c.contextTags || []);
     let overlap = 0;
-    for (const t of sourceTags) if (targetTags.has(t)) overlap++;
+    for (const t of sourceConcepts) if (targetConcepts.has(t)) overlap++;
 
     // Compute text-keyword signal even when tag overlap is zero —
     // chunks where the citing span's tags appear AS PHRASES in the
@@ -291,14 +319,21 @@ async function findBestTargetChunk(targetBookId, citingSpan) {
     if (stype === 'definition' || stype === 'theorem' || stype === 'lemma' || stype === 'proposition') typeBoost = 0.15;
     else if (stype === 'proof' || stype === 'corollary') typeBoost = 0.10;
 
-    // Tag-richness tiebreaker (small)
-    const richnessBonus = Math.min(0.05, 0.01 * targetTags.size);
+    // Tag-richness tiebreaker REMOVED. It used to add up to 0.05
+    // for 5+ tags on a chunk, which sounds tiny but turned out to
+    // beat the order tiebreaker (capped at 0.001) and cause Outlook
+    // chunks with one accidental matching tag to outrank correct
+    // body chunks with the same overlap. The right tiebreak for
+    // ties is "earlier chunk wins" (chunks closer to a definition),
+    // not "more tags wins" (which favors tag-stuffed Outlook
+    // sections that touch every concept once).
+    const richnessBonus = 0;
 
     // Earlier-chunk-index tiebreaker — capped tightly so it never
     // crosses overlap, page boost, or type boost. Earlier chunks
-    // win ties between adjacent chunks on the same page; nothing
-    // more.
-    const orderBonus = Math.max(0, 0.001 - 0.000001 * (c.chunkIndex || 0));
+    // win ties between adjacent chunks on the same page or across
+    // pages with the same body boost.
+    const orderBonus = Math.max(0, 0.01 - 0.00001 * (c.chunkIndex || 0));
 
     // textMatchRaw was computed earlier for the floor-check.
     // Capped at +1.5 so a chunk with great text recall beats a
