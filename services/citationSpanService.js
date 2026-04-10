@@ -129,15 +129,19 @@ async function ensureCitationSpansForBook(bookId) {
 
     const newSpanIds = [];
 
+    // Group keys by the sentence they appear in. ONE synthetic span
+    // per sentence — not one per citation key. If a sentence cites
+    // [15], [22], and [23], we want a single span tagged with all
+    // three references, not three duplicate spans with the same
+    // text. Otherwise the edge resolver iterates each duplicate
+    // and creates multiple identical edges to the same target.
+    const sentenceToKeys = new Map();
     for (const key of keys) {
+      // Skip if any existing span already covers this key — handle
+      // promotion below.
       const marker = '[' + key + ']';
-      // Find existing spans whose text contains this marker.
       const matching = existingSpans.filter(s => s.spanText && s.spanText.includes(marker));
       if (matching.length > 0) {
-        // Promote any matching span to role=citation, searchClass=S
-        // if it isn't already. Only one needs the upgrade — the
-        // resolver iterates by chunk so a single tagged span is
-        // enough to cover the citation.
         const target = matching.find(s => s.role !== 'citation') || matching[0];
         const update = {};
         if (target.role !== 'citation') update.role = 'citation';
@@ -151,10 +155,22 @@ async function ensureCitationSpansForBook(bookId) {
         existing++;
         continue;
       }
-
-      // No existing span covers this citation. Create a synthetic one.
+      // Find the sentence in the chunk text that contains this key.
       const sentence = findCitationSentence(chunk.sourceText, key);
       if (!sentence) continue;
+      // Group by sentenceIndex so we create one span per unique
+      // sentence regardless of how many keys it contains.
+      const k = sentence.sentenceIndex;
+      if (!sentenceToKeys.has(k)) {
+        sentenceToKeys.set(k, { sentence, keys: [] });
+      }
+      sentenceToKeys.get(k).keys.push(key);
+    }
+
+    // Create one synthetic span per grouped sentence.
+    for (const [, { sentence, keys: sKeys }] of sentenceToKeys) {
+      const tags = sKeys.map(k => 'citation_to_ref_' + k);
+      tags.push('auto_citation_span');
       const newSpan = await Span.create({
         bookId,
         pageNumber: chunk.pageNumber,
@@ -164,7 +180,7 @@ async function ensureCitationSpansForBook(bookId) {
         role: 'citation',
         searchClass: 'S',
         searchConfidence: null,
-        contextTags: ['citation_to_ref_' + key, 'auto_citation_span'],
+        contextTags: tags,
         declarativeTags: [],
         regexFlags: ['synthetic_citation_span'],
         spanText: sentence.text,

@@ -46,11 +46,29 @@ const Book = require('../models/Book');
 // "X exists in the library" assertion, which carries no semantic
 // signal about what the citing author wanted to say.
 //
-// Heuristic: text starts with "[N]" followed by an author initial
-// pattern like "H. Elvang" or "N. Arkani-Hamed".
+// Heuristics:
+//   - "[N] H. Elvang"-style author initial pattern (canonical bib entry)
+//   - Starts with an email address (front-matter contact line that
+//     somehow got tagged as a citation)
+//   - Starts with "→" or "•" (footer/marker artifact)
+//   - Contains an email address AND fewer than ~15 words of prose
+//     (these are author-list spans, not content)
 function isBibliographyLine(spanText) {
   if (!spanText) return false;
-  return /^\s*\[\d+\]\s+[A-Z]\.\s*[A-Z\-]/.test(spanText);
+  const trimmed = spanText.trim();
+  // Very short spans that begin with "[N]" — typically truncated bib
+  // entry fragments like "[8] N." that don't carry enough text to
+  // be a real citing sentence. A real citing sentence starts with
+  // "[N]" only if the text is 25+ chars (which the regex below
+  // would catch on the prefix anyway).
+  if (trimmed.length < 30 && /^\s*\[\d+\]/.test(trimmed)) return true;
+  if (/^\s*\[\d+\]\s+[A-Z]\.\s*[A-Z\-]/.test(trimmed)) return true;
+  if (/^\s*[→•]/.test(trimmed)) return true;
+  if (/^\s*[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/.test(trimmed)) return true;
+  // Email address inside a short span = author contact list
+  const wordCount = trimmed.split(/\s+/).length;
+  if (/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/.test(trimmed) && wordCount < 18) return true;
+  return false;
 }
 
 // ─── Citation key extraction ────────────────────────────────────
@@ -119,40 +137,82 @@ function relationshipFromRole(role) {
   }
 }
 
+// ─── Tag-as-keyword text match ──────────────────────────────────
+//
+// Lexical tag overlap is necessary but not sufficient: the citing
+// span and the target chunk often discuss the same concept but
+// only one of them has it as an explicit context tag. To recover
+// the missing matches we treat the citing span's tags as KEYWORDS
+// and search for them as substrings (or as token-wise conjunctions)
+// in the target chunk's source text.
+//
+// Example: citing span tagged `hidden_zeros, splitting` and target
+// chunk has only generic tags like `feynman_diagrams,
+// amplitude_zeros` BUT its text contains "zeros and factorizations"
+// and "Tr(φ³) tree amplitudes". The tag-overlap signal is 0 but
+// the text-match signal sees "zeros" and "amplitudes" and gives
+// the chunk a positive score.
+//
+// Returns a float — the number of tag-keywords from the citing
+// span that hit the target chunk's text. Whole-phrase match is +1,
+// token-conjunction match (all tokens of the tag appear separately)
+// is +0.5.
+function tagTextMatchScore(sourceTags, targetText) {
+  if (!sourceTags || !sourceTags.length || !targetText) return 0;
+  const lowerText = targetText.toLowerCase();
+  let matches = 0;
+  for (const rawTag of sourceTags) {
+    if (!rawTag) continue;
+    const phrase = String(rawTag).replace(/_/g, ' ').toLowerCase();
+    if (lowerText.includes(phrase)) {
+      matches += 1;
+      continue;
+    }
+    // Token-by-token: require every length-4+ token to appear (in
+    // any order, anywhere in the text). 0.5 partial credit because
+    // it's a weaker signal than the literal phrase.
+    const tokens = phrase.split(/\s+/).filter(t => t.length >= 4);
+    if (tokens.length === 0) continue;
+    let allPresent = true;
+    for (const t of tokens) {
+      if (!lowerText.includes(t)) { allPresent = false; break; }
+    }
+    if (allPresent) matches += 0.5;
+  }
+  return matches;
+}
+
 // ─── Target chunk discovery ─────────────────────────────────────
 //
 // Given a citing span and the target Book, find the chunk in the
 // target book that is most likely to contain the cited content.
 //
-// Strategy v1 (no LLM, no embeddings):
-//   Primary signal:    raw count of context-tag overlap between
-//                      the citing span's contextTags and each
-//                      candidate chunk's contextTags.
-//   Abstract penalty:  chunks on page 1 take a -0.4 score penalty
-//                      and chunks on page 2 take -0.2. Rationale:
-//                      paper abstracts have the broadest tag set
-//                      (they summarize the whole paper) so they
-//                      naturally win every overlap contest. But
-//                      when somebody cites "the discovery of X
-//                      in [N]", the right target is the section
-//                      where X is defined and proven, not the
-//                      abstract that merely lists it. The penalty
-//                      pushes deeper-content chunks above the
-//                      abstract when overlap is comparable. The
-//                      penalty is small enough that an abstract
-//                      with overlap=2 still beats a deeper chunk
-//                      with overlap=1 (1.6 vs 1.x) but loses to
-//                      a deeper chunk with overlap=2 (1.6 vs 2.x).
-//   Definition boost:  chunks with structuralType definition,
-//                      theorem, or proof get a small +0.1 bump
-//                      because they're inherently citable
-//                      content.
-//   Tiebreakers:       larger target tag set, then earlier
-//                      chunkIndex within the same page-tier.
-//   Minimum overlap:   1. Returns null if no chunk shares any
-//                      tag with the citing span — better to emit
-//                      zero edges than to point at the wrong
-//                      chunk.
+// Strategy v2 (no LLM, no embeddings):
+//   Primary signals (additive):
+//     1. Tag overlap   — raw count of context-tag overlap between
+//                        the citing span's contextTags and each
+//                        candidate chunk's contextTags
+//     2. Text match    — how many of the citing span's tags appear
+//                        as phrases (or all-tokens-present) in the
+//                        candidate chunk's source text. Recovers
+//                        cases where the chunk discusses the
+//                        concept but doesn't carry an explicit
+//                        tag for it. Scored 0.4 per match, capped
+//                        at +1.5.
+//   Bonuses:
+//     - Body boost     — pages 2/3/4+ get +0.05/+0.10/+0.15.
+//                        Page 1 (abstract) gets 0 — neutral, not
+//                        penalized. Per user guidance: abstracts
+//                        should remain honest fallbacks.
+//     - Type boost     — definition/theorem/lemma/proposition get
+//                        +0.15, proof/corollary +0.10. Citation
+//                        targets are usually formal results.
+//     - Richness       — small bonus (≤0.05) for chunks with more
+//                        total tags (richer target = more useful).
+//     - Order          — tight tiebreaker (≤0.001) preferring
+//                        earlier chunks.
+//   Floor: at least one of (tag overlap, text match) must be > 0.
+//   Returns null if no chunk shares anything with the citing span.
 
 async function findBestTargetChunk(targetBookId, citingSpan) {
   const chunks = await Chunk.find({ bookId: targetBookId })
@@ -166,28 +226,35 @@ async function findBestTargetChunk(targetBookId, citingSpan) {
   let best = null;
   for (const c of chunks) {
     const targetTags = new Set((c.contextTags || []).map(t => t.toLowerCase()));
-    if (targetTags.size === 0) continue;
     let overlap = 0;
     for (const t of sourceTags) if (targetTags.has(t)) overlap++;
-    if (overlap === 0) continue;
 
-    // Page-depth penalty: page 1 is the abstract / front matter
-    // (heavy summary, not the actual content being cited). Page 2
-    // is usually still introduction. Pages >= 3 are body content.
-    //
-    // Penalty is intentionally GENTLE — abstracts should still be
-    // valid fallback targets when no deeper chunk has any overlap.
-    // The user's guidance: "something is better than nothing if no
-    // book gives a match and the relation is given an honest 50%
-    // or lower confidence." With penalty -0.15 the abstract still
-    // beats nothing (overlap=1 - 0.15 = 0.85, which clears the
-    // "must have at least one overlap" floor). A deeper chunk with
-    // the SAME overlap=1 still wins (1.0 vs 0.85). And an abstract
-    // with overlap=2 still beats a deeper chunk with overlap=1
-    // (1.85 vs 1.0) — which is correct, overlap=2 is real signal.
-    let pagePenalty = 0;
-    if (c.pageNumber === 1) pagePenalty = -0.15;
-    else if (c.pageNumber === 2) pagePenalty = -0.07;
+    // Compute text-keyword signal even when tag overlap is zero —
+    // chunks where the citing span's tags appear AS PHRASES in the
+    // chunk text are real candidates even without explicit tag
+    // matching. This is the fix for chunks like Section 3.1 of
+    // Book 2 which discusses "zeros and factorizations" without
+    // having `hidden_zeros` as an explicit tag.
+    const textMatchRaw = tagTextMatchScore(citingSpan.contextTags, c.sourceText);
+
+    // Floor: must have either tag overlap OR text match. Otherwise
+    // the chunk shares nothing with the citing span and shouldn't
+    // be a candidate.
+    if (overlap === 0 && textMatchRaw === 0) continue;
+
+    // Page-depth scoring: NEVER penalize. Body content gets a
+    // small POSITIVE boost. Abstracts are neutral so they remain
+    // honest fallbacks when nothing else matches. Per user
+    // guidance on 2026-04-11: "abstract should be the fallback,
+    // not penalized out of contention. A better model: abstracts
+    // get zero bonus, body sections get a small positive boost.
+    // Something beats nothing, and if an abstract is the only
+    // match at 50% confidence, that's honest and useful."
+    let pageBoost = 0;
+    if (c.pageNumber === 1) pageBoost = 0;
+    else if (c.pageNumber === 2) pageBoost = 0.05;
+    else if (c.pageNumber === 3) pageBoost = 0.10;
+    else pageBoost = 0.15;
 
     // Structural-type boost: definitions, theorems, and proofs are
     // the canonical citation targets. Bump them slightly so they
@@ -201,24 +268,36 @@ async function findBestTargetChunk(targetBookId, citingSpan) {
     const richnessBonus = Math.min(0.05, 0.01 * targetTags.size);
 
     // Earlier-chunk-index tiebreaker — capped tightly so it never
-    // crosses overlap, page penalty, or type boost. Earlier chunks
+    // crosses overlap, page boost, or type boost. Earlier chunks
     // win ties between adjacent chunks on the same page; nothing
     // more.
     const orderBonus = Math.max(0, 0.001 - 0.000001 * (c.chunkIndex || 0));
 
-    const score = overlap + pagePenalty + typeBoost + richnessBonus + orderBonus;
+    // textMatchRaw was computed earlier for the floor-check.
+    // Capped at +1.5 so a chunk with great text recall beats a
+    // chunk with marginally higher tag overlap but no text match.
+    const textBonus = Math.min(1.5, 0.4 * textMatchRaw);
+
+    const score = overlap + pageBoost + typeBoost + richnessBonus + orderBonus + textBonus;
 
     if (!best || score > best.score) {
       best = {
         chunk: c,
         score,
         overlap,
-        scoreDetail: `ovl=${overlap} p=${c.pageNumber} type=${stype} tags=${targetTags.size} score=${score.toFixed(3)}`,
+        scoreDetail: `ovl=${overlap} p=${c.pageNumber} type=${stype} tags=${targetTags.size} txt=${textMatchRaw.toFixed(1)} score=${score.toFixed(3)}`,
       };
     }
   }
 
-  return best; // null if no chunk had any overlap
+  // Minimum score floor: drop edges where the best candidate has
+  // a score below 1.0. A score of 1.0 means roughly "one tag
+  // overlap, no text match, no boosts" — the bare minimum to be
+  // a meaningful match. Below that we're in pure fallback territory
+  // where the chunk shares essentially nothing with the citing
+  // span and any edge would be misleading.
+  if (best && best.score < 1.0) return null;
+  return best;
 }
 
 // ─── Confidence mapping ─────────────────────────────────────────

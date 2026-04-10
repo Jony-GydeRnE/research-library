@@ -5,6 +5,70 @@ A rolling knowledge log of the project. **Newest entries at the top.** Read top-
 Maintained by Claude Code (CC) on a ~3-5-response cadence. Bad attempts that got fixed in the same session are not listed — only the final state of each session's work matters. Older sections are trimmed to one-line summaries when their detail is fully superseded; key decisions and target metrics are preserved so future sessions can recall them. Commit messages handle the comprehensive change record.
 
 
+## 2026-04-11 — Edge quality cleanup pass: text-keyword scoring, body boost, author backfill
+
+User went to sleep with two pieces of feedback to act on:
+- Abstract penalty too harsh — make body content positive-boosted instead of penalizing abstracts
+- AI confused authors ("Cao et al." for Rodina paper) — every book needs explicit author metadata
+
+Plus my own audit revealed: chunk #69 (Section 3.1 of Book 2 — the textbook target) has tags `[abhy_associahedron, amplitude_zeros, feynman_diagrams, five_point_amplitude, kinematic_locus]`. **NO `hidden_zeros` tag** even though the section is literally about the zeros of hidden amplitudes. So the resolver couldn't pick it for any Rodina span tagged `hidden_zeros`. Fixing this without re-regenerating Book 2 required adding a new signal: text-keyword matching.
+
+### Changes
+
+**`services/edgeResolverService.js`**
+- **New `tagTextMatchScore(sourceTags, targetText)`** — treats the citing span's tags as keywords and searches for them as phrases (or all-tokens-present) inside the candidate chunk's source text. So a span tagged `hidden_zeros` can find chunks that contain "hidden zeros" or "zeros" + (other tag tokens) in their text, even when the chunk doesn't have `hidden_zeros` as an explicit tag.
+- **Floor changed**: was `if (overlap === 0) continue` — now `if (overlap === 0 && textMatchRaw === 0) continue`. Chunks with tag overlap OR text match are valid candidates.
+- **Page penalty flipped to body boost**: page 1 = 0 (neutral, abstracts remain honest fallbacks), page 2 = +0.05, page 3 = +0.10, pages 4+ = +0.15. Per user note: *"abstracts get zero bonus, body sections get a small positive boost. Something beats nothing."*
+- **Minimum score floor of 1.0**: drops weak `conf=z` fallback edges that sneak through with overlap=0 + tiny text match. Better to emit zero edges than to point at the wrong chunk.
+- **Tightened `isBibliographyLine`**: catches very short spans starting with `[N]` (truncation artifacts like `"[8] N."`), spans starting with `→` or `•`, and spans containing email addresses with low word count.
+
+**`services/citationSpanService.js`**
+- Synthetic citation spans now grouped **by sentence**, not by reference key. A sentence citing `[15], [22], [23]` produces ONE span tagged with all three `citation_to_ref_*` tags, not three duplicate spans with the same text. This eliminates duplicate edges from the same source sentence to the same target.
+
+**`services/claudeService.js` — author handling**
+- `renderBookMetadata` now emits `author=` as an XML attribute on `<book_metadata>` AND a dedicated `Author:` line below it. Both are present so the AI can't miss it.
+- New BASE_PROMPT section `AUTHOR ATTRIBUTION — IMPORTANT` instructing the model to always read the author from the metadata block and never invent or cross-attribute.
+
+**`models/Book.js` author backfill (one-time)**
+All 5 real books now have explicit author fields:
+- Rodina (2406.04234) → "Laurentiu Rodina"
+- Arkani-Hamed/Cao/Dong/Figueiredo/He (2312.16282) → full author tuple
+- Gonzales/Ward (2601.16860) → "Mariana Carrillo Gonzalez, Freddie Ward"
+- Arkani-Hamed/Bai/He/Yan (1711.09102) → full tuple
+- Zhou (Understanding zeros) → "Kang Zhou"
+
+**Note on author confusion in earlier audits:** I had been calling the Zhou paper "Cao" because Cao is an author cited heavily in its bibliography. The actual author is **Kang Zhou**. Past Update.md sections calling it "Cao" are incorrect. Going forward I use "Zhou".
+
+### Verification — 9 high-quality cross-book edges
+
+After all fixes:
+
+| # | Citing span | Target | Confidence |
+|---|---|---|---|
+| 1 | Rodina s14 *"shocking discovery...termed hidden zeros [15]"* | Book2 #362 p50 (Outlook) | j |
+| 2 | Rodina s15 *"in [15] it was conjectured these zeros are sufficient"* | Book2 #362 p50 (Outlook — **correct per Claude's audit**) | j |
+| 3 | ⭐ Rodina s8 *"In [15], it was proposed ordered amplitudes for Tr(φ³)/NLSM/YM vanish"* | **Book2 #69 p11 (Section 3.1)** | j |
+| 4 | G/W *"construction of [9], where it was discovered"* | Book2 #362 p50 (Outlook) | j |
+| 5 | ⭐ G/W *"geometric origin via ABHY associahedron [9]"* | **Book2 #55 p9 (associahedron def)** | j |
+| 6 | G/W *"absence of relevant poles"* | Book2 #263 p39 | j |
+| 7 | Zhou *"amazing property called hidden zeros [8]"* | Book2 #0 p1 (abstract, overlap=2) | f |
+| 8 | Zhou *"hidden zeros found in [8] for Tr(φ³)/NLSM/YM"* | Book2 #0 p1 (abstract) | f |
+| 9 | ⭐ Zhou *"via a simple shift of kinematic variables [8]"* | **Book2 #118 p18 (Adler zero / NLSM)** | j |
+
+**4 textbook wins, 5 acceptable, 0 obvious errors, 0 conf=z fallbacks, 0 bib-line noise.** Cleanest edge set we've had.
+
+The Rodina #69 win specifically required the new text-keyword signal: chunk #69 didn't have `hidden_zeros` as a tag but its source text contains "zeros and factorizations" + "amplitudes" + "Tr(φ³)" — text matching gave it a score of 1.401 which beats the no-overlap chunks.
+
+### Open issues — current core tasks (per Jony's personal note + sleep instructions)
+
+1. **Book 2 chunk #69 still doesn't match every "hidden zeros" Rodina span.** Two of the Rodina edges still hit chunk #362 instead of chunk #69. The fundamental issue is metadata granularity: chunk #69's tags don't include `hidden_zeros` even though that's what the section is about. Fix path: targeted prompt iteration on Book 2 specifically, OR a post-pass that augments chunk tags from chunk text.
+2. **Faster perceived upload.** Current pipeline takes 10-30 min before user can interact. Goal: PDF appears in reader instantly with whatever's available (pdf-parse rawText → vision HTML → spans → chunks → edges) and progressively upgrades in the background. Reader needs a fallback that renders rawText when htmlContent isn't ready. SSE progress endpoint for live page-by-page updates.
+3. **Notes ingestion (LaTeX OCR + auto-citation).** User has stylus notes on Rodina ready to test. Vision pipeline → LaTeX → spans → chunks → automatic edges to the cited paper passages. This is the data moat.
+4. **arXiv crawler.** Activated from inside a collection. Reads collection instructions + chats + book metadata, queries arXiv for related papers, judge model ranks them, user approves top N (capped) for ingestion. Each ingested paper auto-resolves any pending bib stubs that match its arxivId.
+5. **Granularity prompt sweep.** Multi-tier prompt system (short / medium / long / very long) with different re-injection frequencies. User said: *"depends on how long it can go with minimal prompts without hallucinating, ill give examples when i wake up."* Waiting on user input.
+
+---
+
 ## 2026-04-10 Late PM 4 — Metadata + edge quality fixes (ChatGPT + Claude feedback)
 
 ChatGPT audited Rodina pages 1-5 against the actual PDF and found six metadata defects. Claude audited the 7 cross-book edges and found a critical bug + abstract bias + bib-line noise. Both correct. Both addressed.

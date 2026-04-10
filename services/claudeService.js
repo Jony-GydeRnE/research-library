@@ -19,6 +19,9 @@ When answering:
 - Be concise but thorough. Prioritize clarity over verbosity.
 - If you're unsure about something, say so rather than guessing.
 
+AUTHOR ATTRIBUTION — IMPORTANT:
+Every <book_metadata> block has an author= attribute and an "Author:" line. When you mention or summarize a book, ALWAYS use the author from that block. Do NOT invent authors. Do NOT cross-attribute authors from one book to another. The library may contain multiple papers by overlapping author groups (e.g. several Arkani-Hamed papers, several Rodina papers); the author you cite must be the one whose name appears in the metadata block of the book you are referring to.
+
 CITING BOOK PASSAGES — IMPORTANT:
 When you quote or reference a passage from a book in the user's library, you MUST emit the citation using this exact tag format so the UI can render it as a clickable link that opens the reader at the right page with the quote highlighted:
 
@@ -466,9 +469,15 @@ async function getCollectionContext(collectionId) {
  * in page order then chunk order. Compact but complete.
  */
 async function renderBookMetadata(book) {
-  // Escape XML attribute value
+  // Escape XML attribute values
   const safeTitle = String(book.title || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-  let out = `\n\n<book_metadata id="${book._id}" title="${safeTitle}">`;
+  const safeAuthor = String(book.author || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  // Author goes in BOTH the XML attribute AND a dedicated "Author:" line
+  // because the AI was empirically confusing authors across books when
+  // it was missing — e.g. attributing a Rodina paper to "Cao et al."
+  // because Cao is the author of another book in the same library.
+  let out = `\n\n<book_metadata id="${book._id}" title="${safeTitle}"${safeAuthor ? ' author="' + safeAuthor + '"' : ''}>`;
+  if (book.author) out += `\nAuthor: ${book.author}`;
   if (book.summary) out += `\nSummary: ${book.summary}`;
   if (book.keyConcepts?.length) out += `\nKey concepts: ${book.keyConcepts.slice(0, 12).join(', ')}`;
 
