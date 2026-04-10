@@ -11,7 +11,7 @@ exports.listCollections = async (req, res) => {
       if (b.title === 'All Books') return 1;
       return new Date(b.updatedAt) - new Date(a.updatedAt);
     });
-    const allBooks = await Book.find().sort({ uploadedAt: -1 }).lean();
+    const allBooks = await Book.find({ status: { $ne: 'pending-citation' } }).sort({ uploadedAt: -1 }).lean();
 
     if (collections.length === 0) {
       const defaultCol = await Collection.create({
@@ -27,7 +27,7 @@ exports.listCollections = async (req, res) => {
     }
 
     const active = collections[0];
-    const books = await Book.find({ _id: { $in: active.bookIds } }).lean();
+    const books = await Book.find({ _id: { $in: active.bookIds }, status: { $ne: 'pending-citation' } }).lean();
     const orphanChats = await Chat.find({ collectionId: null }).sort({ updatedAt: -1 }).limit(20).lean();
 
     res.render('collections', {
@@ -59,7 +59,7 @@ exports.showCollection = async (req, res) => {
       col.chats = await Chat.find({ collectionId: col._id }).sort({ updatedAt: -1 }).limit(10).lean();
     }
 
-    const books = await Book.find({ _id: { $in: collection.bookIds } }).lean();
+    const books = await Book.find({ _id: { $in: collection.bookIds }, status: { $ne: 'pending-citation' } }).lean();
     collection.chats = await Chat.find({ collectionId: collection._id }).sort({ updatedAt: -1 }).lean();
     const orphanChats = await Chat.find({ collectionId: null }).sort({ updatedAt: -1 }).limit(20).lean();
 

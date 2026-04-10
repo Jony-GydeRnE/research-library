@@ -56,13 +56,17 @@ app.get('/files', async (req, res) => {
     let allBooksCol = await Collection.findOne({ title: 'All Books' });
     // Auto-create if somehow missing
     if (!allBooksCol) {
-      const allBooks = await Book.find().sort({ uploadedAt: -1 }).lean();
+      const allBooks = await Book.find({ status: { $ne: 'pending-citation' } }).sort({ uploadedAt: -1 }).lean();
       allBooksCol = await Collection.create({
         title: 'All Books',
         bookIds: allBooks.map(b => b._id),
       });
     }
-    const books = await Book.find({ _id: { $in: allBooksCol.bookIds } }).sort({ uploadedAt: -1 }).lean();
+    // Filter pending-citation stubs out of the user-visible list. Stubs
+    // exist for cross-book citations to papers we don't yet have
+    // uploaded — they're real Book documents but they have no file,
+    // no pages, no chunks, and shouldn't appear in the library view.
+    const books = await Book.find({ _id: { $in: allBooksCol.bookIds }, status: { $ne: 'pending-citation' } }).sort({ uploadedAt: -1 }).lean();
     // Attach note counts per book so the Notes tab can show them
     const counts = await Note.aggregate([
       { $match: { bookId: { $in: allBooksCol.bookIds } } },
@@ -94,7 +98,7 @@ app.get('/files/notes', async (req, res) => {
   try {
     const allBooksCol = await Collection.findOne({ title: 'All Books' });
     const bookIds = allBooksCol ? allBooksCol.bookIds : [];
-    const books = await Book.find({ _id: { $in: bookIds } }).sort({ uploadedAt: -1 }).lean();
+    const books = await Book.find({ _id: { $in: bookIds }, status: { $ne: 'pending-citation' } }).sort({ uploadedAt: -1 }).lean();
     const counts = await Note.aggregate([
       { $match: { bookId: { $in: bookIds } } },
       { $group: { _id: '$bookId', n: { $sum: 1 }, latest: { $max: '$updatedAt' } } },

@@ -466,28 +466,97 @@ async function generateSpansForBook(bookId) {
 
   console.log(`[spanService] Complete: ${pagesProcessed} pages, ${totalSpans} spans, session ${currentSessionId}`);
 
-  // Chain into chunk regeneration. Chunks are derived from spans, so
-  // every span regen must be followed by a chunk regen — otherwise
-  // chunks carry stale aggregated tags from the previous span set
-  // and the whole downstream metadata display (chat listing, edge
-  // graph, embeddings) drifts from reality. Required here instead
-  // of at the controller level so no caller of generateSpansForBook
-  // can accidentally skip it. Loaded lazily to avoid circular
-  // require between spanService and chunkService.
+  // ── POST-PROCESSING CHAIN ──────────────────────────────────────
+  // Each book regen runs a fixed sequence of post-processing
+  // services so the chunks, citation spans, bibliography, edges,
+  // and stub reconciliation are always consistent with the freshly
+  // generated spans. Required here instead of at the controller
+  // level so no caller of generateSpansForBook can accidentally
+  // skip a step. All require()s are lazy to avoid circular imports.
+  //
+  //   1. chunks       — derive chunk units from spans
+  //   2. citationSpans — guarantee every [N] in any chunk has a
+  //                     role=citation, searchClass=S span
+  //   3. bibliography — extract this book's own arxiv/doi, parse
+  //                     its references section, match against the
+  //                     library
+  //   4. reconcile    — if this book was previously a pending stub
+  //                     OR if a stub matches its identifiers,
+  //                     promote/merge so cross-book bib entries
+  //                     resolve to the new real book
+  //   5. edges        — create cross-book Edge documents from
+  //                     S-tagged spans whose bib entries resolve
+  //                     to a real book in the library
+  //
+  // Steps 2–5 are no-ops if the relevant data isn't there, so this
+  // chain is safe to run on any book.
+  const result = {
+    pagesProcessed,
+    spansCreated: totalSpans,
+    sessionId: currentSessionId,
+  };
+
   try {
     const { generateChunksForBook } = require('./chunkService');
     const chunkResult = await generateChunksForBook(bookId);
     console.log(`[spanService] Chunks regenerated: ${chunkResult.chunksCreated}`);
-    return {
-      pagesProcessed,
-      spansCreated: totalSpans,
-      chunksCreated: chunkResult.chunksCreated,
-      sessionId: currentSessionId,
-    };
+    result.chunksCreated = chunkResult.chunksCreated;
   } catch (err) {
     console.error(`[spanService] Chunk regeneration failed: ${err.message}`);
-    return { pagesProcessed, spansCreated: totalSpans, sessionId: currentSessionId, chunkError: err.message };
+    result.chunkError = err.message;
+    return result;
   }
+
+  try {
+    const { ensureCitationSpansForBook } = require('./citationSpanService');
+    const csResult = await ensureCitationSpansForBook(bookId);
+    console.log(`[spanService] Citation spans: ${csResult.syntheticCitationSpans} new, ${csResult.existingCitationSpans} promoted`);
+    result.citationSpansAdded = csResult.syntheticCitationSpans;
+  } catch (err) {
+    console.error(`[spanService] Citation-span pass failed: ${err.message}`);
+    result.citationSpanError = err.message;
+  }
+
+  try {
+    const { processBookBibliography, reconcilePendingStubsForBook } = require('./bibliographyService');
+    const bibResult = await processBookBibliography(bookId);
+    console.log(`[spanService] Bibliography: ${bibResult.bibEntries} entries, ${bibResult.matched} matched`);
+    result.bibEntries = bibResult.bibEntries;
+    result.bibMatched = bibResult.matched;
+
+    const reconcile = await reconcilePendingStubsForBook(bookId);
+    if (reconcile.reconciled) {
+      console.log(`[spanService] Reconciled pending stub ${reconcile.deletedStubId}; ${reconcile.sourceBooksUpdated} source books updated`);
+      result.stubsReconciled = reconcile.reconciled;
+      result.sourceBooksUpdated = reconcile.sourceBooksUpdated;
+      // Re-run the edge resolver on every source book whose bib
+      // entries just got rewritten so the new edges actually exist.
+      try {
+        const { resolveSEdgesForBook } = require('./edgeResolverService');
+        for (const sbId of reconcile.sourceBookIds || []) {
+          const r = await resolveSEdgesForBook(sbId);
+          console.log(`[spanService] Re-resolved ${r.edgesCreated} edges on source book ${sbId}`);
+        }
+      } catch (err) {
+        console.error(`[spanService] Source-book edge re-resolution failed: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    console.error(`[spanService] Bibliography pass failed: ${err.message}`);
+    result.bibError = err.message;
+  }
+
+  try {
+    const { resolveSEdgesForBook } = require('./edgeResolverService');
+    const edgeResult = await resolveSEdgesForBook(bookId);
+    console.log(`[spanService] S-edges: ${edgeResult.edgesCreated} created from ${edgeResult.spansProcessed} S spans`);
+    result.edgesCreated = edgeResult.edgesCreated;
+  } catch (err) {
+    console.error(`[spanService] Edge resolution failed: ${err.message}`);
+    result.edgeError = err.message;
+  }
+
+  return result;
 }
 
 module.exports = {

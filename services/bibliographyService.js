@@ -289,6 +289,70 @@ async function matchBibliographyToLibrary(bookId) {
   return { matched, total: book.bibEntries.length, resolutions };
 }
 
+// ─── Pending-stub reconciliation ────────────────────────────────
+//
+// When a real book is uploaded that matches a pending-citation stub
+// (the stub was created earlier from another book's bib entry that
+// referenced an arXiv/DOI we didn't yet own), this function:
+//   1. Finds the stub by the new book's identifier
+//   2. Walks every other Book in the library and rewrites any
+//      bibEntries[*].resolvedBookId that pointed at the stub so it
+//      now points at the new real book
+//   3. Deletes the stub
+//
+// After reconciliation the caller should re-run the edge resolver
+// for the affected source books — the bib entries now resolve to
+// real chunks, so edges can finally be created.
+//
+// Idempotent: if no stub matches, returns { reconciled: 0 } and
+// makes no changes.
+
+async function reconcilePendingStubsForBook(newBookId) {
+  const newBook = await Book.findById(newBookId).select('arxivId doi').lean();
+  if (!newBook || (!newBook.arxivId && !newBook.doi)) {
+    return { reconciled: 0, sourceBooksUpdated: 0 };
+  }
+
+  // Look for a pending stub with the same arxiv or doi.
+  const stubQuery = { status: 'pending-citation' };
+  if (newBook.arxivId) stubQuery.arxivId = newBook.arxivId;
+  else stubQuery.doi = newBook.doi;
+  const stub = await Book.findOne(stubQuery).lean();
+  if (!stub) return { reconciled: 0, sourceBooksUpdated: 0 };
+
+  // Find every book with a bib entry pointing at the stub.
+  const sourceBooks = await Book.find({ 'bibEntries.resolvedBookId': stub._id })
+    .select('_id title bibEntries')
+    .lean();
+
+  let sourceBooksUpdated = 0;
+  for (const sb of sourceBooks) {
+    let changed = false;
+    const updated = (sb.bibEntries || []).map(e => {
+      if (String(e.resolvedBookId) === String(stub._id)) {
+        changed = true;
+        return { ...e, resolvedBookId: newBookId };
+      }
+      return e;
+    });
+    if (changed) {
+      await Book.findByIdAndUpdate(sb._id, { bibEntries: updated });
+      sourceBooksUpdated++;
+    }
+  }
+
+  // Delete the stub now that no bib entries point at it.
+  await Book.findByIdAndDelete(stub._id);
+
+  console.log(`[bibliographyService] Reconciled stub ${stub._id} → ${newBookId}; ${sourceBooksUpdated} source books updated`);
+  return {
+    reconciled: 1,
+    sourceBooksUpdated,
+    sourceBookIds: sourceBooks.map(sb => sb._id),
+    deletedStubId: stub._id,
+  };
+}
+
 // ─── Top-level orchestration ────────────────────────────────────
 
 /**
@@ -323,4 +387,5 @@ module.exports = {
   extractBibliography,
   matchBibliographyToLibrary,
   processBookBibliography,
+  reconcilePendingStubsForBook,
 };

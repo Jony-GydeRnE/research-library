@@ -327,7 +327,7 @@ async function resolveSEdgesForBook(sourceBookId) {
  * after a fresh bibliography pass.
  */
 async function resolveSEdgesForLibrary() {
-  const books = await Book.find().select('_id title').lean();
+  const books = await Book.find({ status: { $ne: 'pending-citation' } }).select('_id title').lean();
   const summary = [];
   for (const b of books) {
     const r = await resolveSEdgesForBook(b._id);

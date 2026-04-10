@@ -294,7 +294,7 @@ async function buildContext(chat) {
     // first if the budget is tight (notes at priority 4 survive
     // longer, which matches the user expectation that notes are
     // their own writing and most valuable).
-    const libraryBooks = await Book.find()
+    const libraryBooks = await Book.find({ status: { $ne: 'pending-citation' } })
       .select('_id title author summary keyConcepts pageCount')
       .lean();
     for (const b of libraryBooks) {
@@ -676,7 +676,7 @@ async function renderBookNotes(bookId) {
  * the chat isn't anchored to anything narrower.
  */
 async function getLibraryNotes() {
-  const books = await Book.find().select('_id title author').lean();
+  const books = await Book.find({ status: { $ne: 'pending-citation' } }).select('_id title author').lean();
   if (!books.length) return null;
   const bookMap = {};
   books.forEach(b => { bookMap[String(b._id)] = b; });
@@ -742,7 +742,7 @@ async function getLibraryNotes() {
 }
 
 async function getLibraryOverview() {
-  const books = await Book.find().select('title author pageCount keyConcepts').lean();
+  const books = await Book.find({ status: { $ne: 'pending-citation' } }).select('title author pageCount keyConcepts').lean();
   if (books.length === 0) return null;
   const list = books.map(b => {
     let line = `- id=${b._id} "${b.title}"${b.author ? ' (' + b.author + ')' : ''}`;

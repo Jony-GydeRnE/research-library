@@ -10,7 +10,13 @@ const bookSchema = new mongoose.Schema({
   pageCount: Number,
   status: {
     type: String,
-    enum: ['uploading', 'processing', 'ready', 'error'],
+    // 'pending-citation' = stub Book record created from a bib entry
+    //   in another book that referenced an arxivId/DOI we don't yet
+    //   own. Has identifier metadata but no file, no pages, no
+    //   chunks. When the real PDF gets uploaded later, the stub is
+    //   "promoted" to status='processing'/'ready' and any edges
+    //   pointing at the stub auto-resolve to the real chunks.
+    enum: ['uploading', 'processing', 'ready', 'error', 'pending-citation'],
     default: 'uploading'
   },
   processingProgress: { type: Number, default: 0 },
