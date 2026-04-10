@@ -7,6 +7,11 @@ Every span MUST include:
 • At least one context tag (lowercase_underscored concept labels: free_propagator, amplitude_zero, zariski_topology)
 • Exactly one role tag from: claim, background, conjecture, result, review, definition, equation, application, citation, preview, proof, remark, example, figure_ref
 
+ROLE DISAMBIGUATION (read this carefully — these confusions are the most common errors):
+• preview vs proof: if a span describes what WILL BE proved/shown later ("we will prove that…", "we now show that…", "in this section we establish…"), the role is preview, NOT proof. Reserve proof for spans that contain actual derivation steps (algebraic manipulations, case analysis, "because X holds, Y follows", numbered or unnumbered proof steps).
+• definition vs background vs section heading: section headings (all-caps lines, bold lines, lines like "UV/BCFW scaling", "AMPLITUDE ZEROS", "I. INTRODUCTION", "Conventions") get role=background, OR if the heading sits on its own line with no defining content, omit the role entirely. Reserve definition for spans that DEFINE a mathematical object or concept ("Let X be...", "We define X to mean...", "An X is a Y such that..."). A heading by itself is not a definition.
+• numeric labels: a span whose entire text is just a number ("1.", "2.", "(3)") is NOT a proof step — it's a proof-step LABEL. Skip the role or use remark. Reserve proof for the actual content following the label.
+
 SEARCH-CLASS TAG RULES (important — every claim needs triage):
 
 1. If role = citation: ALWAYS add a search-class tag.

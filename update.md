@@ -6,6 +6,85 @@ Maintained by Claude Code on a ~3-response cadence. Bad attempts that got fixed 
 
 ---
 
+## 2026-04-10 Late PM 3 — First cross-book edges + bibliography pipeline
+
+The metadata layer is no longer just metadata — **the first real cross-book edges exist in the database**. 7 edges, all from `lexical` matching of S-tagged citations in Cao and Gonzales/Ward back to Book 2 (Arkani-Hamed). Architecture validated end-to-end with zero LLM calls.
+
+### Pipeline shipped (3 new services + Book schema additions)
+
+**`models/Book.js`** — three new fields:
+- `arxivId` — extracted from front matter, normalized (no version suffix, no `arXiv:` prefix). Indexed.
+- `doi` — same normalization. Indexed.
+- `bibEntries[]` — parsed bibliography per book: `{key, rawText, authors, year, arxivId, doi, resolvedBookId}`. `resolvedBookId` points to the matched Book in the library (null if no match yet).
+
+**`services/bibliographyService.js`** (NEW)
+- `extractBookIdentifiers(bookId)` — scans first 3 pages for arXiv ID and DOI, persists on Book.
+- `extractBibliography(bookId)` — finds the references section by walking pages from the END backwards looking for `[1]` anchor, parses `[N]` entries, normalizes per-entry arXiv/DOI, persists on Book.bibEntries.
+- `matchBibliographyToLibrary(bookId)` — for each bibEntry, matches arXiv-exact → DOI-exact against other books in the library, sets `resolvedBookId`.
+- `processBookBibliography(bookId)` — orchestrates the three above.
+- Critical regex fix during build: bibliography entries CONTAIN `[hep-th]` brackets inside arXiv IDs, so the original `[^\[]+?` parser truncated entries at the first `[`. Replaced with `[\s\S]+?` + lookahead `(?=\[\d+\]|$)` — only NUMERIC `[N]` markers count as entry boundaries.
+- DOI regex now allows `()` characters because JHEP-style DOIs are `10.1007/JHEP03(2025)154`. Trailing punctuation stripped in normalization.
+
+**`services/edgeResolverService.js`** (NEW)
+- `extractCitationKeys(spanText)` — pulls numeric refs from span text. Handles single `[15]`, ranges `[26-31]`, comma-lists `[5,6,8]`.
+- `findBestTargetChunk(targetBookId, citingSpan)` — lexical scoring: raw context-tag overlap is the primary signal, target tag count + earlier chunkIndex are tiebreakers. **Returns null if zero overlap** (no fallback — better to emit zero edges than wrong ones).
+- `relationshipFromRole(role)` — maps citing span's role to Edge.relationshipType. Default `assumes`. proof/result → `extends`, definition → `uses_definition`.
+- `overlapToConfidence(overlap)` — overlap≥4 → `a`, =3 → `c`, =2 → `f`, =1 → `j`.
+- `resolveSEdgesForBook(sourceBookId)` — walks every S-tagged span, extracts citation keys, looks up resolved bib entries, finds best target chunks, creates Edge documents. Clears existing `method='lexical'` edges first so it's idempotent.
+- `resolveSEdgesForLibrary()` — runs the resolver on every book.
+
+### Verification — first 7 cross-book edges in the DB
+
+| From | To | Conf | Citing context |
+|---|---|---|---|
+| **Cao [8] → Book 2 chunk #0 p1** | **f** | **"amazing property of tree level amplitudes called hidden zeros…"** (overlap=2) |
+| Cao [8] → Book 2 chunk #0 p1 | j | "The hidden zeros found in [8] are for Tr(φ³)…" |
+| Cao [8] → Book 2 chunk #2 p2 | j | bibliography reference line |
+| Gonzales/Ward [9] → Book 2 chunk #0 p1 | j | "In this letter, we will focus on the construction of [9]…" |
+| Gonzales/Ward [9] → Book 2 chunk #0 p1 | j | "These zeros also have a geometric origin…" |
+| Gonzales/Ward [9] → Book 2 chunk #2 p2 | j | bibliography reference line |
+| Gonzales/Ward [11] → Book 2 chunk #2 p2 | j | bibliography reference line |
+
+All 7 edges target Book 2 (Arkani-Hamed) because it's the oldest and most-cited paper in the library. The Cao edge with overlap=2 is the canonical "this works" example: Cao asserts hidden zeros were found in [8], the resolver maps [8] to Book 2 by arXiv ID, and the target chunk is literally Book 2's abstract introducing hidden zeros.
+
+### Notable: Rodina cites 35 papers with arXiv IDs but matches NONE
+
+Rodina's `[15]` is `arXiv:2312.12682` (different Arkani-Hamed paper from the same month as Book 2's `2312.16282`) — these are real, distinct papers by the same author group. We don't have `2312.12682` in the library, so it can't resolve. **This is a feature, not a bug**: it's exactly the case where the future crawler would auto-fetch the cited paper from arXiv, ingest it, and back-resolve every pending edge.
+
+Rodina also cites multiple Rodina-authored papers, none of which we have. The asymmetry is just chronology — Book 2 (2023) is the upstream source that everyone else cites; Rodina (2024+) cites things upstream of itself, not the other library books.
+
+### Short-prompt fix (also in this commit)
+
+Two role-disambiguation rules added to `prompts/span-generation-short.txt` and the same to `prompts/span-generation-full.txt`:
+1. **preview vs proof** — "we will prove that…", "we now show…", "in this section we establish…" → `preview`. Reserve `proof` for actual derivation steps.
+2. **definition vs background vs section heading** — "INTRODUCTION", "AMPLITUDE ZEROS", "Conventions" → `background` (or omit role). Reserve `definition` for spans that DEFINE a math object.
+3. **numeric labels** — span text that's just `"1."`, `"2."`, `"(3)"` is NOT a proof step. Skip role or use remark.
+
+Re-regenerated Rodina to verify. Section headings (`INTRODUCTION`, `REVIEW OF AMPLITUDE PROPERTIES`, `YANG-MILLS POLARIZATION STRUCTURES`) are now correctly tagged `background`. "In this Letter we will prove this conjecture..." is now `preview`. A few "we prove" announcements still leak into `proof` but that's a long-tail refinement.
+
+### What's NOT in this commit (next up)
+
+- **AI context integration**: `renderBookMetadata` doesn't yet include edges. Once it does, the chat will be able to list cross-book edges and the AI's existing `[[cite]]` mechanism will naturally render cross-book citations as clickable links. ~30 lines in claudeService.js + a BASE_PROMPT update.
+- **Reader UI for cross-book navigation**: clicking a chat citation that points to a different book should open the split-screen reader on that book at the target chunk. The infrastructure already exists (split-screen reader is shared); we just need the URL to point at the target book.
+- **Bibliography parser improvements**: still doesn't extract `title` for entries (physics-paper bib entries rarely have explicit titles — they go author/journal/year). Author similarity matching as a fallback for entries without arXiv IDs is the next refinement.
+- **Embedding-based candidate ranking**: lexical overlap is good enough to validate the architecture, but the final ranker should use embeddings or a Nano LLM call for fuzzy matches. Per Vision §4.3.
+
+### Step 4 status
+
+| Sub-step | State |
+|---|---|
+| Bibliography extraction | ✅ Working |
+| Library matching (arXiv exact) | ✅ Working — 3 resolved keys across 4 books |
+| S-class edge resolver | ✅ Working — 7 real edges in DB |
+| Edge model populated | ✅ |
+| AI context includes edges | ⏭ Next commit |
+| Reader UI clickable cross-book navigation | ⏭ Next commit |
+| Category I (same-book) resolver | ⏭ |
+| Category B (broad search) resolver | ⏭ |
+| Crawler for unresolved S entries (e.g. Rodina's `2312.12682`) | ⏭ Future |
+
+---
+
 ## 2026-04-10 PM 2 — Quality audit + Step 4 unblocked
 
 Sampled 12 pages (3 per book × 4 books) to check whether the regenerated metadata is **semantically accurate**, not just syntactically present.

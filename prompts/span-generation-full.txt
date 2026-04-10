@@ -20,6 +20,12 @@ Format rules:
     remark      = an aside or observation
     example     = a worked example or concrete instance
     figure_ref  = referencing or describing a figure/diagram
+
+  ROLE DISAMBIGUATION (read carefully — most common errors):
+  • preview vs proof — "we will prove that…", "we now show…", "in this section we establish…" → preview, NOT proof. Reserve proof for actual derivation steps (algebra, case analysis, "because X, Y follows", numbered proof step content).
+  • definition vs background vs section heading — section headings (all-caps, bold, "UV/BCFW scaling", "AMPLITUDE ZEROS", "I. INTRODUCTION", "Conventions") → background, OR omit role if heading is on its own line with no defining content. Reserve definition for spans that DEFINE a math object: "Let X be...", "We define X as...", "An X is a Y such that…". A heading alone is not a definition.
+  • numeric labels — a span whose entire text is just a number ("1.", "2.", "(3)") is NOT a proof step. Skip the role or use remark.
+
 - Declarative tags (letter + chunk.tag): relationships to OTHER content
     p=proves, a=assumes, c=contradicts, e=extends, r=prerequisite
     q=equivalent, s=supports, k=special_case, x=example_of, d=data_for, v=figure_ref
