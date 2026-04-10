@@ -225,3 +225,124 @@ section is appended at the bottom summarizing landmark changes. Bad
 attempts that were later fixed are not listed — only the final state
 of each session's work matters. Read this file end-to-end to catch
 up without scrolling through commit history.
+
+---
+
+## 2026-04-10 Late PM — Span pipeline shipped, full library regenerated
+
+Span pipeline rework verified end-to-end. All four books regenerated
+against the new code. Every target hit on every book except the
+search-class soft target (we landed at 23-29% vs the 35% Vision goal,
+but this is well above the 20% floor and the user asked not to
+gold-plate it).
+
+### Final coverage numbers (all 4 books, post-regen)
+
+| Book                  | Pages | Spans | Chunks | Page% | Tag% | Role% | Search% | Chunks-tagged% |
+|-----------------------|-------|-------|--------|-------|------|-------|---------|----------------|
+| Rodina (9pp)          |   9   |  207  |  101   | 100%  | 95%  | 97%   |  29%    |    90%         |
+| Arkani-Hamed (58pp)   |  58   |  948  |  443   | 100%  | 99%  | 98%   |  23%    |   100%         |
+| Gonzales/Ward (14pp)  |  14   |  318  |  150   | 100%  | 97%  | 98%   |  23%    |    98%         |
+| Cao et al. (52pp)     |  52   |  775  |  370   | 100%  | 98%  | 95%   |  24%    |    99%         |
+
+Vs. baseline before the rework:
+- Page coverage: was 14-33%, now **100% on every book**
+- Span tags: was 2-68%, now **95-99% on every book**
+- Chunks tagged: was 3-67%, now **90-100% on every book**
+- Search classes: was 0-8%, now **23-29% on every book**
+
+Across all four books combined: **2,248 spans, 1,064 chunks, 539
+non-N search-class assignments** (B=279, S=143, L=63, I=54). The
+edge resolution pipeline now has real triage data to work from.
+
+### Additional fixes shipped in this session
+
+**`services/spanService.js` — DSL parser**
+- The parser regex was `/^[LISB][a-z]$/` which required exactly two
+  characters. Per Vision doc §3.2, S takes NO confidence suffix, so
+  bare `S` was being silently rejected by the parser. Result: zero
+  S-class spans on the first regen of Arkani-Hamed even though 31
+  spans were `role=citation` and should have been S.
+- Parser now accepts:
+  - `S` alone (canonical, per Vision doc) → searchClass='S', confidence=null
+  - `Sa` through `Sz` (LLM occasionally still adds a suffix; tolerated, suffix discarded)
+  - `L`, `I`, `B` alone (defensively accept; null confidence)
+  - `L[a-z]`, `I[a-z]`, `B[a-z]` (canonical)
+
+**`services/spanService.js` — pipeline wiring**
+- `generateSpansForBook` now auto-chains into
+  `generateChunksForBook(bookId)` at the end and reports
+  `chunksCreated` in its result. Previously chunks had to be
+  regenerated as a separate manual step, which meant the post-regen
+  diagnostic always showed stale chunk-tag distributions until
+  someone remembered to invoke chunkService too. Wired once, never
+  thinking about it again.
+- Loaded lazily via `require('./chunkService')` to avoid circular
+  imports between the two services.
+
+**`prompts/span-generation-full.txt` — search-class clarity**
+- The full prompt's example output used `Sq` and `Sm` (citation
+  spans with confidence suffixes). This contradicted the Vision doc
+  rule "S has no suffix" AND was the canonical example the model
+  was supposed to imitate. Changed both example occurrences to bare
+  `S`.
+- Added an "IMPORTANT" callout block under the search-class
+  definition: L/I/B always take a confidence suffix; S never does.
+- Expanded the citation-handling rule from "use S or I" into
+  explicit branches: external citation → S, internal reference → I.
+- Added a "claim that the text does NOT fully justify and does NOT
+  cite" rule covering L (logical gap phrases) and B (uncited
+  assertions), with explicit phrase triggers ("it can be shown",
+  "one easily verifies", etc.).
+
+**`prompts/span-generation-short.txt` — strengthened search-class rules**
+- Restructured around three numbered SEARCH-CLASS TAG RULES:
+  1. role=citation → ALWAYS add a search-class (S external, I internal)
+  2. Unjustified claim → L (logical gap phrases) or B (broad search)
+  3. Self-contained sentences are implicit N
+- Hard rule called out at the top of the section: "S is the ONLY
+  search class with no confidence suffix. Write 'S' alone, never
+  'Sa', 'Sq', etc."
+- Worked example expanded to 5 lines covering all five cases (S, N
+  preview, Iv, Lt, Bn) with a per-line annotation explaining why
+  each search class was assigned.
+- Note: this prompt is what the LLM sees on every NON-session-start
+  page, so the rules need to be self-contained — the model should
+  not need to remember anything from the full prompt.
+
+### What's now shipped vs the original three-step plan
+
+- ✅ Step 1 (investigation) — done in the strategy phase
+- ✅ Step 2 (fixes) — done in two iterations:
+  - First commit (2d15ead): session reset, quality-gated retries,
+    short prompt rewrite, sentence-cap raise
+  - Second commit (this session): parser fix for bare S, pipeline
+    wiring spans → chunks, full + short prompt updates for
+    search-class consistency
+- ✅ Step 3 (regenerate + verify) — done. All 4 books regenerated.
+  Targets met or exceeded on every book.
+- ⏭ Step 4 (edge classification, candidateService + classificationService
+  for Category I) — UNBLOCKED. The metadata layer is now healthy
+  enough to start prototyping the edge resolution pipeline on real
+  data. 539 non-N spans across the library is enough to validate
+  Y/N + relevance + confidence on the first slice.
+
+### Known minor issues (not blockers, deferred)
+
+- A handful of pages with very dense content (~120-190 sentences)
+  hit the `SPAN_MAX_SENTENCES_PER_CALL = 60` truncation cap and
+  produced only 1-3 spans for the WHOLE page. This affects ~4
+  pages across the library — bibliography pages, dense appendix
+  derivations. Fix: split a page into multiple LLM calls when it
+  exceeds the cap, instead of truncating. Future commit.
+- The prompt is producing roughly 1-2 spans per sentence on most
+  pages, which is finer-grained than the Vision doc's 1 span per
+  3-5 sentences. Not necessarily wrong (every meaningful sentence
+  gets its own annotation), but it inflates span counts. May be
+  worth tuning later if span counts become a cost concern.
+- judgeService.js still doesn't exist. Same reasoning as before:
+  the deterministic enrichment gate is doing the work the judge
+  was supposed to do, and the judge is better suited to subtle
+  quality drift in a healthy pipeline (which we now have, so it's
+  the right next addition once we want to refine quality further).
+

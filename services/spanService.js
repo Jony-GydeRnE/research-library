@@ -161,10 +161,30 @@ function parseSpanOutput(dslOutput, bookId, pageNumber) {
     for (let i = 1; i < parts.length; i++) {
       const token = parts[i];
 
-      // Search class: single uppercase letter + lowercase confidence
+      // Search class: uppercase letter L/I/S/B, optionally followed
+      // by a lowercase confidence letter a-z. S per Vision doc §3.2
+      // carries NO confidence suffix (the system resolves when the
+      // source is available), so bare "S" is the canonical form for
+      // citations. L, I, B all take a confidence suffix in healthy
+      // output but we accept bare forms defensively — better to
+      // capture a class with null confidence than to silently drop
+      // the tag because the suffix was missing.
+      if (/^S$/.test(token)) {
+        searchClass = 'S';
+        searchConfidence = null;
+        continue;
+      }
+      if (/^[LIB]$/.test(token)) {
+        searchClass = token;
+        searchConfidence = null;
+        continue;
+      }
       if (/^[LISB][a-z]$/.test(token)) {
         searchClass = token[0];
-        searchConfidence = token[1];
+        // S with a suffix is tolerated (Vision says no suffix, but
+        // the LLM sometimes emits Sa/Sq etc.) — discard the suffix
+        // to keep downstream logic clean.
+        searchConfidence = token[0] === 'S' ? null : token[1];
         continue;
       }
 
@@ -445,7 +465,29 @@ async function generateSpansForBook(bookId) {
   }
 
   console.log(`[spanService] Complete: ${pagesProcessed} pages, ${totalSpans} spans, session ${currentSessionId}`);
-  return { pagesProcessed, spansCreated: totalSpans, sessionId: currentSessionId };
+
+  // Chain into chunk regeneration. Chunks are derived from spans, so
+  // every span regen must be followed by a chunk regen — otherwise
+  // chunks carry stale aggregated tags from the previous span set
+  // and the whole downstream metadata display (chat listing, edge
+  // graph, embeddings) drifts from reality. Required here instead
+  // of at the controller level so no caller of generateSpansForBook
+  // can accidentally skip it. Loaded lazily to avoid circular
+  // require between spanService and chunkService.
+  try {
+    const { generateChunksForBook } = require('./chunkService');
+    const chunkResult = await generateChunksForBook(bookId);
+    console.log(`[spanService] Chunks regenerated: ${chunkResult.chunksCreated}`);
+    return {
+      pagesProcessed,
+      spansCreated: totalSpans,
+      chunksCreated: chunkResult.chunksCreated,
+      sessionId: currentSessionId,
+    };
+  } catch (err) {
+    console.error(`[spanService] Chunk regeneration failed: ${err.message}`);
+    return { pagesProcessed, spansCreated: totalSpans, sessionId: currentSessionId, chunkError: err.message };
+  }
 }
 
 module.exports = {

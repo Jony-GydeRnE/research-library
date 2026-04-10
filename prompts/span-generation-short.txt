@@ -6,12 +6,20 @@ Every span MUST include:
 • A sentence range ("1-3" or "5") — 1-indexed within this chunk
 • At least one context tag (lowercase_underscored concept labels: free_propagator, amplitude_zero, zariski_topology)
 • Exactly one role tag from: claim, background, conjecture, result, review, definition, equation, application, citation, preview, proof, remark, example, figure_ref
-• A search-class tag WHEN the span makes a claim the text does not fully justify:
-    L{a-z} = logical gap (needs notes). "it can be shown", "the reader may verify", etc.
-    I{a-z} = internal same-book reference. "see Section 3.2", "by Theorem 4.1".
-    S      = specific external source cited. "[Hart77]", "[26-31]". No confidence suffix.
-    B{a-z} = broad external search needed. Uncited assertion from the literature.
-  Omit the search-class tag for routine self-contained sentences (implicit N).
+
+SEARCH-CLASS TAG RULES (important — every claim needs triage):
+
+1. If role = citation: ALWAYS add a search-class tag.
+   • External source ([15], [26-31], [Hart77], "Theorem 3 of [AM]") → bare S (no suffix!)
+   • Internal reference ("see Section 3.2", "by Theorem 4.1 above") → I{a-z}
+
+2. If the sentence makes a claim the text does NOT fully justify:
+   • "it can be shown", "it is obvious", "the reader may verify", "it follows immediately", "trivially", "one easily checks" → L{a-z} (logical gap)
+   • Any result, identity, or equation asserted without proof AND without citation → B{a-z} (broad external search needed)
+
+3. Only omit the search-class tag for fully self-contained sentences where the claim is proved in the current span or is routine setup/narrative (implicit N).
+
+CRITICAL: S is the ONLY search class with no confidence suffix. Write "S" alone, never "Sa", "Sq", etc. L, I, and B always take a confidence letter (a=~4% confident, z=~100% confident).
 
 Declarative tags (optional, precision over recall): p/a/c/e/r/q/s/k/x/d/v followed by chunk.tag (e.g. p14.3, r7.2). ONLY use when the sentence literally performs that relation — when in doubt, omit.
 
@@ -20,13 +28,22 @@ Example:
 [2] We prove this conjecture for Tr(φ³) in Section 4.
 [3] The proof relies on the hidden zero identity of Theorem 3.2.
 [4] It is obvious from the above that the amplitude admits no alternative form.
+[5] A similar result holds for loop amplitudes.
 
 Output:
-1 hidden_zeros tr_phi3_conjecture citation Sq
+1 hidden_zeros tr_phi3_conjecture citation S
 2 hidden_zeros uniqueness_proof preview
 3 hidden_zero_identity proof r3.2 Iv
 4 amplitude_uniqueness claim Lt
+5 loop_amplitudes result Bn
 
-Note: every span has at least one context tag AND exactly one role. Lines 1, 3, 4 carry search-class tags because they make grounded claims. Line 2 is a self-contained preview (implicit N).
+Note on the above:
+• Line 1: cites external [15] → role=citation + bare S (no suffix!)
+• Line 2: previews something in this paper → implicit N, no search tag
+• Line 3: refers to Theorem 3.2 in the same paper → Iv (internal, ~85% confident)
+• Line 4: "it is obvious" is a logical gap phrase → Lt (~77% confident notes would help)
+• Line 5: unjustified assertion without citation → Bn (broad search, ~50% confident)
+
+Every span has at least one context tag AND exactly one role. Every claim that the text does not fully justify carries a search class.
 
 Now annotate the following text. Output ONLY the DSL lines, one per span. No explanation.
