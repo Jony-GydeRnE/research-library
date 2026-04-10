@@ -324,6 +324,51 @@
         moved++;
       }
 
+      // Pull in display-math siblings and equation-number labels that
+      // follow the matched paragraph. In academic papers, a quote like
+      // "We can write" is immediately followed by \[...\] and "(28)" as
+      // sibling block elements. The callout should include them because
+      // they are part of the same logical statement — without this the
+      // box visibly "stops at LaTeX" right where the display equation
+      // begins. We only move whole elements, so MathJax renderings come
+      // along intact as DOM subtrees.
+      var next = box.nextSibling;
+      while (next) {
+        // Absorb whitespace-only text nodes so they don't become a hard
+        // stop between the paragraph and the equation.
+        if (next.nodeType === 3 && !next.nodeValue.trim()) {
+          var wsNext = next.nextSibling;
+          box.appendChild(next);
+          next = wsNext;
+          continue;
+        }
+        if (next.nodeType !== 1) break;
+        var tag = next.tagName ? next.tagName.toLowerCase() : '';
+        var cls = (typeof next.className === 'string') ? next.className : '';
+        // Display math block — \[...\] rendered by MathJax.
+        if (cls.indexOf('math-display') !== -1) {
+          var mNext = next.nextSibling;
+          box.appendChild(next);
+          next = mNext;
+          continue;
+        }
+        // Equation-number label — a short <p> containing just "(N)" or
+        // "N" or "(N.M)". Papers often float the equation number into
+        // its own paragraph right after the display math.
+        if (tag === 'p') {
+          var tc = (next.textContent || '').trim();
+          if (tc.length > 0 && tc.length < 12 && /^\(?[\d.]+\)?$/.test(tc)) {
+            var eNext = next.nextSibling;
+            box.appendChild(next);
+            next = eNext;
+            continue;
+          }
+        }
+        // Anything else — next real paragraph, heading, figure — is a
+        // hard stop. The callout ends here.
+        break;
+      }
+
       if (!opts || opts.scroll !== false) {
         box.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
