@@ -2,8 +2,95 @@
 
 A rolling knowledge log of the project. **Newest entries at the top.** Read top-to-bottom to catch up on where the project stands without scrolling through commit history.
 
-Maintained by Claude Code on a ~3-response cadence. Bad attempts that got fixed in the same session are not listed — only the final state of each session's work matters. Older sections are trimmed to one-line summaries when their detail is fully superseded; key decisions and target metrics are preserved so future sessions can recall them. Commit messages handle the comprehensive change record.
+Maintained by Claude Code (CC) on a ~3-5-response cadence. Bad attempts that got fixed in the same session are not listed — only the final state of each session's work matters. Older sections are trimmed to one-line summaries when their detail is fully superseded; key decisions and target metrics are preserved so future sessions can recall them. Commit messages handle the comprehensive change record.
 
+
+## 2026-04-10 Late PM 4 — Metadata + edge quality fixes (ChatGPT + Claude feedback)
+
+ChatGPT audited Rodina pages 1-5 against the actual PDF and found six metadata defects. Claude audited the 7 cross-book edges and found a critical bug + abstract bias + bib-line noise. Both correct. Both addressed.
+
+### CRITICAL: vision OCR was mangling arXiv IDs
+
+Direct comparison of pdf-parse output against the live DB rawText (which gets overwritten by vision):
+- Rodina page 8 PDF: `arXiv:2312.16282`, `arXiv:2309.15913`
+- Rodina page 8 in DB: `arXiv:2312.12682`, `arXiv:2309.13539`
+
+Vision (GPT-4o vision) is OCR'ing dense bibliography pages from rendered images and confusing digit shapes (`6`→`1`, `5`→`3`/`9`). **Vision is unreliable for digit-perfect citation matching.**
+
+**Fix:** `bibliographyService.js` now reads `page.rawTextLegacy` (preserved pdf-parse output) instead of `page.rawText` (vision-overwritten) for both bibliography parsing AND front-matter identifier extraction. New `pickBibSource(page)` helper enforces this. The Page schema preserves rawTextLegacy specifically for cases like this — it's now the canonical source for any pipeline that needs digit-perfect text.
+
+**Result:**
+- Rodina now has its own arxivId: `2406.04234`
+- Rodina [15] correctly resolves to Book 2 (arXiv:2312.16282)
+- NEW match: Gonzales/Ward [17] → Rodina (only possible now that Rodina has an arxivId)
+- 5 resolved bib keys library-wide, up from 3
+
+### Edge resolver tuning (Claude's other concerns)
+
+`services/edgeResolverService.js`:
+- **Page-depth penalty** — page 1 −0.15, page 2 −0.07. Gentle per user feedback ("minus 10 points emphasis on abstract is harsh, it shouldn't be negative, and something is better than nothing if no book gives a match"). Abstracts can still win when overlap=2 OR when no deeper chunk has any overlap; they're deprioritized, not excluded.
+- **Structural-type boost** — definitions/theorems/lemmas/propositions get +0.15, proofs/corollaries +0.10. Citation targets are usually formal results.
+- **Order-bonus arithmetic bug fixed** — was `0.0001 * (10000 - chunkIndex)` which gave chunk #0 a +1.0 boost (a primary signal). Now `0.001 - 0.000001 * chunkIndex` (max 0.001, pure tiebreaker).
+- **Bibliography-line filter** — spans whose text starts with `[N] H. Author` pattern are skipped. Removed 3 noise edges that were just bib entries pointing back to "this paper exists."
+
+### Metadata prompt rules (ChatGPT's concerns)
+
+`prompts/span-generation-short.txt` and `span-generation-full.txt` both gained a "CONTEXT TAG QUALITY RULES" section:
+1. **SPECIFICITY** — tag each span with what THAT SENTENCE is about, not the broad section topic. Avoid the same broad tag on every span.
+2. **NORMALIZATION** — pick one canonical name per concept; don't write `uv_scaling`, `enhanced_uv_scaling`, and `uv_bcfw_scaling` for the same idea.
+3. **SEARCH-CLASS PRECISION** — L only when the text uses a hand-wave phrase AND does NOT subsequently prove it. B only when the assertion is NOT proved here AND NOT cited.
+
+Re-regenerated all 4 books with the new rules. Direct verification on Rodina:
+- Page 1 span 14 `"In this Letter we will prove this conjecture..."` → role=preview ✅ (was proof)
+- Page 5 span 10 `"1."` → role=remark, tags=[proof_step_label] ✅ (was proof)
+- Page 3 spans now split into 3 semantic groups (`zeros_vs_bcfw_shifts`, `kinematic_data`, `zero_condition`) instead of every span being tagged `zeros_bcfw_equivalence`
+- Page 5 spans 7-9 (bare claim assertions) tagged `N` instead of `Bm` because the next page proves them — search-class precision rule respected
+
+### Final coverage numbers (post-regen)
+
+| Book | Pages | Spans | Chunks | Tag% | Role% | Search% |
+|---|---|---|---|---|---|---|
+| Rodina (9pp) | 9/9 | 218 | 90 | 100% | 96% | 11% |
+| Arkani-Hamed (58pp) | 58/58 | 1057 | 418 | 98% | 97% | 9% |
+| Gonzales/Ward (14pp) | 14/14 | 469 | 241 | 83% | 99% | 27% |
+| Cao (52pp) | 52/52 | 940 | 384 | 96% | 97% | 11% |
+
+Search class % dropped slightly (was 23-29%, now 9-27%) — that's the new search-class precision rule kicking in. Fewer false-positive L/B tags is the goal, not a higher %.
+
+### Final edge resolution: 9 cross-book edges, 3 textbook wins
+
+| # | Edge | Quality |
+|---|---|---|
+| ⭐ | **Rodina p2 [15] → Book 2 chunk #69 p11** (Section 3.1: "Zeros and Factorizations of Tr(φ³) Tree Amplitudes – two simple examples") | PERFECT — exactly the section where the cited content is defined and proved |
+| ⭐ | **G/W p2 [9] → Book 2 chunk #55 p9** (associahedron definition) | EXCELLENT — "geometric origin via ABHY associahedron" → chunk tagged `associahedron_definition, abhy_associahedron` |
+| ⭐ | **Cao p43 [8] → Book 2 chunk #118 p18** (Adler zero / NLSM) | GOOD — "via a simple shift of kinematic variables [8]" → chunk on `adler_zero_soft_limits, nlsm_amplitudes` |
+| × 4 | spans about "the discovery" → chunk #362 p50 (Book 2 future-work section) | acceptable, limited by Book 2's chunk-tag granularity |
+| × 2 | Cao spans → chunk #0 p1 (abstract) with overlap=2, conf=f | acceptable for general references |
+
+**Library totals:** 2,684 spans, 1,133 chunks, 9 cross-book Edge documents (all `method='lexical'`, all `resolved=true`).
+
+### Next up
+
+- AI context integration: `renderBookMetadata` includes edges so the chat can naturally cite them via `[[cite]]` (~30 lines)
+- Reader UI clickable cross-book navigation
+- Granularity re-pass on Book 2 chunk tags to tighten the imperfect edges
+- (Per user's note below) notes ingestion via LaTeX OCR + arXiv crawler
+
+---
+
+JONY/THE USER MAKING THIS APP PERSONAL NOTE TO CC:
+
+its 3am not pm.  super late.  damn, 3:56am lol.  Jony committing a personal note for future developments coming up:
+
+two biggest issues right now: quality of the metadata span tags, and the quality of the edges.  Maybe minus 10 points emphasis on abstract is harsh, it shouldn't be negative, and something is better than nothing if no book gives a match and the relation is given an honest 50% or lower confidence.  Then we can point to an abstract that sounds related but that is an exception.
+
+Now once we have those 2 things fixed, then we get a cooler possibility to open right away: 
+
+1. I have amazing notes explaining every background and simple computations for so many steps for Rodina's hidden zero paper. They are written with a stylus and converted to PDF. I uploaded my notes to the research-library repository/folder.  Goal: app needs to process notes at upload and convert the paper into latex code, need an LLM call or some other tool. Open for ideas. But this is important. People will alwys take pictures of their notes. We must get the images and turn it into readable latex that we can annotize with spans and chunks, and the system must *autoatically* know where to to "highlight" in Rodinas page.  In other words this "highlight" is a system-generated citation pointing to my notes. The system must intelligently read, and understand the paper and notes and accurately match the parts in the notes with the parts in the paper that it supports.  We do that 100%, we are GOLD.
+
+2.  After that beast of a task, we must build the crawler.  I want to scrape arXiv for more papers by Rodina and Arkani Hamid and that world.  Lets hone in and specialize in their work and find up to date hot research along with pedagoical supporting material that helps mid-tier grad students understand each step.  We must create the chunks for the papers we scrape that are relevant to our current discussions.  One way to do this is to allow me, as a user, to activate scraping from inside a collection.  If I can do that and the scraper can see the files in the collection, it can read other chats (oh yeah, chats should be able to read other chats within their scope like Claude and chats that are not in any collection should have access to read any chat whatever), and read instructions in the collection, and then go and look for supporting material and create a ranked list that we must be able to click a button to see.  Maybe in the right side of UI while in a collection, where users can find the chats listed, the button clicked can show us a list of papers we might want to scrape.  before the scraper shows its ranking, we have a Judge model of high quality make sure the ranking is good by checking and giving a certified percentage of confidence from 1 through 26: z = 100%.  and as a user, I can click on multiple at a time and approve it and scrape them, or scrape the top 20 at once. we need a cap to how many.  
+
+# end my  personal log. please review this CLaude Code.  Trust this is the next step once we get metadata and edges to 95%+ quality and usefulness.
 ---
 
 ## 2026-04-10 Late PM 3 — First cross-book edges + bibliography pipeline

@@ -38,6 +38,19 @@ Format rules:
     rule about search-class tags: write "S" alone, never "Sa", "Sq", etc.
 
 ═══════════════════════════════════════════════════════════════════
+CONTEXT TAG QUALITY RULES (most common metadata defects):
+═══════════════════════════════════════════════════════════════════
+
+- SPECIFICITY: tag each span with what THAT SENTENCE is actually about, not the broad topic of the surrounding section. If the section is "BCFW recursion" but a sentence defines a complex shift parameter, tag it `bcfw_complex_parameter`, NOT `bcfw_recursion`. Avoid putting the same broad tag on every span in a chunk — distinct sentences should have distinct tags. Tags drive the edge graph, and every distinct concept needs its own anchor.
+
+- NORMALIZATION: pick one canonical name per concept. Do not write `uv_scaling` on one span and `enhanced_uv_scaling` and `uv_bcfw_scaling` on others when they all refer to the same concept. Pick the shortest reasonable form (`uv_scaling`) unless the distinction is essential. Same for `hidden_zeros` vs `amplitude_zeros` vs `zero_condition` — choose one canonical form per paper.
+
+- SEARCH-CLASS PRECISION:
+    L (logical gap): the text uses a hand-wave phrase ("it can be shown", "the reader may verify", "trivially") AND does NOT subsequently prove it in the same chunk or section. If the proof appears later in the same passage, do NOT tag L.
+    B (broad external search): the sentence makes a substantive claim that is NOT proved here AND does NOT cite a source. If the surrounding text justifies the claim, do NOT tag B.
+    These are triage signals for the edge resolution pipeline. Mis-tagging wastes downstream search budget. Only tag L or B when the gap is genuinely there.
+
+═══════════════════════════════════════════════════════════════════
 CRITICAL RULES FOR DECLARATIVE TAGS — PRECISION OVER RECALL:
 ═══════════════════════════════════════════════════════════════════
 

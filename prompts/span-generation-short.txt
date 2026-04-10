@@ -7,6 +7,17 @@ Every span MUST include:
 • At least one context tag (lowercase_underscored concept labels: free_propagator, amplitude_zero, zariski_topology)
 • Exactly one role tag from: claim, background, conjecture, result, review, definition, equation, application, citation, preview, proof, remark, example, figure_ref
 
+CONTEXT TAG QUALITY RULES (read carefully — these are the most common metadata defects):
+
+1. SPECIFICITY: tag each span with what THAT SENTENCE is actually about, not the broad topic of the surrounding section. If the section is about "BCFW recursion" but a sentence defines a complex shift parameter, tag it `bcfw_complex_parameter`, NOT `bcfw_recursion`. Avoid putting the same broad tag on every span in a chunk — distinct sentences should have distinct tags. Tags drive the edge graph, and every distinct concept needs its own anchor.
+
+2. NORMALIZATION: pick one canonical name per concept. Do not write `uv_scaling` on one span and `enhanced_uv_scaling` and `uv_bcfw_scaling` on others when they all refer to the same concept. Pick the shortest reasonable form (`uv_scaling`) unless the distinction is essential. Same for `hidden_zeros` vs `amplitude_zeros` vs `zero_condition` — choose one.
+
+3. SEARCH-CLASS PRECISION:
+   - L (logical gap): the text uses a hand-wave phrase ("it can be shown", "the reader may verify", "trivially") AND does NOT subsequently prove it in the same chunk or section. If the proof appears later in the same passage, do NOT tag L.
+   - B (broad external search): the sentence makes a substantive claim that is NOT proved here AND does NOT cite a source. If the surrounding text justifies the claim, do NOT tag B.
+   - These are triage signals for the edge resolution pipeline. Mis-tagging wastes downstream search budget. Only tag L or B when the gap is genuinely there.
+
 ROLE DISAMBIGUATION (read this carefully — these confusions are the most common errors):
 • preview vs proof: if a span describes what WILL BE proved/shown later ("we will prove that…", "we now show that…", "in this section we establish…"), the role is preview, NOT proof. Reserve proof for spans that contain actual derivation steps (algebraic manipulations, case analysis, "because X holds, Y follows", numbered or unnumbered proof steps).
 • definition vs background vs section heading: section headings (all-caps lines, bold lines, lines like "UV/BCFW scaling", "AMPLITUDE ZEROS", "I. INTRODUCTION", "Conventions") get role=background, OR if the heading sits on its own line with no defining content, omit the role entirely. Reserve definition for spans that DEFINE a mathematical object or concept ("Let X be...", "We define X to mean...", "An X is a Y such that..."). A heading by itself is not a definition.

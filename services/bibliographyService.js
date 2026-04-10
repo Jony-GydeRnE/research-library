@@ -90,6 +90,17 @@ function findDoi(text) {
   return m ? normalizeDoi(m[1]) : null;
 }
 
+// CRITICAL: bibliography parsing must use pdf-parse text (rawTextLegacy),
+// NOT vision-extracted text (rawText). Vision OCRs from rendered page
+// images and routinely mangles digits in dense reference lists — we
+// observed GPT-4o vision turning "arXiv:2312.16282" into
+// "arXiv:2312.12682" on Rodina's bib page (a 6→1 OCR error). Pdf-parse
+// reads the PDF's text stream directly so digit fidelity is perfect.
+// This helper picks the right source per page.
+function pickBibSource(page) {
+  return page.rawTextLegacy || page.rawText || '';
+}
+
 /**
  * Scan the first few pages of a book for an arXiv ID and DOI on the
  * book itself. Persists arxivId / doi back onto the Book document.
@@ -100,13 +111,15 @@ function findDoi(text) {
  * and stop at the first hit. The first hit wins because the
  * front-matter ID is canonical; later page-margin watermarks would
  * just duplicate it.
+ *
+ * Uses pdf-parse rawTextLegacy when available — see pickBibSource.
  */
 async function extractBookIdentifiers(bookId) {
   const pages = await Page.find({ bookId, pageNumber: { $lte: 3 } })
-    .select('rawText')
+    .select('rawText rawTextLegacy')
     .sort({ pageNumber: 1 })
     .lean();
-  const combined = pages.map(p => p.rawText || '').join('\n\n');
+  const combined = pages.map(pickBibSource).join('\n\n');
   const arxivId = findArxivId(combined);
   const doi = findDoi(combined);
   const update = {};
@@ -172,6 +185,10 @@ function parseBibEntries(text) {
 /**
  * Extract the bibliography for a book and persist it on
  * Book.bibEntries. Returns the parsed entries.
+ *
+ * Reads rawTextLegacy (pdf-parse) instead of rawText (vision) — see
+ * pickBibSource for the rationale. Vision is unreliable for the dense
+ * digit sequences in arXiv IDs and DOIs.
  */
 async function extractBibliography(bookId) {
   const book = await Book.findById(bookId).select('pageCount').lean();
@@ -180,15 +197,16 @@ async function extractBibliography(bookId) {
   const lookback = Math.min(book.pageCount || 5, 8);
   const startPage = Math.max(1, (book.pageCount || lookback) - lookback + 1);
   const pages = await Page.find({ bookId, pageNumber: { $gte: startPage } })
-    .select('pageNumber rawText')
+    .select('pageNumber rawText rawTextLegacy')
     .sort({ pageNumber: 1 })
     .lean();
   // Find the FIRST page in this window that has a [1] entry — that's
   // the start of the references section. Concatenate from there to
-  // the end of the book.
+  // the end of the book. Use pickBibSource so detection runs against
+  // the same text stream we'll parse.
   let bibStartIdx = -1;
   for (let i = 0; i < pages.length; i++) {
-    if (/\[1\]\s/.test(pages[i].rawText || '')) {
+    if (/\[1\]\s/.test(pickBibSource(pages[i]))) {
       bibStartIdx = i;
       break;
     }
@@ -197,14 +215,14 @@ async function extractBibliography(bookId) {
   // entries. This handles cases where the bib starts mid-page.
   if (bibStartIdx < 0) {
     for (let i = 0; i < pages.length; i++) {
-      if (/\[\d+\][^\[]{20,}/.test(pages[i].rawText || '')) {
+      if (/\[\d+\][^\[]{20,}/.test(pickBibSource(pages[i]))) {
         bibStartIdx = i;
         break;
       }
     }
   }
   if (bibStartIdx < 0) return [];
-  const combined = pages.slice(bibStartIdx).map(p => p.rawText || '').join('\n');
+  const combined = pages.slice(bibStartIdx).map(pickBibSource).join('\n');
   const entries = parseBibEntries(combined);
   await Book.findByIdAndUpdate(bookId, { bibEntries: entries });
   return entries;

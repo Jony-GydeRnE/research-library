@@ -34,15 +34,38 @@ const Span = require('../models/Span');
 const Chunk = require('../models/Chunk');
 const Book = require('../models/Book');
 
+// ─── Bibliography-line detection ────────────────────────────────
+//
+// A span is a "bibliography line" if its text IS a reference entry,
+// not a citation made from running prose. These spans often get
+// tagged role=citation by the span LLM (correctly — they ARE
+// citations) and search=S (correctly — they reference an external
+// source) but they shouldn't produce edges because the source side
+// of an edge should be a span THAT cites, not a span that IS the
+// citation entry. The bib-line-to-chunk edge is structurally an
+// "X exists in the library" assertion, which carries no semantic
+// signal about what the citing author wanted to say.
+//
+// Heuristic: text starts with "[N]" followed by an author initial
+// pattern like "H. Elvang" or "N. Arkani-Hamed".
+function isBibliographyLine(spanText) {
+  if (!spanText) return false;
+  return /^\s*\[\d+\]\s+[A-Z]\.\s*[A-Z\-]/.test(spanText);
+}
+
 // ─── Citation key extraction ────────────────────────────────────
 //
 // Span text contains references like "[15]", "[26-31]", "[Hart77]".
 // We extract numeric keys first (the most common physics format)
 // and fall back to alphanumeric keys for math/CS papers.
 // "[26-31]" returns ["26", "27", "28", "29", "30", "31"].
+//
+// Returns empty array for bibliography-line spans — see
+// isBibliographyLine above for the rationale.
 
 function extractCitationKeys(spanText) {
   if (!spanText) return [];
+  if (isBibliographyLine(spanText)) return [];
   const keys = new Set();
   // Numeric or numeric-range references in square brackets
   const re = /\[(\d+(?:[,\-\s\d]*\d)?)\]/g;
@@ -102,21 +125,34 @@ function relationshipFromRole(role) {
 // target book that is most likely to contain the cited content.
 //
 // Strategy v1 (no LLM, no embeddings):
-//   Score = raw count of context-tag overlap between the citing
-//           span's contextTags and each candidate chunk's
-//           contextTags.
-//   Tiebreakers (in order):
-//     1. Larger target chunk tag set wins (richer = more
-//        informative target — but only as a tiebreaker, never as a
-//        primary signal).
-//     2. Lower chunkIndex wins (earlier in the book = more
-//        likely the introduction / setup that's being cited).
-//   Minimum overlap to create an edge: 1.
-//   No fallback when overlap = 0 — better to emit zero edges than
-//   to point readers at the wrong chunk.
-//
-// Returns { chunk, score, scoreDetail } or null if no candidate
-// has at least one tag in common.
+//   Primary signal:    raw count of context-tag overlap between
+//                      the citing span's contextTags and each
+//                      candidate chunk's contextTags.
+//   Abstract penalty:  chunks on page 1 take a -0.4 score penalty
+//                      and chunks on page 2 take -0.2. Rationale:
+//                      paper abstracts have the broadest tag set
+//                      (they summarize the whole paper) so they
+//                      naturally win every overlap contest. But
+//                      when somebody cites "the discovery of X
+//                      in [N]", the right target is the section
+//                      where X is defined and proven, not the
+//                      abstract that merely lists it. The penalty
+//                      pushes deeper-content chunks above the
+//                      abstract when overlap is comparable. The
+//                      penalty is small enough that an abstract
+//                      with overlap=2 still beats a deeper chunk
+//                      with overlap=1 (1.6 vs 1.x) but loses to
+//                      a deeper chunk with overlap=2 (1.6 vs 2.x).
+//   Definition boost:  chunks with structuralType definition,
+//                      theorem, or proof get a small +0.1 bump
+//                      because they're inherently citable
+//                      content.
+//   Tiebreakers:       larger target tag set, then earlier
+//                      chunkIndex within the same page-tier.
+//   Minimum overlap:   1. Returns null if no chunk shares any
+//                      tag with the citing span — better to emit
+//                      zero edges than to point at the wrong
+//                      chunk.
 
 async function findBestTargetChunk(targetBookId, citingSpan) {
   const chunks = await Chunk.find({ bookId: targetBookId })
@@ -134,19 +170,50 @@ async function findBestTargetChunk(targetBookId, citingSpan) {
     let overlap = 0;
     for (const t of sourceTags) if (targetTags.has(t)) overlap++;
     if (overlap === 0) continue;
-    // Composite score: integer overlap is the primary signal, with
-    // a small fractional bump for richer target chunks and a
-    // smaller bump for earlier chunks. Floats stay below 1 so
-    // the integer overlap part never gets crossed by tiebreakers.
-    const score = overlap
-      + Math.min(0.5, 0.01 * targetTags.size)
-      + Math.max(0, 0.0001 * (1000 - (c.chunkIndex || 0)));
+
+    // Page-depth penalty: page 1 is the abstract / front matter
+    // (heavy summary, not the actual content being cited). Page 2
+    // is usually still introduction. Pages >= 3 are body content.
+    //
+    // Penalty is intentionally GENTLE — abstracts should still be
+    // valid fallback targets when no deeper chunk has any overlap.
+    // The user's guidance: "something is better than nothing if no
+    // book gives a match and the relation is given an honest 50%
+    // or lower confidence." With penalty -0.15 the abstract still
+    // beats nothing (overlap=1 - 0.15 = 0.85, which clears the
+    // "must have at least one overlap" floor). A deeper chunk with
+    // the SAME overlap=1 still wins (1.0 vs 0.85). And an abstract
+    // with overlap=2 still beats a deeper chunk with overlap=1
+    // (1.85 vs 1.0) — which is correct, overlap=2 is real signal.
+    let pagePenalty = 0;
+    if (c.pageNumber === 1) pagePenalty = -0.15;
+    else if (c.pageNumber === 2) pagePenalty = -0.07;
+
+    // Structural-type boost: definitions, theorems, and proofs are
+    // the canonical citation targets. Bump them slightly so they
+    // outrank narrative chunks on the same page.
+    const stype = (c.structuralType || '').toLowerCase();
+    let typeBoost = 0;
+    if (stype === 'definition' || stype === 'theorem' || stype === 'lemma' || stype === 'proposition') typeBoost = 0.15;
+    else if (stype === 'proof' || stype === 'corollary') typeBoost = 0.10;
+
+    // Tag-richness tiebreaker (small)
+    const richnessBonus = Math.min(0.05, 0.01 * targetTags.size);
+
+    // Earlier-chunk-index tiebreaker — capped tightly so it never
+    // crosses overlap, page penalty, or type boost. Earlier chunks
+    // win ties between adjacent chunks on the same page; nothing
+    // more.
+    const orderBonus = Math.max(0, 0.001 - 0.000001 * (c.chunkIndex || 0));
+
+    const score = overlap + pagePenalty + typeBoost + richnessBonus + orderBonus;
+
     if (!best || score > best.score) {
       best = {
         chunk: c,
         score,
         overlap,
-        scoreDetail: `overlap=${overlap} target_tags=${targetTags.size} chunk=${c.chunkIndex}`,
+        scoreDetail: `ovl=${overlap} p=${c.pageNumber} type=${stype} tags=${targetTags.size} score=${score.toFixed(3)}`,
       };
     }
   }
