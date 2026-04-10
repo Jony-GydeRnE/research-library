@@ -45,12 +45,21 @@ exports.handleUpload = async (req, res) => {
 
     await uploadPdf(buffer, s3Key);
 
+    // Notes-vs-paper kind. The upload form's "This is a notes
+    // PDF" toggle posts kind='notes' so the vision pipeline uses
+    // the handwriting prompt from the very first page (instead of
+    // running the typeset-paper prompt and needing a re-vision
+    // after the kebab relabel). Anything other than 'notes' falls
+    // back to 'paper'.
+    const requestedKind = (req.body.kind === 'notes') ? 'notes' : 'paper';
+
     const book = new Book({
       title: req.file.originalname.replace('.pdf', ''),
       s3Key,
       fileHash,
       status: 'uploading',
       processingProgress: 0,
+      kind: requestedKind,
     });
     await book.save();
 

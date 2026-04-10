@@ -17,6 +17,13 @@
         <label class="btn btn-primary" for="fileInput" style="cursor:pointer;">Browse Files</label>
         <input type="file" id="fileInput" accept=".pdf" hidden>
         <p style="color:var(--app-text-muted);font-size:0.75rem;margin-top:0.75rem;">PDF files up to 200 MB</p>
+        <label class="upload-kind-toggle" style="display:flex;align-items:center;justify-content:center;gap:0.5rem;margin-top:1rem;cursor:pointer;font-size:0.85rem;color:var(--app-text);">
+          <input type="checkbox" id="isNotesToggle" style="cursor:pointer;width:16px;height:16px;">
+          <span>This is a <strong>notes PDF</strong> (handwritten / stylus / whiteboard)</span>
+        </label>
+        <p id="notesHint" style="display:none;color:var(--app-text-muted);font-size:0.7rem;margin-top:0.4rem;font-style:italic;max-width:380px;margin-left:auto;margin-right:auto;line-height:1.4;">
+          Vision will use the handwriting prompt: LaTeX for equations, descriptive blocks for diagrams, [unclear: …] markers for illegible symbols. After upload, use the kebab → "Link to source book" to anchor the notes to one or more papers.
+        </p>
       </div>
 
       <div class="upload-progress" id="uploadProgress" style="display:none;text-align:left;">

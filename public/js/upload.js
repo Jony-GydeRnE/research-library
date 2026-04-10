@@ -69,6 +69,17 @@
   document.getElementById('uploadAnotherBtn').addEventListener('click', reset);
   document.getElementById('retryBtn').addEventListener('click', reset);
 
+  // Notes toggle: show the explanatory hint when checked, and pass
+  // kind=notes to the upload endpoint so vision uses the handwriting
+  // prompt from the start (not after a kebab relabel).
+  const notesToggle = document.getElementById('isNotesToggle');
+  const notesHint = document.getElementById('notesHint');
+  if (notesToggle && notesHint) {
+    notesToggle.addEventListener('change', () => {
+      notesHint.style.display = notesToggle.checked ? '' : 'none';
+    });
+  }
+
   async function handleFile(file) {
     showState('progress');
     fileName.textContent = file.name;
@@ -84,6 +95,13 @@
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('collectionId')) {
       formData.append('collectionId', urlParams.get('collectionId'));
+    }
+    // Notes flag: when checked, the upload controller sets
+    // book.kind='notes' BEFORE the vision pipeline runs, so the
+    // first page render uses the handwriting prompt instead of
+    // the typeset-paper prompt.
+    if (notesToggle && notesToggle.checked) {
+      formData.append('kind', 'notes');
     }
 
     try {
