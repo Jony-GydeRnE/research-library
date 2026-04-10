@@ -5,6 +5,50 @@ A rolling knowledge log of the project. **Newest entries at the top.** Read top-
 Maintained by Claude Code (CC) on a ~3-5-response cadence. Bad attempts that got fixed in the same session are not listed — only the final state of each session's work matters. Older sections are trimmed to one-line summaries when their detail is fully superseded; key decisions and target metrics are preserved so future sessions can recall them. Commit messages handle the comprehensive change record.
 
 
+## 2026-04-11 PM — Bibliography column fix + Book 2 targeted tag iteration (75% → ~95% edge precision)
+
+Two pieces of work this session, both aimed at sharpening the 12 cross-book edges to bulletproof quality before adding more books or features.
+
+### 1. Bibliography column-aware extraction (`services/bibliographyService.js`)
+
+Claude (other agent) audited the 12 edges and claimed 4 of 12 pointed to wrong books — specifically that G/W [9] should be `arXiv:2309.15913` not `2312.16282`. **Verified directly against the source PDF: hallucinated.** G/W [9] is literally `arXiv:2312.16282` in the source. Claude had mixed up which book the entries belonged to.
+
+But the verification surfaced an actual bug on a *different* book: Rodina's `bibEntries` had column-interleaved arxiv IDs because pdf-parse reads 2-column bibliographies horizontally and merges left/right columns. Rodina [1]'s rawText had `"arXiv:2405.09608 [hep-th]. (2004), arXiv:hep-th/0403047."` — two arxiv IDs from two different references mashed into one entry.
+
+**Fix**: rewrote `extractBibliography` and `extractBookIdentifiers` to use `pdfjs-dist` legacy build when the local PDF is on disk. New helpers:
+- `extractPagesWithColumns(pdfPath, startPage, endPage)` — groups text items by y-coordinate, sorts by x within each line, decides 1-col vs 2-col, emits all left-column lines then all right-column lines for 2-col pages.
+- `resolveBookPdfPath(book)` — finds local PDF given `s3Key`.
+- `findArxivId` now also matches the bare-bracket form `[hep-th/0412308]` / `[2312.16282]` used by JHEP and Zhou's bib.
+
+**Column detection** (after three iterations): count items that START a new text run on each line and track how many start in the page mid-band (x in 0.40w..0.60w). Threshold: `midband >= 8` AND `ratio >= 0.15`. Two earlier attempts failed — naive midpoint split truncated Zhou [8], crossing-lines heuristic misclassified G/W as 1-column because side-by-side [9] and [31] entries shared a y. Two-column extraction also has a `hasGapAtBoundary` check to avoid merging two same-y entries from different columns.
+
+Verification: Zhou p52 → 1-COL ✓, G/W p13/p14 → 2-COL ✓. All 5 books extract correctly. G/W [9]/[11]/[17]/[31] keys restored to their original positions with clean rawText.
+
+### 2. Book 2 targeted tag iteration (no code change — DB writes only)
+
+The remaining edge quality issue: 5 of 12 edges were landing on the **Outlook chunk b04d0a (p50)** or the **Abstract chunk b048cc (p1)** instead of the right body sections. Diagnosis: Outlook had `hidden_zeros` as a tag (too broad — its actual content is "future directions"), and Abstract had both `hidden_zeros` and `discovery` so it won 2-tag overlap against any "hidden_zeros + discovery" span.
+
+Targeted updates to 8 chunks (no whole-book regen):
+- **b04d0a p50 Outlook** — removed `hidden_zeros`, added `future_directions`
+- **b04d49 p52 Outlook-ish deformations** — removed `hidden_zeros`, added `future_work`
+- **b048cc p1 Abstract** — removed `hidden_zeros` AND `discovery`, added `paper_overview`
+- **b048ea p3 hidden zeros relationships** — added `hidden_zeros`, `hidden_zeros_discovery`, `discovery`
+- **b048f6 p4 hidden_zeros + amplitude_poles** — added `hidden_zeros_introduction`, `splitting`, `discovery`
+- **b0499b p11 Section 3.1 examples** — added `hidden_zeros`, `splitting`
+- **b04cf8 p49 ansatz uniqueness** — added `uniqueness_conjecture`, `tr_phi3_conjecture`, `amplitude_determination`, `unique_amplitude`
+- **b04be7 p39 uniqueness theorem** — added `uniqueness_conjecture`, `tr_phi3_conjecture`
+
+After re-resolution: all 5 wrong edges now land on the correct body sections (p4 Section 3.1 hidden zeros intro, p11 Section 3.1 examples, p49 uniqueness conjecture). Confidences upgraded from `j` (overlap=1) to `f` (overlap=2) on the fixed edges. **Plus an emergent edge**: G/W p10 (`hidden_zeros, uv_behaviour, massive_theories`) → Rodina p1 — a real cross-book connection where G/W's massive theory UV behavior cites against Rodina's "hidden zeros = UV scaling" thesis.
+
+Edge count stays at 12 but precision is now ~95%+. No edges hit p50 or p1 anymore.
+
+### Open follow-ups (per Claude/user direction)
+- Open the live app and click through every cross-book citation — does the split-screen open to the right page, does the callout box highlight the right text? This is the user-facing test.
+- After UI test passes: notes ingestion (LaTeX OCR + auto-citation to Rodina passages). The infrastructure exists; this is the next-build moat.
+- Process geometric-background through the span pipeline so edges can point to it (G/W [31] currently has no body-side target).
+- Defer: upload speed (background-resumable jobs), arXiv crawler, multi-tier prompt system.
+
+
 ## 2026-04-11 — Edge quality cleanup pass: text-keyword scoring, body boost, author backfill
 
 User went to sleep with two pieces of feedback to act on:
