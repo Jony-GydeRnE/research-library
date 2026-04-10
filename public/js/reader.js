@@ -247,7 +247,7 @@
     // clean surroundContents; the shorter fallbacks catch cases where the
     // AI-supplied quote diverges slightly from the book text (paraphrase,
     // punctuation, hyphenation) or spans formatting elements.
-    var prefixCounts = [words.length, 15, 10, 6, 4, 3];
+    var prefixCounts = [words.length, 40, 30, 20, 15, 10, 6, 4, 3];
     var prefixes = [];
     var seen = {};
     prefixCounts.forEach(function (n) {
@@ -324,18 +324,45 @@
         moved++;
       }
 
-      // Pull in display-math siblings and equation-number labels that
-      // follow the matched paragraph. In academic papers, a quote like
-      // "We can write" is immediately followed by \[...\] and "(28)" as
-      // sibling block elements. The callout should include them because
-      // they are part of the same logical statement — without this the
-      // box visibly "stops at LaTeX" right where the display equation
-      // begins. We only move whole elements, so MathJax renderings come
-      // along intact as DOM subtrees.
+      // Pull in sibling elements that logically continue the matched
+      // block. Papers routinely sequence a quote like "We can write"
+      // directly into \[...\] + "(28)" as sibling blocks, and a citation
+      // that names a section usually means "the heading AND its lead
+      // paragraph" — both cases should end up inside one callout.
+      //
+      // We only ever move whole DOM elements via appendChild, so any
+      // MathJax subtree (mjx-container and its descendants) travels
+      // intact as a single node — no retypesetting, no reflow, no
+      // chance of breaking rendered equations.
+      //
+      // Absorption rules (in order of check):
+      //   1. Whitespace text nodes — swallowed silently, never a stop.
+      //   2. Elements with class "math-display" — wrapped display math
+      //      from the legacy htmlService pipeline OR from the new
+      //      visionService post-processor.
+      //   3. <mjx-container> elements — MathJax-rendered display math
+      //      from any vision-processed page that was rendered before
+      //      the math-display normalization shipped (belt + suspenders
+      //      for existing books that haven't been reprocessed).
+      //   4. Short <p> matching /^\(?[A-Z]?\d+(\.\d+)?[a-z]?\)?\.?$/ —
+      //      equation-number labels like "(26)", "(B25)", "3.14", "26".
+      //      Widened from the previous pattern to catch alphanumeric
+      //      appendix labels and decimals.
+      //   5. Empty or whitespace-only <p> — vertical spacer paragraphs
+      //      between equations. These otherwise abort the loop.
+      //   6. If the matched block was a heading (<h1>-<h6>), the FIRST
+      //      following prose <p> is also absorbed once. Almost every
+      //      section-level citation is "Heading. First sentence…".
+      //      Only one leading paragraph is pulled — trailing paragraphs
+      //      still need their own match or the widened highlightWords
+      //      cap in chat.ejs to extend PASS 2's block span.
+      //   7. Anything else — real next paragraph, another heading, a
+      //      figure — hard stops the loop.
+      var isHeadingBlock = /^h[1-6]$/.test((blockEl.tagName || '').toLowerCase());
+      var absorbedLeadingPara = false;
       var next = box.nextSibling;
       while (next) {
-        // Absorb whitespace-only text nodes so they don't become a hard
-        // stop between the paragraph and the equation.
+        // Rule 1: whitespace text nodes.
         if (next.nodeType === 3 && !next.nodeValue.trim()) {
           var wsNext = next.nextSibling;
           box.appendChild(next);
@@ -345,27 +372,54 @@
         if (next.nodeType !== 1) break;
         var tag = next.tagName ? next.tagName.toLowerCase() : '';
         var cls = (typeof next.className === 'string') ? next.className : '';
-        // Display math block — \[...\] rendered by MathJax.
+
+        // Rule 2: explicit math-display class.
         if (cls.indexOf('math-display') !== -1) {
           var mNext = next.nextSibling;
           box.appendChild(next);
           next = mNext;
           continue;
         }
-        // Equation-number label — a short <p> containing just "(N)" or
-        // "N" or "(N.M)". Papers often float the equation number into
-        // its own paragraph right after the display math.
+
+        // Rule 3: MathJax-rendered display equation. Covers vision pages
+        // that weren't normalized upstream. Treat any top-level
+        // mjx-container as absorbable — inline math normally lives
+        // inside a <p>, so if we see an mjx-container as a direct
+        // sibling of the matched block it's display math.
+        if (tag === 'mjx-container') {
+          var jNext = next.nextSibling;
+          box.appendChild(next);
+          next = jNext;
+          continue;
+        }
+
         if (tag === 'p') {
           var tc = (next.textContent || '').trim();
-          if (tc.length > 0 && tc.length < 12 && /^\(?[\d.]+\)?$/.test(tc)) {
+          // Rule 5: empty / whitespace-only spacer paragraph.
+          if (tc.length === 0) {
+            var spNext = next.nextSibling;
+            box.appendChild(next);
+            next = spNext;
+            continue;
+          }
+          // Rule 4: equation-number label (widened pattern).
+          if (tc.length < 16 && /^\(?[A-Z]?\d+(\.\d+)?[a-z]?\)?\.?$/.test(tc)) {
             var eNext = next.nextSibling;
             box.appendChild(next);
             next = eNext;
             continue;
           }
+          // Rule 6: heading → first-paragraph.
+          if (isHeadingBlock && !absorbedLeadingPara) {
+            var hNext = next.nextSibling;
+            box.appendChild(next);
+            next = hNext;
+            absorbedLeadingPara = true;
+            continue;
+          }
         }
-        // Anything else — next real paragraph, heading, figure — is a
-        // hard stop. The callout ends here.
+
+        // Rule 7: hard stop.
         break;
       }
 

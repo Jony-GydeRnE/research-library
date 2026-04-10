@@ -208,8 +208,17 @@ window.MathJax = {
   function renderCitation(c) {
     var book = booksMap[c.bookId];
     var title = book ? book.title : 'Book';
-    // First 20 words of the quote, URL-encoded, for the highlight param
-    var highlightWords = c.quote.split(/\s+/).filter(Boolean).slice(0, 20).join(' ');
+    // Pass up to the first 60 words of the quote as the highlight param.
+    // Earlier this was 20, which starved reader.js's PASS 2 cross-block
+    // detection — 20 words almost always fits inside one <p>, so PASS 2
+    // could never see a match spanning multiple blocks and extras stayed
+    // at 0. 60 words is long enough to cover a heading + its first
+    // sentence (which routinely crosses a block boundary) while still
+    // short enough to keep the URL manageable. The prefix ladder inside
+    // highlightQuoteIn already tries shorter slices (15/10/6/4/3) when
+    // the full prefix doesn't match, so giving it more material never
+    // hurts — it only ever enables more precise placements.
+    var highlightWords = c.quote.split(/\s+/).filter(Boolean).slice(0, 60).join(' ');
     // sidebar=collapsed: when the reader opens inside the chat split view,
     // the TOC/nav sidebar should be hidden by default so the book fills the
     // available width. The reader's sidebar script honors this query param.

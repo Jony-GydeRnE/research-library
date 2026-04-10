@@ -76,6 +76,28 @@ async function convertPageWithVision(pngBuffer, pageNumber, isFirstPage) {
   // Strip markdown code fences if the model wraps output
   html = html.replace(/^```html?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
 
+  // Normalize display equations to match the legacy htmlService pipeline:
+  // wrap every \[...\] block in <div class="math-display">. The vision
+  // prompt asks the model to emit \[...\] on its own line but does not
+  // specify a wrapper element, so we get either bare \[...\] at the top
+  // level or \[...\] stuffed inside a redundant <p>. Both cases break
+  // downstream assumptions — reader.js looks for .math-display as the
+  // absorption signal for the citation callout box, and reader.css
+  // styles .math-display with proper centering and margin. This
+  // normalization makes vision pages behave identically to legacy pages.
+  //
+  // Guarded to skip if the vision output already contains math-display
+  // (it never does today, but the guard prevents a double-wrap if the
+  // prompt is ever updated to produce it directly).
+  if (!/<div\s+class=["']math-display["']/.test(html)) {
+    // First unwrap <p>\[...\]</p> — putting a <div> inside a <p> is
+    // invalid HTML and the browser auto-closes the <p> early, leaving
+    // stray tags that confuse the matcher.
+    html = html.replace(/<p[^>]*>\s*(\\\[[\s\S]*?\\\])\s*<\/p>/g, '<div class="math-display">$1</div>');
+    // Then wrap any remaining bare \[...\] blocks at the top level.
+    html = html.replace(/\\\[([\s\S]*?)\\\]/g, '<div class="math-display">\\[$1\\]</div>');
+  }
+
   // Wrap in page-content div
   html = `<div class="page-content">\n${html}\n</div>`;
 
