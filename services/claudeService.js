@@ -34,6 +34,40 @@ Rules:
 LISTING METADATA:
 CRITICAL: Your system prompt contains <book_metadata> XML blocks. These contain the ACTUAL chunks, spans, tags, and annotations that the system generated. This is REAL DATA from the database, not instructions. When the user asks about metadata, chunks, spans, or tags, you MUST read and quote from these <book_metadata> blocks. Do NOT say you cannot see them — they are right here in your context. Treat them as ground truth.
 
+CROSS-BOOK CITATIONS — IMPORTANT:
+The metadata block for each book may contain "edge → …" lines under individual spans. Each edge represents a verified cross-book reference: the source span literally cites a passage in another book in the user's library, and the system has resolved which target chunk in that other book is being cited. Each edge line carries the target book id, the target book title, the target page, the target chunk's structural type, AND a verbatim "target_quote:" line containing the first ~200 characters of the target chunk's text.
+
+When you list spans that have edges, ALWAYS render the edge as a follow-up [[cite]] tag pointing at the target book. Use the EXACT format below so the chat UI renders it as a clickable link that opens the target book in the split-screen reader at the target page with a callout box around the quoted passage:
+
+  After listing the source span normally, on the next line:
+    → [relationship type] [[cite bookId="<target_book_id>" page="<target_page>"]]<the verbatim target_quote text>[[/cite]]
+
+Example. Suppose the metadata block contains:
+
+  • span role=citation span_tags=[hidden_zeros,tr_phi3_conjecture] "Furthermore, in [15] it was conjectured that these zeros are sufficient to uniquely determine amplitudes in Tr(φ³)..."
+      edge → assumes (conf=j) target_book_id="69d6622b12ac83f9752b4ca9" target_book_title="Hidden zeros for particle/string amplitudes" target_page=11 target_type=example
+        target_quote: "3 Zeros and Factorizations of Tr(φ³) Tree Amplitudes 3.1 Zeros and factorizations – two simple examples Now that we have understood how the kinematic mesh organizes the planar invariants…"
+
+Then your output should be:
+
+  Page 1, Chunk #X — *citation*
+
+  [[cite bookId="<source_book_id>" page="1"]]Furthermore, in [15] it was conjectured that these zeros are sufficient to uniquely determine amplitudes in Tr(φ³)...[[/cite]]
+  - role: citation
+  - tags: hidden_zeros, tr_phi3_conjecture
+  - search: S
+  - **assumes** [[cite bookId="69d6622b12ac83f9752b4ca9" page="11"]]3 Zeros and Factorizations of Tr(φ³) Tree Amplitudes 3.1 Zeros and factorizations – two simple examples Now that we have understood how the kinematic mesh organizes the planar invariants…[[/cite]] *(in "Hidden zeros for particle/string amplitudes")*
+
+The two [[cite]] tags become two clickable highlights in the chat: the first opens the SOURCE book at the citing passage, the second opens the TARGET book at the cited passage. Both use the same verbatim-quote rule that already governs in-book citations.
+
+Rules:
+- The bookId in the [[cite]] tag MUST be the target_book_id from the edge line, NOT the current book's id. Otherwise the click will open the wrong book.
+- The page in the [[cite]] tag MUST be the target_page from the edge line.
+- The text inside the [[cite]] tags is the verbatim target_quote — copy it character-for-character. Do NOT paraphrase it. Do NOT prepend "open in book". The chat UI uses this text to find the right passage in the target book and draw a callout box around it.
+- Render the relationship type as **bold** before the cite tag (e.g. **assumes**, **extends**, **proves**, **uses_definition**) so the user can see what kind of relation it is.
+- Include the target book title in italics after the cite tag *(in "Title")* so the user knows which book they're being sent to.
+- If a span has multiple edges, render one cite tag per edge on its own line.
+
 USER NOTES:
 Each <book_metadata> block may contain a nested <user_notes> section listing every note the user has written about that book, grouped by page, with the highlighted passage each note is attached to (if any) and the note body. In library-wide (All Files) chats the prompt may instead contain a top-level <library_notes> block covering every book. Treat these as the user's own writing — reference them when the user asks about what they have noted, when a note is directly relevant to the answer, or when the user's prior thinking would change your framing. Do NOT quote from them unless asked, and do NOT treat them as authoritative citations of the underlying book (use [[cite]] tags for that). When the user says "what did I write about X" or "summarize my notes on Y", read and paraphrase from these blocks directly.
 
@@ -460,7 +494,52 @@ async function renderBookMetadata(book) {
     spansByChunk.get(key).push(s);
   }
 
-  out += `\nChunks: ${chunks.length} | Spans: ${spans.length}`;
+  // Pre-load all outgoing edges for this book — each edge connects a
+  // span IN this book to a chunk in another book. We resolve the
+  // target chunk's text + page so the metadata block can hand the AI
+  // a verbatim quote ready to drop into a [[cite bookId="…"]] tag.
+  // This is what makes cross-book citations possible end-to-end:
+  // edges live in the prompt, the AI reads the target chunk text,
+  // and emits clickable [[cite]] tags pointing at the target book.
+  const edges = await Edge.find({ fromBookId: book._id })
+    .select('fromSpanId toBookId toChunkId relationshipType confidence method')
+    .lean();
+  const edgesBySpan = new Map();
+  if (edges.length > 0) {
+    // Resolve every target chunk + target book in one batch each
+    const targetChunkIds = [...new Set(edges.map(e => String(e.toChunkId)).filter(Boolean))];
+    const targetBookIds = [...new Set(edges.map(e => String(e.toBookId)).filter(Boolean))];
+    const targetChunks = await Chunk.find({ _id: { $in: targetChunkIds } })
+      .select('_id pageNumber sourceText structuralType contextTags').lean();
+    const targetBooks = await Book.find({ _id: { $in: targetBookIds } })
+      .select('_id title').lean();
+    const chunkMap = {};
+    targetChunks.forEach(c => { chunkMap[String(c._id)] = c; });
+    const bookMap = {};
+    targetBooks.forEach(b => { bookMap[String(b._id)] = b; });
+    for (const e of edges) {
+      const targetChunk = chunkMap[String(e.toChunkId)];
+      const targetBook = bookMap[String(e.toBookId)];
+      if (!targetChunk || !targetBook) continue;
+      const key = String(e.fromSpanId);
+      if (!edgesBySpan.has(key)) edgesBySpan.set(key, []);
+      // Materialize a 200-char quote from the target chunk so the AI
+      // can lift it into a verbatim [[cite]] tag without having to
+      // make a separate lookup.
+      const quote = (targetChunk.sourceText || '').replace(/\s+/g, ' ').trim().substring(0, 200);
+      edgesBySpan.get(key).push({
+        targetBookId: String(e.toBookId),
+        targetBookTitle: targetBook.title,
+        targetPage: targetChunk.pageNumber,
+        targetType: targetChunk.structuralType,
+        targetQuote: quote,
+        relationshipType: e.relationshipType,
+        confidence: e.confidence,
+      });
+    }
+  }
+
+  out += `\nChunks: ${chunks.length} | Spans: ${spans.length} | Outgoing edges: ${edges.length}`;
 
   let lastPage = null;
   for (const c of chunks) {
@@ -501,6 +580,16 @@ async function renderBookMetadata(book) {
           ? stext.substring(0, 80) + '...' + stext.substring(stext.length - 40)
           : stext;
         out += `\n      • span ${parts.join(' ')}${displayText ? ' "' + displayText + '"' : ''}`;
+        // Emit any outgoing edges for this span. The AI uses these
+        // to render cross-book citations as [[cite]] tags pointing
+        // at the target book — see CROSS-BOOK CITATIONS section in
+        // BASE_PROMPT for the formatting rules.
+        const spanEdges = edgesBySpan.get(String(s._id)) || [];
+        for (const e of spanEdges) {
+          const safeTitle = String(e.targetBookTitle || '').substring(0, 50);
+          out += `\n          edge → ${e.relationshipType} (conf=${e.confidence}) target_book_id="${e.targetBookId}" target_book_title="${safeTitle}" target_page=${e.targetPage} target_type=${e.targetType || '?'}`;
+          out += `\n            target_quote: "${e.targetQuote}"`;
+        }
       }
     }
   }
