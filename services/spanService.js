@@ -156,19 +156,25 @@ function parseSpanOutput(dslOutput, bookId, pageNumber) {
     let role = null;
     let searchClass = 'N';
     let searchConfidence = null;
+    let gapType = null;
     const regexFlags = [];
+
+    // Map L-tag type letters to long-form gap names. Used by the
+    // matcher to find the right kind of filling content (note that
+    // defines a term, derivation that shows the steps, proof that
+    // closes the gap).
+    const L_TYPE_MAP = { d: 'definition', v: 'derivation', p: 'proof' };
 
     for (let i = 1; i < parts.length; i++) {
       const token = parts[i];
 
       // Search class: uppercase letter L/I/S/B, optionally followed
-      // by a lowercase confidence letter a-z. S per Vision doc §3.2
-      // carries NO confidence suffix (the system resolves when the
-      // source is available), so bare "S" is the canonical form for
-      // citations. L, I, B all take a confidence suffix in healthy
-      // output but we accept bare forms defensively — better to
-      // capture a class with null confidence than to silently drop
-      // the tag because the suffix was missing.
+      // by a lowercase suffix. S per Vision doc §3.2 carries NO
+      // suffix (the system resolves when the source is available),
+      // so bare "S" is the canonical form for citations. L now
+      // takes a TYPE suffix (Ld/Lv/Lp) instead of confidence —
+      // gap matching depends on knowing the kind of gap. I and B
+      // still take a confidence letter.
       if (/^S$/.test(token)) {
         searchClass = 'S';
         searchConfidence = null;
@@ -181,10 +187,19 @@ function parseSpanOutput(dslOutput, bookId, pageNumber) {
       }
       if (/^[LISB][a-z]$/.test(token)) {
         searchClass = token[0];
-        // S with a suffix is tolerated (Vision says no suffix, but
-        // the LLM sometimes emits Sa/Sq etc.) — discard the suffix
-        // to keep downstream logic clean.
-        searchConfidence = token[0] === 'S' ? null : token[1];
+        const suffix = token[1];
+        if (token[0] === 'L' && L_TYPE_MAP[suffix]) {
+          // Typed L-tag: Ld/Lv/Lp set the gapType
+          gapType = L_TYPE_MAP[suffix];
+          searchConfidence = null;
+        } else if (token[0] === 'S') {
+          // Defensive: discard any S-suffix the LLM hallucinates
+          searchConfidence = null;
+        } else {
+          // Legacy: L with non-type letter (Lt etc) and I/B with
+          // confidence letters — store the suffix as confidence
+          searchConfidence = suffix;
+        }
         continue;
       }
 
@@ -228,6 +243,7 @@ function parseSpanOutput(dslOutput, bookId, pageNumber) {
       declarativeTags,
       searchClass,
       searchConfidence,
+      gapType,
       regexFlags,
     });
   }

@@ -45,10 +45,28 @@ CONTEXT TAG QUALITY RULES (most common metadata defects):
 
 - NORMALIZATION: pick one canonical name per concept. Do not write `uv_scaling` on one span and `enhanced_uv_scaling` and `uv_bcfw_scaling` on others when they all refer to the same concept. Pick the shortest reasonable form (`uv_scaling`) unless the distinction is essential. Same for `hidden_zeros` vs `amplitude_zeros` vs `zero_condition` — choose one canonical form per paper.
 
-- SEARCH-CLASS PRECISION:
-    L (logical gap): the text uses a hand-wave phrase ("it can be shown", "the reader may verify", "trivially") AND does NOT subsequently prove it in the same chunk or section. If the proof appears later in the same passage, do NOT tag L.
-    B (broad external search): the sentence makes a substantive claim that is NOT proved here AND does NOT cite a source. If the surrounding text justifies the claim, do NOT tag B.
-    These are triage signals for the edge resolution pipeline. Mis-tagging wastes downstream search budget. Only tag L or B when the gap is genuinely there.
+- AGGRESSIVE GAP DETECTION (the most important rule in this prompt):
+    For every equation, result, claim, definition, or derivation step that is stated without full justification IN THIS PAGE, add an L-class tag with a TYPE letter:
+        Ld = missing definition (uses a concept without defining it)
+        Lv = missing derivation (states a result without showing the steps)
+        Lp = missing proof (asserts without proving)
+
+    Do NOT assume the reader knows standard material. Examples that MUST be tagged:
+      - "by the Euler-Lagrange equations" without deriving them → Lv
+      - "Mandelstam invariants s, t, u" without defining them → Ld
+      - "it follows that A = B" without showing the algebra → Lp
+      - "we use the BCFW recursion" without stating BCFW → Ld
+      - "this can be derived from the action principle" → Lv
+      - "applying the Ward identity" → Ld + Lv
+      - "as is well known" → Lp
+      - "the Adler zero condition" without defining it → Ld
+      - any equation that appears with "=" but no derivation chain → Lv
+
+    EVERY chunk should produce AT LEAST one L-tag UNLESS the chunk is purely self-contained (a clean definition that defines all its own terms, prose with no math claims, or a complete proof that uses only previously-defined objects). When in doubt, ADD the tag — these are triage signals, not assertions, and downstream matching uses them to pull notes / cited papers.
+
+    L-tag format: Ld / Lv / Lp (single letter type, no confidence suffix). Legacy form Lt (L with confidence t) is still accepted but the typed form is strongly preferred — gap matching depends on the type.
+
+    B (broad external search): the sentence makes a substantive claim that is NOT proved here AND does NOT cite a source. If the claim is substantive and unjustified, prefer L-with-type over B. Use B only when the claim is so general it could come from any of dozens of sources.
 
 ═══════════════════════════════════════════════════════════════════
 CRITICAL RULES FOR DECLARATIVE TAGS — PRECISION OVER RECALL:
@@ -68,9 +86,11 @@ If a sentence CITES prior work ([15], [26-31], "shown in [Hart77]", "Theorem 3 o
   → Do NOT use p/q/r/s declarative tags for citations
 
 If a sentence makes a CLAIM that the text itself does NOT fully justify and does NOT cite:
-  → "It can be shown that...", "One easily verifies...", "It follows that..." → add search class L{a-z} (logical gap, needs notes)
-  → Assertion of a result/identity without proof and without citation → add search class B{a-z} (broad external search)
-  → Rule of thumb: if the reader would ask "where does this come from?" the span needs an L, B, I, or S tag.
+  → "It can be shown that...", "One easily verifies...", "It follows that..." → Lp (missing proof)
+  → "by the Euler-Lagrange equations", "from the action principle", "applying the Ward identity" → Lv (missing derivation)
+  → "the Mandelstam invariants", "the BCFW shift", "the Adler zero condition" — terms used without definition → Ld (missing definition)
+  → Substantive unjustified claim that could come from any of many sources → B{a-z}
+  → Rule of thumb: if the reader would ask "where does this come from?" the span needs an L (with type), B, I, or S tag.
 
 WHEN IN DOUBT: do NOT add a declarative tag (p/q/r/s...). Missing edges can be found later by the resolution pipeline. False edges pollute the graph and are hard to remove. BUT: DO add search-class tags liberally — they are triage signals, not hard assertions, and the downstream resolution pipeline is specifically designed to sort them out.
 
@@ -100,6 +120,18 @@ Example output:
 1 serre_theorem result Bs
 2-4 serre_theorem proof p1.0
 5 cohomology_vanishing result Lp
+
+Example input:
+[1] The Lagrangian is L = (1/2) m s_dot_r^2 + (1/2) m r^2 s_dot_theta^2.
+[2] Applying the Euler-Lagrange equations gives d/dt(∂L/∂s_dot_i) - ∂L/∂s_i = 0.
+[3] We use the Mandelstam variables s = (p1+p2)^2.
+[4] By the action principle, the physical path extremizes the action S = ∫ L dt.
+
+Example output:
+1 lagrangian polar_coordinates definition
+2 euler_lagrange_equations result Lv
+3 mandelstam_variables definition Ld
+4 action_principle hamiltons_principle background Lv
 
 Example input:
 [1] In [15] it was conjectured that Tr(φ³) amplitudes are uniquely fixed by demanding a sufficient number of zeros.

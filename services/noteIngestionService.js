@@ -174,14 +174,40 @@ async function matchNotesToSourceBooks(notesBookId) {
   let edgesCreated = 0;
   const perSourceStats = [];
 
+  // Pull the funnel's GPT-4o picker. We use the SAME pipeline that
+  // the paper-to-paper resolver uses (concept overlap + embedding
+  // cosine + GPT-4o pickAndClassify), so notes get the same
+  // discrimination quality. The previous matcher was concept
+  // overlap + raw cosine + threshold, which produced 12 edges on
+  // 90 note chunks because handwritten OCR has too much vocabulary
+  // drift for raw cosine to surface the right targets reliably.
+  const funnel = require('./funnelService');
+
   for (const lookupBook of allLibraryBooks) {
     const sourceBookId = lookupBook._id;
     const sourceBook = lookupBook;
     if (!sourceBook) continue;
 
-    let sourceChunks = await Chunk.find({ bookId: sourceBookId })
+    // Pull source chunks (filter bib pages, ensure embeddings)
+    const { isBibliographyChunk } = require('./edgeResolverService');
+    const allSourceChunksRaw = await Chunk.find({ bookId: sourceBookId })
       .select('_id pageNumber chunkIndex sourceText contextTags embedding structuralType')
       .lean();
+    // Reuse the funnel's bib-page detection so notes never land
+    // on bibliography fragments.
+    const bibPages = new Set();
+    const BIB_FRAGMENT = /^\s*(?:\[\d+\]\s*[A-Z][a-z]?\.?|Bibliography|References)/;
+    for (const c of allSourceChunksRaw) {
+      if (isBibliographyChunk(c)) { bibPages.add(c.pageNumber); continue; }
+      const txt = (c.sourceText || '').trim();
+      if (BIB_FRAGMENT.test(txt) && txt.length < 50) bibPages.add(c.pageNumber);
+      else if (/^Bibliography|^References\b/i.test(txt)) bibPages.add(c.pageNumber);
+    }
+    let sourceChunks = allSourceChunksRaw.filter(c => {
+      if (bibPages.has(c.pageNumber)) return false;
+      if ((c.sourceText || '').trim().length < 40) return false;
+      return true;
+    });
     if (sourceChunks.length === 0) {
       perSourceStats.push({ sourceBookId, title: sourceBook.title, chunks: 0, edges: 0 });
       continue;
@@ -189,58 +215,128 @@ async function matchNotesToSourceBooks(notesBookId) {
     sourceChunks = await ensureEmbeddings(sourceChunks);
 
     let createdHere = 0;
+
+    // ── DIRECTION 1: notes chunk → source chunk via funnel ──
+    // For each note chunk, run the SAME funnel the paper resolver
+    // uses: cosine top-25 → GPT-4o picks the best target with
+    // relationship + confidence + relevance.
     for (const noteChunk of noteChunks) {
-      // ── Stage 1: concept-overlap filter ────────────────────
-      const noteConcepts = expandTags(noteChunk.contextTags || []);
-      if (noteConcepts.size === 0) continue;
-
-      const candidates = [];
-      for (const sc of sourceChunks) {
-        const sourceConcepts = expandTags(sc.contextTags || []);
-        let overlap = 0;
-        for (const concept of noteConcepts) {
-          if (sourceConcepts.has(concept)) overlap++;
-        }
-        if (overlap >= pipeline.NOTE_MATCH_MIN_OVERLAP) {
-          candidates.push({ chunk: sc, conceptOverlap: overlap });
-        }
-      }
-      if (candidates.length === 0) continue;
-
-      // ── Stage 2: cosine ranking on the survivors ──────────
       if (!noteChunk.embedding || noteChunk.embedding.length === 0) continue;
-      for (const cand of candidates) {
-        cand.cosine = cosineSimilarity(noteChunk.embedding, cand.chunk.embedding || []);
-      }
-      candidates.sort((a, b) => b.cosine - a.cosine);
 
-      // Keep top-K above the cosine floor
-      const top = candidates
-        .filter(c => c.cosine >= pipeline.NOTE_MATCH_MIN_COSINE)
-        .slice(0, pipeline.NOTE_MATCH_MAX_PER_CHUNK);
-
-      for (const match of top) {
-        const confidence = cosineToConfidence(match.cosine);
-        await Edge.create({
-          fromChunkId: noteChunk._id,
-          toChunkId: match.chunk._id,
-          fromBookId: notesBookId,
-          toBookId: sourceBookId,
-          relationshipType: 'annotates',
-          confidence,
-          relevance: confidence,
-          method: 'note-citation',
-          resolved: true,
-        });
-        edgesCreated++;
-        createdHere++;
+      // Cosine top-25 across the source book's chunks
+      const scored = [];
+      for (const sc of sourceChunks) {
+        if (!sc.embedding || sc.embedding.length === 0) continue;
+        const cos = cosineSimilarity(noteChunk.embedding, sc.embedding);
+        scored.push({ chunk: sc, cosine: cos });
       }
+      scored.sort((a, b) => b.cosine - a.cosine);
+      const top = scored.slice(0, 25);
+      if (top.length === 0) continue;
+
+      // Wrap the note chunk as a "span" the funnel can read
+      const fakeSpan = {
+        _id: noteChunk._id,
+        spanText: noteChunk.sourceText || '',
+        contextTags: noteChunk.contextTags || [],
+        pageNumber: noteChunk.pageNumber,
+      };
+      let pickResult;
+      try {
+        pickResult = await funnel.pickAndClassify(fakeSpan, notesBook, sourceBook, top);
+      } catch (err) {
+        continue;
+      }
+      if (pickResult.error || !pickResult.chunk) continue;
+
+      // Floor: drop weak matches (confidence or relevance below 'f')
+      const cf = pickResult.confidence || 'a';
+      const rv = pickResult.relevance || 'a';
+      if (cf < 'f' || rv < 'f') continue;
+
+      await Edge.create({
+        fromChunkId: noteChunk._id,
+        toChunkId: pickResult.chunk._id,
+        fromBookId: notesBookId,
+        toBookId: sourceBookId,
+        relationshipType: 'annotates',
+        confidence: cf,
+        relevance: rv,
+        method: 'note-citation',
+        resolved: true,
+      });
+      edgesCreated++;
+      createdHere++;
+    }
+
+    // ── DIRECTION 2: paper L-tagged span → notes chunk ──
+    // Pull every span on the source book that the new aggressive
+    // gap detection flagged as L-class (Ld/Lv/Lp). For each one,
+    // find the note chunk that best fills the gap. This is the
+    // reverse direction the user asked for: "Rodina has missing
+    // tags, find the notes that explain them".
+    const Span = require('../models/Span');
+    const lSpans = await Span.find({ bookId: sourceBookId, searchClass: 'L' })
+      .select('_id chunkId pageNumber spanText contextTags gapType')
+      .lean();
+    for (const lSpan of lSpans) {
+      // Cosine top-25 across THE notes chunks (reverse direction)
+      const scored = [];
+      for (const nc of noteChunks) {
+        if (!nc.embedding || nc.embedding.length === 0) continue;
+        // Embed the L-span if needed
+        let lEmbed = lSpan.embedding;
+        if (!lEmbed) {
+          // Use the parent chunk's embedding as a proxy — it's
+          // close enough for the cosine filter
+          const parent = sourceChunks.find(c => String(c._id) === String(lSpan.chunkId));
+          if (parent) lEmbed = parent.embedding;
+        }
+        if (!lEmbed) continue;
+        const cos = cosineSimilarity(lEmbed, nc.embedding);
+        scored.push({ chunk: nc, cosine: cos });
+      }
+      scored.sort((a, b) => b.cosine - a.cosine);
+      const top = scored.slice(0, 25);
+      if (top.length === 0) continue;
+
+      let pickResult;
+      try {
+        pickResult = await funnel.pickAndClassify(lSpan, sourceBook, notesBook, top);
+      } catch (err) {
+        continue;
+      }
+      if (pickResult.error || !pickResult.chunk) continue;
+      const cf = pickResult.confidence || 'a';
+      const rv = pickResult.relevance || 'a';
+      if (cf < 'f' || rv < 'f') continue;
+
+      // Edge points FROM the paper's L-span TO the notes chunk
+      // that fills the gap. Relationship type defaults to
+      // 'annotates' but the funnel may pick something more
+      // specific (e.g. 'uses_definition' for an Ld span filled
+      // by a definition note chunk).
+      await Edge.create({
+        fromChunkId: lSpan.chunkId,
+        fromSpanId: lSpan._id,
+        toChunkId: pickResult.chunk._id,
+        fromBookId: sourceBookId,
+        toBookId: notesBookId,
+        relationshipType: pickResult.relationship || 'annotates',
+        confidence: cf,
+        relevance: rv,
+        method: 'note-citation',
+        resolved: true,
+      });
+      edgesCreated++;
+      createdHere++;
     }
 
     perSourceStats.push({
       sourceBookId,
       title: sourceBook.title,
       sourceChunks: sourceChunks.length,
+      lSpans: lSpans.length,
       edges: createdHere,
     });
   }

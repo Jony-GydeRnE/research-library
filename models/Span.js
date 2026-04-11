@@ -21,6 +21,17 @@ const spanSchema = new mongoose.Schema({
     default: 'N',
   },
   searchConfidence: { type: String, default: null },  // single letter a-z
+  // gapType is set ONLY when searchClass='L'. Identifies which
+  // KIND of logical gap the span flagged so the matcher can pull
+  // notes / cited papers that fill the right kind of hole.
+  // Format set by the span-generation prompt:
+  //   'definition' (Ld): a term used without being defined
+  //   'derivation' (Lv): a result stated without showing the steps
+  //   'proof'      (Lp): an assertion without a proof
+  // Legacy `Lt` (L with confidence letter) parses to gapType=null
+  // and the confidence in searchConfidence — kept for backward
+  // compatibility with pre-2026-04-12 spans.
+  gapType: { type: String, default: null },
   resolved: { type: Boolean, default: false },
   resolvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Edge', default: null },
   regexFlags: [String],                     // e.g. ["missing_proof", "citation:AM_Ch3"]

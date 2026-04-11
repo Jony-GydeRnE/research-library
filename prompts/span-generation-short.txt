@@ -13,10 +13,19 @@ CONTEXT TAG QUALITY RULES (read carefully — these are the most common metadata
 
 2. NORMALIZATION: pick one canonical name per concept. Do not write `uv_scaling` on one span and `enhanced_uv_scaling` and `uv_bcfw_scaling` on others when they all refer to the same concept. Pick the shortest reasonable form (`uv_scaling`) unless the distinction is essential. Same for `hidden_zeros` vs `amplitude_zeros` vs `zero_condition` — choose one.
 
-3. SEARCH-CLASS PRECISION:
-   - L (logical gap): the text uses a hand-wave phrase ("it can be shown", "the reader may verify", "trivially") AND does NOT subsequently prove it in the same chunk or section. If the proof appears later in the same passage, do NOT tag L.
-   - B (broad external search): the sentence makes a substantive claim that is NOT proved here AND does NOT cite a source. If the surrounding text justifies the claim, do NOT tag B.
-   - These are triage signals for the edge resolution pipeline. Mis-tagging wastes downstream search budget. Only tag L or B when the gap is genuinely there.
+3. AGGRESSIVE GAP DETECTION (most important rule):
+   For every claim, equation, derivation step, or term that is stated without full justification IN THIS PAGE, add an L-tag with TYPE letter:
+       Ld = missing definition (uses concept without defining)
+       Lv = missing derivation (states result without showing steps)
+       Lp = missing proof (asserts without proving)
+   Examples:
+   - "by the Euler-Lagrange equations" → Lv
+   - "the Mandelstam invariants" without defining → Ld
+   - "it follows that" without showing why → Lp
+   - "applying the Ward identity" → Ld + Lv
+   - "as is well known" → Lp
+   EVERY chunk should produce at least one L-tag UNLESS it is purely self-contained.
+   B (broad external search): substantive unjustified claim that could come from many sources. Prefer L-with-type over B when possible.
 
 ROLE DISAMBIGUATION (read this carefully — these confusions are the most common errors):
 • preview vs proof: if a span describes what WILL BE proved/shown later ("we will prove that…", "we now show that…", "in this section we establish…"), the role is preview, NOT proof. Reserve proof for spans that contain actual derivation steps (algebraic manipulations, case analysis, "because X holds, Y follows", numbered or unnumbered proof steps).
@@ -30,12 +39,14 @@ SEARCH-CLASS TAG RULES (important — every claim needs triage):
    • Internal reference ("see Section 3.2", "by Theorem 4.1 above") → I{a-z}
 
 2. If the sentence makes a claim the text does NOT fully justify:
-   • "it can be shown", "it is obvious", "the reader may verify", "it follows immediately", "trivially", "one easily checks" → L{a-z} (logical gap)
-   • Any result, identity, or equation asserted without proof AND without citation → B{a-z} (broad external search needed)
+   • "it can be shown", "it is obvious", "trivially", "it follows that" → Lp (missing proof)
+   • "by the X equations", "from Y theory", "applying Z identity" → Lv (missing derivation)
+   • Term used without definition (e.g. "Mandelstam variables", "BCFW shift", "Adler zero") → Ld (missing definition)
+   • Substantive claim that could come from many sources, no justification → B{a-z} (broad external search)
 
 3. Only omit the search-class tag for fully self-contained sentences where the claim is proved in the current span or is routine setup/narrative (implicit N).
 
-CRITICAL: S is the ONLY search class with no confidence suffix. Write "S" alone, never "Sa", "Sq", etc. L, I, and B always take a confidence letter (a=~4% confident, z=~100% confident).
+CRITICAL: S is the ONLY search class with no confidence suffix. Write "S" alone, never "Sa", "Sq", etc. L tags use TYPE letters (Ld/Lv/Lp), NOT confidence — gap matching depends on knowing what KIND of gap. I and B still take a confidence letter (a=~4%, z=~100%).
 
 Declarative tags (optional, precision over recall): p/a/c/e/r/q/s/k/x/d/v followed by chunk.tag (e.g. p14.3, r7.2). ONLY use when the sentence literally performs that relation — when in doubt, omit.
 
@@ -50,14 +61,14 @@ Output:
 1 hidden_zeros tr_phi3_conjecture citation S
 2 hidden_zeros uniqueness_proof preview
 3 hidden_zero_identity proof r3.2 Iv
-4 amplitude_uniqueness claim Lt
+4 amplitude_uniqueness claim Lp
 5 loop_amplitudes result Bn
 
 Note on the above:
 • Line 1: cites external [15] → role=citation + bare S (no suffix!)
 • Line 2: previews something in this paper → implicit N, no search tag
 • Line 3: refers to Theorem 3.2 in the same paper → Iv (internal, ~85% confident)
-• Line 4: "it is obvious" is a logical gap phrase → Lt (~77% confident notes would help)
+• Line 4: "it is obvious" is a missing-proof gap → Lp (type=proof)
 • Line 5: unjustified assertion without citation → Bn (broad search, ~50% confident)
 
 Every span has at least one context tag AND exactly one role. Every claim that the text does not fully justify carries a search class.
