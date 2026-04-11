@@ -33,8 +33,8 @@ Two decisions, locked. Everything else (prompt caching, fine-tuning, specialist 
 
 ### 🔥 High priority — fires
 - [x] ✅ **Fix 1: Reprocess 24 empty notes pages from 429 TPM (Root cause #1).** Done 2026-04-11. Vision 24/24 in 248s, spans 967, chunks 643 (up from 406), 638 notes→Rodina edges (up from 265). Tier B 52/81 → **62/81 = 76.5%** (+12.3 pts), Tier C unchanged at 20/81 (blocked by Fix 3). Reprocess flipped exactly the predicted groups: Core proof +3, Deeper proof body +4, Worked examples +3. Notes pages p45-58 now contributing edges as expected. See 2026-04-11 session section for full breakdown + funnel 429 retry patch + gpt-4o-mini substitution notes.
-- [ ] **Fix 2: Rodina p1 candidate-pool exclusion (Root cause #2).** 0/265 notes→Rodina edges land on p1 despite `[definition] lagrangian_formalism` chunk existing. Likely the `BIB_FRAGMENT` regex and/or the min-length floor in `services/funnelService.js` + `services/edgeResolverService.js isBibliographyChunk` is dropping the whole page. Loosen: require >60% of page chunks to be `[N]`-style before excluding.
-- [ ] **Fix 3: Notes-source relationship prompt collapse (Root cause #3).** 265/265 notes→Rodina edges = `annotates`. For notes-source funnel calls in `prompts/edge-pick.txt`, either strip `n` from option set or add explicit guidance mapping gap types (Ld/Lv/Lp) to `uses_definition / prerequisite / proves / missing_proof`. Single-file prompt edit. Drags Tier C from 52 → 20.
+- [ ] 🟡 **Fix 2: Rodina p1 candidate-pool exclusion (Root cause #2).** CODE COMPLETE, AWAITING QUOTA RE-RUN. Fraction-threshold bib-page detector (60%) now in `services/funnelService.js resolveSpanThroughFunnel` + `services/noteIngestionService.js matchNotesToSourceBooks`. Data-level validation (no API): Rodina p1 is 2/22 = 9% bib-like under the new rule (kept, including `[definition] lagrangian_formalism`), p8 = 75% (correctly excluded), p9 = 100% (correctly excluded). Pre-patch single-chunk rule nuked all of p1. Run `scripts/score_benchmark.js` after the next quota-restored match pass; expected Tier B jump 62 → 71-73.
+- [ ] 🟡 **Fix 3: Notes-source relationship prompt collapse (Root cause #3).** CODE COMPLETE, AWAITING QUOTA RE-RUN. `prompts/edge-pick.txt` now has a "NOTES-SOURCE SPECIAL RULE" section forbidding `n` (annotates) and mapping target-chunk structural type → relationship letter: `[definition]`→`d` (uses_definition), `[theorem]`/`[proof]`→`p` (proves), `[narrative]`/`[example]`→`r` (prerequisite), with `m` for explicit missing-proof gaps and `s` as fallback. `services/funnelService.js pickAndClassify` injects `SOURCE_KIND: notes` and the rule text only when `sourceBook.kind === 'notes'`. Decoder (`funnelService.decodePickVerdict` → `compressionService.letterToRelationship`) already accepts all 5 letters. Expected Tier C jump 20 → 50+ once the match re-runs under the new prompt.
 - [ ] **Source-side cite click broken when bookId is hallucinated.** Old chats from before `842796f` contain `[[cite]]` tags with fabricated bookIds (verified: `682b9b5b...`, `6839b022...`, `6838f4f2...`, none in DB). The chat renderer at `views/chat.ejs:282-308 renderCitation()` falls back to `'Book'` as the title and emits a dead-link `<a href>`. Hallucination root-cause is fixed in `services/claudeService.js BASE_PROMPT` (anti-hallucination rule, c0a8284) and `services/claudeService.js getAllCrossBookEdges()` (high-priority cross_book_edges section, 842796f). **ACTION:** test in a fresh chat post-c0a8284. If new chats still produce dead-link sources, add a server-side validator that strips `[[cite]]` tags whose bookId isn't in `booksMap` before sending to client.
 - [ ] **Chat persistence bug: 2 replies but only 1 saved.** Chats `69d94830...` and `69d9489c...` each persisted only 1 assistant message even though the user got two AI replies. The "Continue" / regenerate path is dropping the second response. Investigate `app.post '/api/chat/:chatId/respond'` and `app.post '/api/chat/:chatId/message'` in `server.js`, plus the streaming-completion handler in `services/claudeService.js streamResponse()`.
 - [ ] **Stale agenda job watchdog.** Books stuck at processingProgress=25% after computer sleep have no auto-recovery. Manual "Resume / reprocess" kebab works (`controllers/booksController.js` + `views/files.ejs`) but should auto-fire on stuck state. Action: add a periodic check in `services/jobService.js` that finds Jobs in 'running' state with `startedAt > 30 min ago` and either marks them failed or re-enqueues them.
@@ -82,7 +82,76 @@ Two decisions, locked. Everything else (prompt caching, fine-tuning, specialist 
 ---
 
 
-## 2026-04-11 — Benchmark scorer + 24-page vision recovery (in flight)
+## 2026-04-11 — Fix 2 + Fix 3 landed, OpenAI quota exhausted, awaiting top-up
+
+**Session outcome:** Both remaining root-cause fixes are code-complete and committed. Neither has been empirically re-tested because OpenAI quota is exhausted (`429 You exceeded your current quota, please check your plan and billing details` on every request — not TPM, a hard billing cap). Current Rodina benchmark is still the post-Fix-1 number **62/81 = 76.5%** (Tier B) / **20/81 = 24.7%** (Tier C); the re-test under the new code is expected to push Tier B → ~88-92% and Tier C → ~50+% once quota is restored.
+
+### What shipped this session
+
+**1. Fix 2 — Rodina p1 candidate-pool exclusion.** Replaced the old "any bib-like chunk nukes the whole page" rule with a **fraction threshold** (≥60% of page chunks must be bib-like to exclude). Landed in both layers so the bug can't re-appear:
+- `services/funnelService.js resolveSpanThroughFunnel` — the funnel's own candidate-pool filter
+- `services/noteIngestionService.js matchNotesToSourceBooks` — the notes-match-specific bib filter that runs before the funnel call
+
+**Data-level validation (no API calls needed):**
+
+| Rodina page | Bib-like | Under new 60% rule |
+|---|---|---|
+| **p1** | **2/22 = 9%** | **✅ KEPT** (includes `[definition] lagrangian_formalism`) |
+| p2 | 0/18 = 0% | ✅ kept |
+| p3 | 0/16 = 0% | ✅ kept |
+| p4 | 0/11 = 0% | ✅ kept |
+| p5 | 0/17 = 0% | ✅ kept |
+| p6 | 0/16 = 0% | ✅ kept |
+| p7 | 0/9 = 0% | ✅ kept |
+| p8 | 9/12 = 75% | ✗ correctly excluded |
+| p9 | 1/1 = 100% | ✗ correctly excluded |
+
+The 20/22 chunks kept from Rodina p1 include the exact `[definition] lagrangian_formalism` chunk that benchmark item #7 needs, plus the Mandelstam invariants, planar invariants, c-equation, and momentum conservation chunks that items #1, 2, 4, 5, 6 need. The pre-fix behavior nuked all of p1 because chunks containing `[15]` inline citations tripped the BIB_FRAGMENT regex → whole page marked bibliography.
+
+**2. Fix 3 — Notes-source relationship prompt collapse.** Three-layer patch:
+- `prompts/edge-pick.txt` — new "NOTES-SOURCE SPECIAL RULE" section that activates when the input contains `SOURCE_KIND: notes`. Forbids `n` (annotates), maps target structural type → relationship letter:
+  - `[definition]` → `d` (uses_definition)
+  - `[theorem]` / `[proof]` → `p` (proves)
+  - `[narrative]` / `[example]` → `r` (prerequisite)
+  - Gap signal (note marks missing proof) → `m` (missing_proof)
+  - Fallback → `s` (assumes/supports)
+- `services/funnelService.js pickAndClassify` — emits `SOURCE_KIND: notes` and the in-prompt notes rules block only when `sourceBook.kind === 'notes'`
+- Decoder path: `funnelService.decodePickVerdict` → `compressionService.letterToRelationship`. All 5 new letters already exist in the letter map (`d=uses_definition, r=prerequisite, p=proves, m=missing_proof, s=assumes`), no decoder changes needed. Unknown letters fall back to `assumes` (not `annotates`), so even if the model slips, Tier C won't stay at 100% annotates.
+
+### What blocked the live re-test
+
+OpenAI quota hit during the background match task (`bpeqre08w`, mini + 643 chunks × 5 target books). Tail of `/tmp/match2.log`:
+```
+[noteIngestionService] pickAndClassify threw: 429 You exceeded your current quota, please check your plan and billing details
+```
+This is a hard billing cap, not a TPM throttle. The 429-retry-with-hint patch from earlier in the day handles TPM windows (up to 60s reset) but has no answer for quota exhaustion. Verified with a minimal 4-token `gpt-4o-mini` ping afterward — same quota error. Jony must top up the OpenAI billing before Fix 2 and Fix 3 can be validated empirically.
+
+### Current live edge-graph state
+
+- Notes → Rodina: **638 edges**, all `annotates`, ZERO on Rodina p1. This is the post-Fix-1 state from the earlier run under **pre-Fix-2/3 funnel code** — i.e. the benchmark currently in the DB reflects Fix 1 only. The 638 edges are stale from the fix-validation perspective and will be overwritten by `Edge.deleteMany({fromBookId, method:'note-citation'})` on the next `matchNotesToSourceBooks` call.
+- Notes → Book 2 (2312.16282): ~314 edges partially built before quota hit. Also stale.
+- Tier A loose: 81/81 = 100.0%
+- Tier B strict: 62/81 = 76.5%
+- Tier C strict+rel: 20/81 = 24.7%
+
+### Resume instructions for next session (when quota is restored)
+
+1. Verify quota: `node -e "require('dotenv').config(); const OpenAI=require('openai'); const c=new OpenAI({apiKey:process.env.OPENAI_API_KEY}); c.chat.completions.create({model:'gpt-4o-mini',max_tokens:4,messages:[{role:'user',content:'ping'}]}).then(r=>console.log('OK',r.choices[0].message.content)).catch(e=>console.log('ERR',e.status,e.message.slice(0,120)));"`
+2. If OK, re-run the match pass (picks up Fix 2 candidate-pool + Fix 3 prompt automatically, no code changes needed): `EDGE_PICKER_MODEL=gpt-4o-mini node -e "require('dotenv').config(); require('mongoose').connect(process.env.MONGODB_URI).then(()=>require('./services/noteIngestionService').matchNotesToSourceBooks('69d9ce81aa83b8b11c1837dd')).then(r=>{console.log(JSON.stringify({edges:r.edgesCreated,err:r.error,stats:r.perSourceStats},null,2));process.exit(0);});"`
+3. While it runs, monitor: `node -e "require('dotenv').config();require('mongoose').connect(process.env.MONGODB_URI).then(async()=>{const E=require('./models/Edge');console.log('Rodina:',await E.countDocuments({fromBookId:'69d9ce81aa83b8b11c1837dd',toBookId:'69d5dd60c826b8392d57012d',method:'note-citation'}));process.exit(0);});"`
+4. After Rodina count stabilizes, rerun scorer at three tiers and update this section with the actual Tier B / Tier C numbers.
+5. Confirm relationship-type histogram is no longer 100% `annotates` — run `node -e "require('dotenv').config();require('mongoose').connect(process.env.MONGODB_URI).then(async()=>{const E=require('./models/Edge');const e=await E.find({fromBookId:'69d9ce81aa83b8b11c1837dd',toBookId:'69d5dd60c826b8392d57012d',method:'note-citation'}).lean();const h={};for(const x of e)h[x.relationshipType]=(h[x.relationshipType]||0)+1;console.log(h);process.exit(0);});"`. Target: a healthy mix of uses_definition / prerequisite / proves / missing_proof / assumes, with `annotates` count zero (or near-zero from letter slips).
+
+### Forecast (unchanged from prior session)
+
+- **Tier B 62 → ~71-73 (88-90%)** once Fix 2 runs. The +9-11 jump comes from the 14 Foundation / Physical-picture items that currently WRONG_TARGET because they were looking for Rodina p1.
+- **Tier C 20 → ~50+** once Fix 3 runs. Relationship types distribute across the 5 notes-specific letters instead of collapsing to `n`.
+- **Remaining gap to 95%:** if both predictions land, Tier B ≈ 90% means 8 items are still not COVERED in the strict sense. Those are the PARTIAL/WRONG items where the source-page-tolerance window (NW=2) is too tight — they pass at NW=5 but not NW=2. Whether to loosen the scorer NW or push further on the funnel's source-page precision is a next-session call.
+
+---
+
+
+## 2026-04-11 — Benchmark scorer + 24-page vision recovery
 
 **Session goal:** honestly score the 81-item `notes-paper-rodina-example.md` gap map against live edges. Jony's ask: prove the system hits ≥95% on target-page correctness.
 
