@@ -193,18 +193,36 @@ async function matchNotesToSourceBooks(notesBookId) {
     const allSourceChunksRaw = await Chunk.find({ bookId: sourceBookId })
       .select('_id pageNumber chunkIndex sourceText contextTags embedding structuralType')
       .lean();
-    // Reuse the funnel's bib-page detection so notes never land
-    // on bibliography fragments.
-    const bibPages = new Set();
+    // Fraction-threshold bib-page detection (mirrors funnelService).
+    // Only exclude a whole page as bibliography if ≥60% of its
+    // chunks look bib-like; otherwise keep the page and drop
+    // individual bib chunks. Fixes Rodina p1 being nuked by 2
+    // citation-dense narrative chunks out of 22.
+    const BIB_PAGE_FRACTION = 0.6;
     const BIB_FRAGMENT = /^\s*(?:\[\d+\]\s*[A-Z][a-z]?\.?|Bibliography|References)/;
-    for (const c of allSourceChunksRaw) {
-      if (isBibliographyChunk(c)) { bibPages.add(c.pageNumber); continue; }
+    const isBibLike = (c) => {
+      if (isBibliographyChunk(c)) return true;
       const txt = (c.sourceText || '').trim();
-      if (BIB_FRAGMENT.test(txt) && txt.length < 50) bibPages.add(c.pageNumber);
-      else if (/^Bibliography|^References\b/i.test(txt)) bibPages.add(c.pageNumber);
+      if (txt.length === 0) return false;
+      if (BIB_FRAGMENT.test(txt) && txt.length < 50) return true;
+      if (/^Bibliography|^References\b/i.test(txt)) return true;
+      return false;
+    };
+    const byPage = new Map();
+    for (const c of allSourceChunksRaw) {
+      if (!byPage.has(c.pageNumber)) byPage.set(c.pageNumber, []);
+      byPage.get(c.pageNumber).push(c);
+    }
+    const bibPages = new Set();
+    for (const [page, chunks] of byPage) {
+      const bibCount = chunks.filter(isBibLike).length;
+      if (chunks.length > 0 && bibCount / chunks.length >= BIB_PAGE_FRACTION) {
+        bibPages.add(page);
+      }
     }
     let sourceChunks = allSourceChunksRaw.filter(c => {
       if (bibPages.has(c.pageNumber)) return false;
+      if (isBibLike(c)) return false;
       if ((c.sourceText || '').trim().length < 40) return false;
       return true;
     });

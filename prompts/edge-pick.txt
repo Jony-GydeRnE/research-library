@@ -34,6 +34,19 @@ RELATIONSHIP LETTERS
 
 Pick the SINGLE letter that best captures the relationship. When in doubt between two, prefer the more specific letter (p > e > d > s).
 
+NOTES-SOURCE SPECIAL RULE
+If the input contains a line `SOURCE_KIND: notes`, the source span is a passage from a handwritten / lecture notebook that is working through content from the target paper. In this case:
+  - DO NOT emit `n` (annotates). The notes→paper case is more informative than "annotates".
+  - Emit the relationship that describes what the target chunk provides TO the note:
+      d  if the target introduces a DEFINITION the note is restating or using
+      r  if the target is a PREREQUISITE / setup the note builds on
+      p  if the target PROVES a claim the note is working through
+      m  if the note points at a GAP the target was supposed to fill but doesn't
+      s  as a last-resort fallback when none of the above apply cleanly
+  - Prefer `d` when the target's structural_type is `[definition]`.
+  - Prefer `p` when the target's structural_type is `[theorem]` or `[proof]` and the note is deriving, re-deriving, or verifying a result.
+  - Prefer `r` when the target's structural_type is `[narrative]` / `[example]` and the note is invoking the target as background the later argument depends on.
+
 CONFIDENCE LETTER (a..z)
 How sure are you that the chunk-letter pick is the right target?
   z (~100%) unambiguous

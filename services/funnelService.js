@@ -339,10 +339,12 @@ async function pickAndClassify(sourceSpan, sourceBook, targetBook, candidates) {
   }
   const top = candidates.slice(0, PICK_CANDIDATE_COUNT);
 
+  const sourceIsNotes = sourceBook && sourceBook.kind === 'notes';
   const lines = [];
   lines.push('SOURCE_SPAN: "' + (sourceSpan.spanText || '').replace(/\s+/g, ' ').trim().substring(0, 320) + '"');
   lines.push('SOURCE_TAGS: ' + (sourceSpan.contextTags || []).join(', '));
   lines.push('SOURCE_BOOK: ' + (sourceBook.title || ''));
+  if (sourceIsNotes) lines.push('SOURCE_KIND: notes');
   lines.push('');
   lines.push('CANDIDATES (target book: ' + (targetBook.title || '') + '):');
   for (let i = 0; i < top.length; i++) {
@@ -353,6 +355,15 @@ async function pickAndClassify(sourceSpan, sourceBook, targetBook, candidates) {
     lines.push(letter + ': p' + c.pageNumber + ' [' + (c.structuralType || 'narrative') + '] tags=[' + tags + '] text="' + text + '"');
   }
   lines.push('');
+  if (sourceIsNotes) {
+    lines.push('NOTE: SOURCE_KIND is notes. DO NOT output relationship letter `n` (annotates).');
+    lines.push('Pick the relationship that describes what the target chunk provides to this note:');
+    lines.push('  d = uses_definition (note restates/uses a definition from the target)');
+    lines.push('  r = prerequisite    (target is background the note builds on)');
+    lines.push('  p = proves          (target proves a claim the note is working through)');
+    lines.push('  m = missing_proof   (note points at a gap the target was supposed to fill)');
+    lines.push('  s = supports        (default fallback for ordinary note→paper reference)');
+  }
   lines.push('Output exactly 4 lowercase letters on one line. No prose. No explanations.');
   const userInput = lines.join('\n');
 
@@ -454,38 +465,42 @@ async function resolveSpanThroughFunnel(sourceSpan, sourceBook, targetBookId) {
     .select('_id pageNumber chunkIndex sourceText contextTags structuralType embedding')
     .lean();
 
-  // Identify bibliography pages: pages whose chunks include either
-  // (a) a chunk that the existing isBibliographyChunk heuristic
-  //     catches (4+ [N] markers, dense citations, [N] author-init
-  //     prefix), OR
-  // (b) a chunk whose text starts with "Bibliography" or
-  //     "References" (the section header), OR
-  // (c) a chunk shorter than 25 chars that matches a bib-fragment
-  //     pattern like "[2] N." or "Arkani-Hamed, Y." — Book 2's
-  //     bibliography is split into many tiny fragments which the
-  //     existing heuristic misses individually.
-  // All chunks on a bibliography page are excluded from the
-  // candidate pool. This is the right granularity because once
-  // a page is recognized as bibliography, every chunk on it is
-  // either a fragment of a reference entry or surrounding context.
-  const bibPages = new Set();
+  // Identify bibliography pages using a FRACTION THRESHOLD. Old
+  // behavior marked a page as bib the moment a single chunk looked
+  // bib-like, which nuked Rodina p1 (22 narrative chunks + 2 with
+  // 3 inline citations each — density rule tripped, page excluded,
+  // benchmark items 1-7 all failed). New rule: only exclude a page
+  // as bibliography if ≥60% of its chunks are bib-like. Real
+  // bibliography pages are essentially all bib entries; narrative
+  // pages with a few citation-dense paragraphs keep their non-bib
+  // chunks in the candidate pool.
+  const BIB_PAGE_FRACTION = 0.6;
   const BIB_FRAGMENT = /^\s*(?:\[\d+\]\s*[A-Z][a-z]?\.?|Bibliography|References)/;
-  for (const c of allChunksRaw) {
-    if (isBibliographyChunk(c)) {
-      bibPages.add(c.pageNumber);
-      continue;
-    }
+  const isBibLike = (c) => {
+    if (isBibliographyChunk(c)) return true;
     const txt = (c.sourceText || '').trim();
-    if (txt.length === 0) continue;
-    if (BIB_FRAGMENT.test(txt) && txt.length < 50) {
-      bibPages.add(c.pageNumber);
-    } else if (/^Bibliography|^References\b/i.test(txt)) {
-      bibPages.add(c.pageNumber);
+    if (txt.length === 0) return false;
+    if (BIB_FRAGMENT.test(txt) && txt.length < 50) return true;
+    if (/^Bibliography|^References\b/i.test(txt)) return true;
+    return false;
+  };
+  const byPage = new Map();
+  for (const c of allChunksRaw) {
+    if (!byPage.has(c.pageNumber)) byPage.set(c.pageNumber, []);
+    byPage.get(c.pageNumber).push(c);
+  }
+  const bibPages = new Set();
+  for (const [page, chunks] of byPage) {
+    const bibCount = chunks.filter(isBibLike).length;
+    if (chunks.length > 0 && bibCount / chunks.length >= BIB_PAGE_FRACTION) {
+      bibPages.add(page);
     }
   }
   const allChunks = allChunksRaw.filter(c => {
     if (bibPages.has(c.pageNumber)) return false;
-    if (isBibliographyChunk(c)) return false;
+    // Per-chunk exclusion still applies for individual bib chunks
+    // on narrative pages (e.g. Rodina p1 chunks 8 and 10).
+    if (isBibLike(c)) return false;
     // Skip very short chunks (< 40 chars) — they can't carry
     // enough content to be useful citation targets and are
     // typically OCR/parse fragments.
