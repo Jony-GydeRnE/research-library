@@ -64,6 +64,28 @@ Output:
 4 amplitude_uniqueness claim Lp
 5 loop_amplitudes result Bn
 
+HIGH-DENSITY GAP TAGGING — additional examples (notice almost every span gets an L-tag):
+
+Input:
+[1] We consider Tr(φ³) ordered amplitudes A(1,…,n) written in planar invariants Xᵢⱼ.
+[2] The Mandelstam invariants sᵢⱼ and non-planar invariants cᵢⱼ also appear.
+[3] Under the BCFW shift pᵢ → pᵢ+zq, pⱼ → pⱼ-zq, the Xᵢⱼ become z-dependent.
+[4] It is clear that the only Xᵢⱼ affected are of three possible types.
+[5] By the action principle, the physical path extremizes S = ∫ L dt.
+[6] Applying the Ward identity gives transversality eᵢ·pᵢ = 0.
+[7] It follows that B must be linear in the cᵢⱼ.
+[8] D-subsets are obtained by removing a leg and reattaching in all ordered positions.
+
+Output:
+1 tr_phi3_amplitudes color_ordering planar_invariants definition Ld Ld
+2 mandelstam_invariants nonplanar_invariants definition Ld Ld
+3 bcfw_shift definition Lv
+4 affected_invariants_classification claim Lp
+5 action_principle background Lv
+6 ward_identity transversality result Ld Lv
+7 b_linear_in_c claim Lp
+8 d_subset_construction definition Ld Lv
+
 Note on the above:
 • Line 1: cites external [15] → role=citation + bare S (no suffix!)
 • Line 2: previews something in this paper → implicit N, no search tag

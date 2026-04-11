@@ -143,4 +143,67 @@ Example output:
 2 hidden_zeros uniqueness_proof preview
 3 uniqueness_results background S
 
+═══════════════════════════════════════════════════════════════════
+HIGH-DENSITY GAP-TAGGING EXAMPLES (drawn from Rodina-style hep-th text — these
+show what AGGRESSIVE Ld/Lv/Lp tagging looks like in practice. Notice that almost
+every span gets a gap tag because almost every sentence uses an undefined term,
+asserts a result without derivation, or makes a "clearly" claim.)
+═══════════════════════════════════════════════════════════════════
+
+Example input (Rodina-style — terms used without definition):
+[1] We consider Tr(φ³) ordered amplitudes A(1,2,…,n) written in terms of planar invariants Xᵢⱼ.
+[2] The Mandelstam invariants sᵢⱼ = (pᵢ+pⱼ)² and the non-planar invariants cᵢⱼ also play a role.
+[3] These objects form a complete basis for the kinematic space.
+
+Example output:
+1 tr_phi3_amplitudes color_ordering planar_invariants definition Ld Ld
+2 mandelstam_invariants nonplanar_invariants definition Ld Ld
+3 kinematic_basis claim Lp
+
+Example input (Rodina-style — "it is clear" + missing algebra):
+[1] Under the BCFW shift pᵢ → pᵢ + zq, pⱼ → pⱼ - zq, the planar invariants become z-dependent.
+[2] It is clear that the only Xᵢⱼ affected by either the shift or the zero are of three possible types.
+[3] Imposing the zero conditions cᵢⱼ = 0 then gives X⁽⁰⁾_{1,j+1} = s₁₂ + Σ s₂ᵢ + s₃…ⱼ.
+
+Example output:
+1 bcfw_shift planar_invariants definition Lv
+2 affected_invariants_classification claim Lp
+3 zero_condition_substitution equation Lv
+
+Example input (Rodina-style — physics jargon + an unproved key step):
+[1] Unitarity implies that the residue of an amplitude on a factorization channel is the product of two on-shell sub-amplitudes.
+[2] By the action principle, the physical path extremizes the action S = ∫ L dt.
+[3] Applying the Ward identity then yields the desired transversality condition eᵢ·pᵢ = 0.
+[4] It follows immediately that B must be linear in the cᵢⱼ.
+
+Example output:
+1 unitarity factorization_residues background Lv
+2 action_principle background Lv
+3 ward_identity transversality result Ld Lv
+4 b_linear_in_c claim Lp
+
+Example input (Rodina-style — induction/cascade with skipped steps):
+[1] Collect in subsets Bᵢ all individual terms of B that scale as zⁱ under the BCFW shift.
+[2] The leading subset Bₘ then satisfies Bₘ(X⁽∞⁾) = 0 by the enhanced scaling assumption.
+[3] Since X⁽∞⁾ satisfy the same identities as X⁽⁰⁾, Bₘ has the same factored form.
+[4] Apply the same reasoning to B' = Bₘ₋₁ + Bₘ₋₂ + …, proving each Bᵢ also satisfies the zero.
+
+Example output:
+1 z_scaling_decomposition definition Ld Lv
+2 enhanced_scaling_vanishing result Lp
+3 x_zero_x_infinity_identity claim Lp
+4 inductive_cascade proof Lv
+
+Example input (Rodina-style — definition gaps in geometry/combinatorics):
+[1] The diagrams can be decomposed into D-subsets, each obtained by removing a leg and reattaching it in all ordered positions.
+[2] Boundary propagators are precisely the Xᵢⱼ that participate in the zero conditions or attain z-dependence under shifts.
+[3] A term with k boundary propagators scales as z⁻ᵏ.
+[4] Cubic tree diagrams correspond to triangulations of an n-gon, and intersecting chords correspond to non-planar cᵢⱼ.
+
+Example output:
+1 d_subset_construction definition Ld Lv
+2 boundary_propagators definition Ld
+3 boundary_propagator_scaling result Lv
+4 diagram_triangulation_correspondence definition Ld
+
 Now annotate the following text. Output ONLY the DSL lines, one per span. No explanation.

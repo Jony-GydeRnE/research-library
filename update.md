@@ -10,6 +10,27 @@ Maintained by Claude Code (CC) on a ~3-5-response cadence. Bad attempts that got
 
 **Goal: shrink this list every session.** Items move from here to the "Done" tail at the bottom of this section as they ship. Each item carries the file path + function/line so future sessions can grep straight to the right place. Add new items at the bottom of their priority bucket; cross out and archive ones that ship.
 
+### 🎯 Architecture decisions locked in 2026-04-10 (DO NOW sequence)
+
+Two decisions, locked. Everything else (prompt caching, fine-tuning, specialist agents, full retrieval system) is deferred until edge count proves these work.
+
+**Decision 1 — DIRECTION REVERSAL (notes→paper is primary).** Paper→notes is open-world search (needle in a haystack of fuzzy handwriting). Notes→paper is closed-world: every notes chunk is GUARANTEED to be explaining *something* in the paper, so the question becomes "which of ~80 paper chunks?" — small clean target space. Architecture:
+- **Primary pass:** for every notes chunk, funnel against the source paper's chunks. Always produces an edge.
+- **Secondary pass:** for paper L-tagged chunks left UNCOVERED by the primary pass, run paper→notes funnel to try to fill them.
+- **Bonus output:** the list of paper chunks that NO note covers = "gaps in your understanding" = crawler targets.
+- Cost: ~$0.10 per notes upload (down from $0.13 bidirectional).
+- File: `services/noteIngestionService.js matchNotesToSourceBooks`.
+
+**Decision 2 — EXAMPLE LIBRARY (Phase 1: hardcoded few-shots only).** Don't build the retrieval system yet. Pick 8-10 representative examples from `notes-paper-rodina-example.md` and HARDCODE them into the span generation prompts as few-shot examples. Full retrieval system (`services/exampleLibrary.js` with embedding lookup) is Phase 4, only built once we prove the hardcoded version moves L-tag count from 38 → 70+.
+
+**DO NOW (in order):**
+1. ⏳ Add 8-10 examples from `notes-paper-rodina-example.md` to `prompts/span-generation-full.txt` and `prompts/span-generation-short.txt`
+2. ⏳ Regenerate Rodina spans (`generateSpansForBook(rodinaId)`) — target: **70+ L-tags** (currently 38)
+3. ⏳ Implement direction reversal in `services/noteIngestionService.js matchNotesToSourceBooks`
+4. ⏳ User re-uploads Lagrangians notes with toggle ON
+5. ⏳ Run notes→paper funnel via kebab → "Link to source book"
+6. ⏳ Score against the 81-item benchmark in `notes-paper-rodina-example.md`
+
 ### 🔥 High priority — fires
 - [ ] **Source-side cite click broken when bookId is hallucinated.** Old chats from before `842796f` contain `[[cite]]` tags with fabricated bookIds (verified: `682b9b5b...`, `6839b022...`, `6838f4f2...`, none in DB). The chat renderer at `views/chat.ejs:282-308 renderCitation()` falls back to `'Book'` as the title and emits a dead-link `<a href>`. Hallucination root-cause is fixed in `services/claudeService.js BASE_PROMPT` (anti-hallucination rule, c0a8284) and `services/claudeService.js getAllCrossBookEdges()` (high-priority cross_book_edges section, 842796f). **ACTION:** test in a fresh chat post-c0a8284. If new chats still produce dead-link sources, add a server-side validator that strips `[[cite]]` tags whose bookId isn't in `booksMap` before sending to client.
 - [ ] **Chat persistence bug: 2 replies but only 1 saved.** Chats `69d94830...` and `69d9489c...` each persisted only 1 assistant message even though the user got two AI replies. The "Continue" / regenerate path is dropping the second response. Investigate `app.post '/api/chat/:chatId/respond'` and `app.post '/api/chat/:chatId/message'` in `server.js`, plus the streaming-completion handler in `services/claudeService.js streamResponse()`.

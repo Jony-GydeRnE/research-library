@@ -215,6 +215,12 @@ async function matchNotesToSourceBooks(notesBookId) {
     sourceChunks = await ensureEmbeddings(sourceChunks);
 
     let createdHere = 0;
+    // Track which source-paper chunkIds get covered by Direction 1.
+    // Direction 2 (paper L-span → notes) ONLY runs for L-tagged
+    // paper chunks NOT in this set — that's the locked-in
+    // direction-reversal architecture: notes→paper is primary,
+    // paper→notes only fills gaps the primary pass missed.
+    const coveredSourceChunkIds = new Set();
 
     // ── DIRECTION 1: notes chunk → source chunk via funnel ──
     // For each note chunk, run the SAME funnel the paper resolver
@@ -265,21 +271,34 @@ async function matchNotesToSourceBooks(notesBookId) {
         method: 'note-citation',
         resolved: true,
       });
+      coveredSourceChunkIds.add(String(pickResult.chunk._id));
       edgesCreated++;
       createdHere++;
     }
 
-    // ── DIRECTION 2: paper L-tagged span → notes chunk ──
-    // Pull every span on the source book that the new aggressive
-    // gap detection flagged as L-class (Ld/Lv/Lp). For each one,
-    // find the note chunk that best fills the gap. This is the
-    // reverse direction the user asked for: "Rodina has missing
-    // tags, find the notes that explain them".
+    // ── DIRECTION 2 (gap-fill only): paper L-tagged span → notes ──
+    // Locked-in architecture (2026-04-10): the primary pass is
+    // notes→paper because the notes target space is small and
+    // clean. The reverse pass runs ONLY for L-tagged paper chunks
+    // that the primary pass left UNCOVERED — i.e. L-tagged paper
+    // chunks that no notes chunk landed on. This is structurally
+    // why the directionality matters: an L-tagged chunk with no
+    // incoming notes edge is exactly a "gap in your understanding"
+    // signal, and we get one extra funnel call to try to fill it.
+    //
+    // BONUS OUTPUT: paper chunks (especially L-tagged) that remain
+    // uncovered AFTER both passes are returned in
+    // perSourceStats[i].uncoveredPaperChunkIds — these are crawler
+    // targets, surface them in the UI as "you have notes on most of
+    // this paper but no notes covering these specific chunks".
     const Span = require('../models/Span');
     const lSpans = await Span.find({ bookId: sourceBookId, searchClass: 'L' })
       .select('_id chunkId pageNumber spanText contextTags gapType')
       .lean();
-    for (const lSpan of lSpans) {
+    // Filter to L-spans whose parent chunk was NOT covered in
+    // Direction 1. These are the only ones worth a Direction-2 call.
+    const uncoveredLSpans = lSpans.filter(s => !coveredSourceChunkIds.has(String(s.chunkId)));
+    for (const lSpan of uncoveredLSpans) {
       // Cosine top-25 across THE notes chunks (reverse direction)
       const scored = [];
       for (const nc of noteChunks) {
@@ -328,16 +347,34 @@ async function matchNotesToSourceBooks(notesBookId) {
         method: 'note-citation',
         resolved: true,
       });
+      coveredSourceChunkIds.add(String(lSpan.chunkId));
       edgesCreated++;
       createdHere++;
     }
+
+    // BONUS OUTPUT: which L-tagged paper chunks remain uncovered
+    // after both passes? These are "gaps in your understanding" —
+    // claims in the source paper that no notes chunk addresses,
+    // even after the gap-fill pass. Crawler targets for arXiv
+    // ingestion of cited sources.
+    const uncoveredLChunkIds = [...new Set(
+      lSpans
+        .map(s => String(s.chunkId))
+        .filter(id => !coveredSourceChunkIds.has(id))
+    )];
 
     perSourceStats.push({
       sourceBookId,
       title: sourceBook.title,
       sourceChunks: sourceChunks.length,
       lSpans: lSpans.length,
+      lSpansSkipped: lSpans.length - uncoveredLSpans.length,
+      lSpansAttempted: uncoveredLSpans.length,
       edges: createdHere,
+      uncoveredLChunkIds,                          // crawler targets
+      coverageRatio: sourceChunks.length
+        ? coveredSourceChunkIds.size / sourceChunks.length
+        : 0,
     });
   }
 
