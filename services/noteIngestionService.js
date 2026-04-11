@@ -155,9 +155,24 @@ async function matchNotesToSourceBooks(notesBookId) {
   }
   noteChunks = await ensureEmbeddings(noteChunks);
 
-  // Wipe any prior note-citation edges from this notes book so
-  // re-runs are deterministic.
-  await Edge.deleteMany({ fromBookId: notesBookId, method: 'note-citation' });
+  // Buffer all new edges in memory. The old delete-first flow wiped
+  // the previous run's edges BEFORE building the new ones, so a
+  // mid-run failure (API quota, crash, kill) left the DB with zero
+  // edges and no way to recover without a full re-run. New flow:
+  // build pendingEdges in memory; only touch the DB at the end of
+  // matchNotesToSourceBooks after the loop completes cleanly. If
+  // anything throws before the commit step, the existing edges in
+  // the DB are untouched.
+  const pendingEdges = [];
+  // Safety rails: track pickAndClassify attempts and errors so we
+  // can refuse to commit a run that hit a wall of API failures.
+  // "Success" means the loop completed AND the error rate stayed
+  // under MAX_PICK_ERROR_RATE. If it blows past that, throw before
+  // the delete/insert step so the existing edges stay intact.
+  let pickAttempts = 0;
+  let pickErrors = 0;
+  const MAX_PICK_ERROR_RATE = 0.10;
+  const MIN_ATTEMPTS_BEFORE_RATE_CHECK = 20;
 
   // ALL-TO-ALL: target every paper book AND every OTHER notes
   // book in the library, not just the user's linkedBookIds. The
@@ -266,12 +281,11 @@ async function matchNotesToSourceBooks(notesBookId) {
         pageNumber: noteChunk.pageNumber,
       };
       let pickResult;
+      pickAttempts++;
       try {
         pickResult = await funnel.pickAndClassify(fakeSpan, notesBook, sourceBook, top);
       } catch (err) {
-        // Don't swallow errors silently — a broken import or API
-        // failure was previously invisible and gave us a 0-edge run
-        // that looked like "model rejected everything".
+        pickErrors++;
         console.warn('[noteIngestionService] pickAndClassify threw:', err.message);
         continue;
       }
@@ -282,12 +296,12 @@ async function matchNotesToSourceBooks(notesBookId) {
       const rv = pickResult.relevance || 'a';
       if (cf < 'f' || rv < 'f') continue;
 
-      await Edge.create({
+      pendingEdges.push({
         fromChunkId: noteChunk._id,
         toChunkId: pickResult.chunk._id,
         fromBookId: notesBookId,
         toBookId: sourceBookId,
-        relationshipType: 'annotates',
+        relationshipType: pickResult.relationship || 'annotates',
         confidence: cf,
         relevance: rv,
         method: 'note-citation',
@@ -342,12 +356,11 @@ async function matchNotesToSourceBooks(notesBookId) {
       if (top.length === 0) continue;
 
       let pickResult;
+      pickAttempts++;
       try {
         pickResult = await funnel.pickAndClassify(lSpan, sourceBook, notesBook, top);
       } catch (err) {
-        // Don't swallow errors silently — a broken import or API
-        // failure was previously invisible and gave us a 0-edge run
-        // that looked like "model rejected everything".
+        pickErrors++;
         console.warn('[noteIngestionService] pickAndClassify threw:', err.message);
         continue;
       }
@@ -361,7 +374,7 @@ async function matchNotesToSourceBooks(notesBookId) {
       // 'annotates' but the funnel may pick something more
       // specific (e.g. 'uses_definition' for an Ld span filled
       // by a definition note chunk).
-      await Edge.create({
+      pendingEdges.push({
         fromChunkId: lSpan.chunkId,
         fromSpanId: lSpan._id,
         toChunkId: pickResult.chunk._id,
@@ -404,11 +417,50 @@ async function matchNotesToSourceBooks(notesBookId) {
     });
   }
 
+  // Safety rail check: refuse to commit if the API throw rate was
+  // too high. A quota outage, a bad key, or a flaky connection
+  // would otherwise silently destroy the previous good run.
+  const errorRate = pickAttempts > 0 ? pickErrors / pickAttempts : 0;
+  if (pickAttempts >= MIN_ATTEMPTS_BEFORE_RATE_CHECK && errorRate > MAX_PICK_ERROR_RATE) {
+    const msg = `[noteIngestionService] aborting commit: pickAndClassify error rate ${(errorRate*100).toFixed(1)}% over ${pickAttempts} attempts exceeds ${(MAX_PICK_ERROR_RATE*100).toFixed(0)}% threshold. Existing edges preserved.`;
+    console.error(msg);
+    return {
+      notesBookId,
+      notesTitle: notesBook.title,
+      noteChunks: noteChunks.length,
+      edgesCreated: 0,
+      pendingEdges: pendingEdges.length,
+      aborted: true,
+      abortReason: msg,
+      pickAttempts,
+      pickErrors,
+      perSourceStats,
+    };
+  }
+
+  // Commit step: the loop finished cleanly. NOW delete the old
+  // edges and insert the buffered ones. Done in this order so a
+  // reader hitting the DB between the delete and the insert sees
+  // an empty gap for a fraction of a second rather than a missing
+  // dataset for the duration of the match run. If insertMany
+  // throws mid-flight, the old edges are already gone but that
+  // window is measured in milliseconds.
+  if (pendingEdges.length > 0) {
+    await Edge.deleteMany({
+      method: 'note-citation',
+      $or: [{ fromBookId: notesBookId }, { toBookId: notesBookId }],
+    });
+    await Edge.insertMany(pendingEdges, { ordered: false });
+  } else {
+    console.warn('[noteIngestionService] no edges to commit, leaving existing edges in place');
+  }
+
   return {
     notesBookId,
     notesTitle: notesBook.title,
     noteChunks: noteChunks.length,
     edgesCreated,
+    pendingEdges: pendingEdges.length,
     perSourceStats,
   };
 }
