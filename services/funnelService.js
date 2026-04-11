@@ -356,15 +356,44 @@ async function pickAndClassify(sourceSpan, sourceBook, targetBook, candidates) {
   lines.push('Output exactly 4 lowercase letters on one line. No prose. No explanations.');
   const userInput = lines.join('\n');
 
-  const response = await client.chat.completions.create({
-    model: process.env.EDGE_PICKER_MODEL || 'gpt-4o',
-    temperature: 0,
-    max_tokens: 8,
-    messages: [
-      { role: 'system', content: pickPrompt() },
-      { role: 'user', content: userInput },
-    ],
-  });
+  // Retry on 429 TPM / transient failures. The OpenAI SDK's internal
+  // retry count is 2 and caps its backoff around a few seconds, which
+  // is not long enough to wait out a TPM window (reset is up to 60s).
+  // Walk an exponential backoff up to ~32s with Retry-After hint
+  // parsing, so large batch runs (e.g. matchNotesToSourceBooks across
+  // 643 notes chunks × 5 books) do not hemorrhage silent failures.
+  let response;
+  const maxAttempts = 6;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      response = await client.chat.completions.create({
+        model: process.env.EDGE_PICKER_MODEL || 'gpt-4o',
+        temperature: 0,
+        max_tokens: 8,
+        messages: [
+          { role: 'system', content: pickPrompt() },
+          { role: 'user', content: userInput },
+        ],
+      });
+      break;
+    } catch (err) {
+      const is429 = err.status === 429 || /rate limit/i.test(err.message || '');
+      const transient = is429 || err.code === 'ETIMEDOUT' || err.code === 'ECONNRESET' || err.status === 503;
+      if (!transient || attempt === maxAttempts - 1) throw err;
+      // Parse "Please try again in Xs" / "Xms" from the error message
+      let waitMs;
+      const hint = (err.message || '').match(/try again in ([0-9.]+)(s|ms)/i);
+      if (hint) {
+        waitMs = Math.round(Number(hint[1]) * (hint[2].toLowerCase() === 's' ? 1000 : 1));
+        waitMs = Math.max(waitMs, 500); // floor so we don't spin
+      } else {
+        waitMs = Math.min(32000, 2000 * Math.pow(2, attempt));
+      }
+      // Add jitter so parallel callers don't thundering-herd
+      waitMs += Math.floor(Math.random() * 400);
+      await new Promise(r => setTimeout(r, waitMs));
+    }
+  }
 
   const raw = response.choices?.[0]?.message?.content || '';
   // Find the first 4-letter contiguous letter sequence in the
