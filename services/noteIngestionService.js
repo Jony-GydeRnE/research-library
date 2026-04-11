@@ -251,6 +251,10 @@ async function matchNotesToSourceBooks(notesBookId) {
       try {
         pickResult = await funnel.pickAndClassify(fakeSpan, notesBook, sourceBook, top);
       } catch (err) {
+        // Don't swallow errors silently — a broken import or API
+        // failure was previously invisible and gave us a 0-edge run
+        // that looked like "model rejected everything".
+        console.warn('[noteIngestionService] pickAndClassify threw:', err.message);
         continue;
       }
       if (pickResult.error || !pickResult.chunk) continue;
@@ -323,6 +327,10 @@ async function matchNotesToSourceBooks(notesBookId) {
       try {
         pickResult = await funnel.pickAndClassify(lSpan, sourceBook, notesBook, top);
       } catch (err) {
+        // Don't swallow errors silently — a broken import or API
+        // failure was previously invisible and gave us a 0-edge run
+        // that looked like "model rejected everything".
+        console.warn('[noteIngestionService] pickAndClassify threw:', err.message);
         continue;
       }
       if (pickResult.error || !pickResult.chunk) continue;

@@ -626,6 +626,7 @@ module.exports = {
   resolveSpanThroughFunnel,
   resolveBookEdgesViaFunnel,
   resolveLibraryViaFunnel,
+  pickAndClassify,
   // exposed for tests
   cosineSimilarity,
   tagPreFilter,
