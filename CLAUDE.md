@@ -19,6 +19,15 @@ This file is automatically loaded at the start of every Claude Code session. Tre
 **Tone**
 - Be concise in chat. Lead with what you did or what you need. The detailed explanation goes in the commit message, not a long chat recap.
 
+**reports/ standing order — save structured outputs to files, not just chat**
+- The terminal is lossy: Termius over Tailscale over tmux sometimes drops lines when the Z Fold 7 syncs from the Mac. Long CC tables can scroll past before the user sees them.
+- After any session that produces structured data — benchmark scores, edge audits, DB query dumps, example tables, raw picker verdicts, anything the user might want to diff against a later version — CC writes the output to `reports/YYYY-MM-DD/<slug>.md` BEFORE sending the final chat response.
+- The chat response then links to the file (`see reports/2026-04-11/edges-93pct-themed.md`) and includes a short summary. The file holds the raw tables.
+- Folder convention: `reports/YYYY-MM-DD/` per session. Inside: `_summary.md` for a one-page narrative, `benchmark-scores.md` for benchmark-run dumps, `edges-<Nscore>pct-<audit-name>.md` or `query-<description>.md` for data tables. Append `-01`, `-02` if two sessions on the same day.
+- After writing a new file, add a one-line entry to `reports/README.md` index so future-CC can find it by grep.
+- Skip this ONLY if the output is trivial to Gyde development (e.g. `git status`, a single file-list, a yes/no answer). When in doubt, save the file.
+- When `update.md` crosses ~1500 lines, start a new dated file `update-YYYY-MM.md` and keep `update.md` as a short index pointing at the latest. Same for reports — one folder per day, never one giant folder.
+
 ---
 
 ## What we are building
