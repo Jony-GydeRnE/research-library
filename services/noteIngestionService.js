@@ -171,8 +171,42 @@ async function matchNotesToSourceBooks(notesBookId) {
   // the delete/insert step so the existing edges stay intact.
   let pickAttempts = 0;
   let pickErrors = 0;
+  let pickRejections = 0;
+  let skippedCosine = 0;
   const MAX_PICK_ERROR_RATE = 0.10;
   const MIN_ATTEMPTS_BEFORE_RATE_CHECK = 20;
+  const COSINE_FLOOR = 0.25;
+
+  // Pre-compute per-page tag context for the notes book. For each
+  // page, gather the top ~8 distinct contextTags across all chunks
+  // on that page. When we call the picker, we attach this as
+  // `pageContext` on the source span so the picker can distinguish
+  // e.g. a classical-mechanics-tutorial page from an amplitude-
+  // cutting-proof page even when the source span itself is a bare
+  // equation.
+  const buildPageContext = (chunks) => {
+    const byPage = new Map();
+    for (const c of chunks) {
+      if (!byPage.has(c.pageNumber)) byPage.set(c.pageNumber, []);
+      byPage.get(c.pageNumber).push(c);
+    }
+    const out = new Map();
+    for (const [page, pcs] of byPage) {
+      const tagCounts = new Map();
+      for (const pc of pcs) {
+        for (const t of (pc.contextTags || []).slice(0, 6)) {
+          tagCounts.set(t, (tagCounts.get(t) || 0) + 1);
+        }
+      }
+      const top = [...tagCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8)
+        .map(e => e[0]);
+      if (top.length) out.set(page, top.join(', '));
+    }
+    return out;
+  };
+  const notesPageContext = buildPageContext(noteChunks);
 
   // ALL-TO-ALL: target every paper book AND every OTHER notes
   // book in the library, not just the user's linkedBookIds. The
@@ -247,6 +281,10 @@ async function matchNotesToSourceBooks(notesBookId) {
     }
     sourceChunks = await ensureEmbeddings(sourceChunks);
 
+    // Per-page tag context for this source (paper) book. Used by
+    // Direction 2 calls, where the source is a paper L-span.
+    const sourcePageContext = buildPageContext(sourceChunks);
+
     let createdHere = 0;
     // Track which source-paper chunkIds get covered by Direction 1.
     // Direction 2 (paper L-span → notes) ONLY runs for L-tagged
@@ -272,6 +310,12 @@ async function matchNotesToSourceBooks(notesBookId) {
       scored.sort((a, b) => b.cosine - a.cosine);
       const top = scored.slice(0, 25);
       if (top.length === 0) continue;
+      // Cosine floor: skip the picker entirely if the best
+      // candidate is too semantically distant from the note chunk.
+      // Notes from classical mechanics / foundational QFT pages
+      // typically top out around 0.15-0.22 against amplitude
+      // content; real citations usually sit at 0.5-0.9.
+      if ((top[0].cosine || 0) < COSINE_FLOOR) { skippedCosine++; continue; }
 
       // Wrap the note chunk as a "span" the funnel can read
       const fakeSpan = {
@@ -279,6 +323,7 @@ async function matchNotesToSourceBooks(notesBookId) {
         spanText: noteChunk.sourceText || '',
         contextTags: noteChunk.contextTags || [],
         pageNumber: noteChunk.pageNumber,
+        pageContext: notesPageContext.get(noteChunk.pageNumber) || '',
       };
       let pickResult;
       pickAttempts++;
@@ -289,6 +334,7 @@ async function matchNotesToSourceBooks(notesBookId) {
         console.warn('[noteIngestionService] pickAndClassify threw:', err.message);
         continue;
       }
+      if (pickResult.rejected) { pickRejections++; continue; }
       if (pickResult.error || !pickResult.chunk) continue;
 
       // Floor: drop weak matches (confidence or relevance below 'f')
@@ -354,16 +400,25 @@ async function matchNotesToSourceBooks(notesBookId) {
       scored.sort((a, b) => b.cosine - a.cosine);
       const top = scored.slice(0, 25);
       if (top.length === 0) continue;
+      if ((top[0].cosine || 0) < COSINE_FLOOR) { skippedCosine++; continue; }
 
+      // Wrap the L-span with the paper's page context so the
+      // picker can read "page N of <paper> neighbors discuss: ..."
+      // alongside the span text.
+      const lSpanWithCtx = {
+        ...lSpan,
+        pageContext: sourcePageContext.get(lSpan.pageNumber) || '',
+      };
       let pickResult;
       pickAttempts++;
       try {
-        pickResult = await funnel.pickAndClassify(lSpan, sourceBook, notesBook, top);
+        pickResult = await funnel.pickAndClassify(lSpanWithCtx, sourceBook, notesBook, top);
       } catch (err) {
         pickErrors++;
         console.warn('[noteIngestionService] pickAndClassify threw:', err.message);
         continue;
       }
+      if (pickResult.rejected) { pickRejections++; continue; }
       if (pickResult.error || !pickResult.chunk) continue;
       const cf = pickResult.confidence || 'a';
       const rv = pickResult.relevance || 'a';
@@ -461,6 +516,10 @@ async function matchNotesToSourceBooks(notesBookId) {
     noteChunks: noteChunks.length,
     edgesCreated,
     pendingEdges: pendingEdges.length,
+    pickAttempts,
+    pickErrors,
+    pickRejections,
+    skippedCosine,
     perSourceStats,
   };
 }

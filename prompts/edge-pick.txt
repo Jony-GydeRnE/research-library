@@ -19,7 +19,15 @@ Examples of valid output:
 Do NOT output anything else. No prose. No "verdict:" prefix. No JSON. Just the four letters.
 
 CHUNK LETTER
-The lowercase letter of the candidate you saw in the input list. The list shows up to 26 candidates labeled a, b, c, ..., z. You output exactly one letter that exists in the list — never invent a letter beyond what you saw.
+The lowercase letter of the candidate you saw in the input list. The list shows up to 24 candidates labeled a, b, c, ..., x. You output exactly one letter that exists in the list — never invent a letter beyond what you saw.
+
+There is ONE reserved letter you may emit instead:
+
+  x — NO MATCH. Emit `xxxx` (four x's) when the source chunk discusses a topic that NONE of the candidates meaningfully cover. A wrong edge is worse than no edge. Specifically, emit `xxxx` when:
+    - The source is foundational / background material (classical mechanics, Euler-Lagrange from scratch, Gaussian integrals, basic QFT path integrals, calculus of variations) and the candidates are specialized amplitude / BCFW / D-subset / kinematic-mesh content.
+    - The source text is a bare symbol, a figure caption, a single equation with no context, and none of the candidates clearly correspond to that specific piece of notation.
+    - The best candidate shares only a superficial glyph similarity (e.g. both show `1/p²`) without discussing the same physics.
+  When you emit `xxxx`, nothing else is written — no relationship, no confidence, no relevance. The system interprets it as a rejection and creates no edge.
 
 RELATIONSHIP LETTERS
   p — proves: target chunk PROVES the claim the source is citing
@@ -80,10 +88,17 @@ You will receive:
   SOURCE_SPAN: <verbatim text of the citing passage>
   SOURCE_TAGS: <comma-separated context tags>
   SOURCE_BOOK: <title of the citing book>
+  SOURCE_PAGE_CONTEXT: <optional — tag summary of the other chunks on the same notes/paper page, so you know what TOPIC the source span is embedded in>
 
   CANDIDATES (target book: <title>):
   a: p<page> [<structural_type>] tags=[<tags>] text="<first ~200 chars of the chunk>"
   b: p<page> [<structural_type>] tags=[<tags>] text="<first ~200 chars of the chunk>"
   ...
+
+HOW TO USE SOURCE_PAGE_CONTEXT
+Treat SOURCE_PAGE_CONTEXT as the authoritative signal of what the source PAGE is actually about. A source span that looks like an equation snippet or a bare symbol is much easier to judge once you know whether the surrounding page is e.g. "classical mechanics Euler-Lagrange tutorial" vs "amplitude cutting proof with BCFW shift". Use page context to:
+  1. Reject mismatches: if page context says `lagrangian_polar_coordinates, euler_lagrange_equation, harmonic_oscillator` and the candidates are all about amplitude zeros, emit `xxxx`.
+  2. Disambiguate glyph-similar equations: `1/p²` in a propagator-equation context is different from `1/p²` in a BCFW-shift context.
+  3. Prefer candidates whose tags align with the page context, even when the source span itself is too short to tell.
 
 That's everything. Read it, decide, output the four letters. No more, no less.

@@ -314,6 +314,12 @@ function decodePickVerdict(raw) {
   const compact = raw.replace(/[^a-zA-Z]/g, '');
   if (compact.length < 4) return null;
   const chunkLetter = compact[0].toLowerCase();
+  // Rejection letter: picker says "none of these candidates match".
+  // The contract is that any verdict whose first letter is `x` means
+  // no edge. Accept both `xxxx` (canonical) and `x___` with any
+  // trailing letters — it's cheaper not to fight the model on the
+  // exact format as long as the leading `x` is unambiguous.
+  if (chunkLetter === 'x') return { rejected: true };
   const relLetter = compact[1].toLowerCase();
   const confLetter = compact[2].toLowerCase();
   const relevLetter = compact[3].toLowerCase();
@@ -345,6 +351,13 @@ async function pickAndClassify(sourceSpan, sourceBook, targetBook, candidates) {
   lines.push('SOURCE_TAGS: ' + (sourceSpan.contextTags || []).join(', '));
   lines.push('SOURCE_BOOK: ' + (sourceBook.title || ''));
   if (sourceIsNotes) lines.push('SOURCE_KIND: notes');
+  // Page-level context: what other chunks on the same source page
+  // talk about. Lets the picker distinguish a classical-mechanics
+  // derivation page from an amplitude-cutting proof page even when
+  // the source span itself is a bare equation.
+  if (sourceSpan.pageContext) {
+    lines.push('SOURCE_PAGE_CONTEXT: ' + sourceSpan.pageContext);
+  }
   lines.push('');
   lines.push('CANDIDATES (target book: ' + (targetBook.title || '') + '):');
   for (let i = 0; i < top.length; i++) {
@@ -413,6 +426,10 @@ async function pickAndClassify(sourceSpan, sourceBook, targetBook, candidates) {
   const cleanMatch = raw.match(/^[a-zA-Z]{4}$/m) || raw.match(/[a-zA-Z]{4}/);
   const cleaned = cleanMatch ? cleanMatch[0] : raw;
   const decoded = decodePickVerdict(cleaned);
+  // Explicit rejection by picker: no edge, no error — just skip.
+  if (decoded && decoded.rejected) {
+    return { rejected: true, raw };
+  }
   if (!decoded || !decoded.chunkIndex || decoded.chunkIndex > top.length) {
     return { error: 'invalid pick verdict: ' + raw, raw };
   }
@@ -534,6 +551,16 @@ async function resolveSpanThroughFunnel(sourceSpan, sourceBook, targetBookId) {
     .sort((a, b) => b.cosine - a.cosine)
     .slice(0, 25);
   if (cosineRanked.length === 0) return { error: 'no candidates after layer 2' };
+
+  // Cosine floor: if the best candidate's semantic similarity to
+  // the source is too weak, don't even call the picker. Classical
+  // mechanics notes vs amplitude physics typically cosine < 0.25;
+  // genuine citations usually sit at 0.5-0.9. The floor lets us
+  // skip the API call for hopeless matches.
+  const COSINE_FLOOR = 0.25;
+  if ((cosineRanked[0].cosine || 0) < COSINE_FLOOR) {
+    return { skipped: 'below cosine floor', topCosine: cosineRanked[0].cosine };
+  }
 
   // Layer 3 fused: single Opus call picks the best chunk AND
   // classifies the relationship in one shot. Replaces the older
