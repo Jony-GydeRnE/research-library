@@ -1107,33 +1107,42 @@ async function streamResponse(chat, onChunk, onDone, opts = {}) {
     }
   }
 
-  if (!opts.generalKnowledge) {
-    const validation = await detectFakeCitations(fullText);
-    if (validation.hasIssues) {
-      console.log('[claudeService] Fake citations caught:',
-        validation.fakes.map(f => f.value).join(', '));
-
-      const fakeList = validation.fakes
-        .map(f => `• ${f.value}`)
-        .join('\n');
-
-      const gatekeeperMsg =
-`⚠️ **Gyde stopped this response.**
-
-The model referenced material that could not be verified against your library:
-${fakeList}
-
-This usually means the topic isn't covered by the books currently in your library.
-
-**Would you like a general-knowledge answer instead?**
-*It won't be grounded in your specific books or notes, but may still be useful.*
-
-[[GYDE_ASK_GENERAL_KNOWLEDGE]]`;
-
-      onDone(gatekeeperMsg, { toolTurns: [] });
-      return;
-    }
-  }
+  // ── GROUNDING GATE TEMPORARILY DISABLED (2026-04-12) ──────
+  // The regex-based hallucination detector was blocking valid
+  // responses whose citations used a non-Mongo-ObjectId shape
+  // (UUID-style bookIds rendered into context from somewhere
+  // other than Book._id). Jony needs to run live tests against
+  // Phase A tool-use and the current chat; a hard block on every
+  // response prevents that. Keeping detectFakeCitations() as a
+  // function because we'll want it back once either:
+  //   (a) all citation surfaces agree on the Mongo _id format,
+  //       or
+  //   (b) the gate is demoted to a soft warning appended below
+  //       the response instead of replacing it.
+  // DO NOT DELETE — this is temporary. When re-enabling,
+  // consider adding a settings toggle that the sidebar checkbox
+  // (#groundingModeToggle) already exposes on the client side.
+  //
+  // if (!opts.generalKnowledge) {
+  //   const validation = await detectFakeCitations(fullText);
+  //   if (validation.hasIssues) {
+  //     console.log('[claudeService] Fake citations caught:',
+  //       validation.fakes.map(f => f.value).join(', '));
+  //     const fakeList = validation.fakes
+  //       .map(f => `• ${f.value}`)
+  //       .join('\n');
+  //     const gatekeeperMsg =
+  //       `⚠️ **Gyde stopped this response.**\n\n` +
+  //       `The model referenced material that could not be verified against your library:\n` +
+  //       `${fakeList}\n\n` +
+  //       `This usually means the topic isn't covered by the books currently in your library.\n\n` +
+  //       `**Would you like a general-knowledge answer instead?**\n` +
+  //       `*It won't be grounded in your specific books or notes, but may still be useful.*\n\n` +
+  //       `[[GYDE_ASK_GENERAL_KNOWLEDGE]]`;
+  //     onDone(gatekeeperMsg, { toolTurns: [] });
+  //     return;
+  //   }
+  // }
 
   onDone(fullText, { toolTurns: [] });
 }
