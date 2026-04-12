@@ -256,37 +256,104 @@
   });
 
   // ─── Main load ────────────────────────────────────────────
-  async function load(bookId, pageNumber, container) {
+  //
+  // FUTURE BEHAVIOR (not yet implemented — tracked as TODO):
+  // Chunks view should inherit the presentation of the mode it
+  // was opened FROM. If the user was in Pages mode and clicks
+  // Chunks, chunks should render as a single-page view mirroring
+  // Pages. If the user was in Scroll or PDF mode and clicks
+  // Chunks, chunks should render as a scroll-of-all-pages. This
+  // makes the Chunks mode feel like a metadata skin over the
+  // chosen reading layout rather than a separate UI.
+  //
+  // FOR NOW the user asked for the scrolling variant only.
+  // Chunks mode always renders all pages sequentially with a
+  // page-number anchor between each. The current page is
+  // scrolled into view on first load so the Prev/Next arrows
+  // still feel like navigation. Mode switches don't change the
+  // current page or remove highlights — they're handled by
+  // reader.js setMode() and the DOM of the other modes stays
+  // mounted but hidden.
+  async function load(bookId, anchorPageNumber, container) {
     if (!container) return;
-    container.innerHTML = '<div class="cv-loading">Loading chunks for page ' + pageNumber + '…</div>';
-    try {
-      const res = await fetch(`/reader/${bookId}/api/page/${pageNumber}/chunks`);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
-      STATE.current = data;
+    const totalPages = (window.__READER__ && window.__READER__.totalPages) || 1;
 
+    container.innerHTML = '<div class="cv-loading">Loading chunks for all ' + totalPages + ' page' + (totalPages !== 1 ? 's' : '') + '…</div>';
+
+    try {
+      // Fetch all page-chunk views in parallel. For big books
+      // this is ~totalPages concurrent reads; each hits a
+      // single Mongo query chain (Chunk+Span+Edge+Book). Same
+      // pattern the scroll mode uses for HTML pages.
+      const pageNums = [];
+      for (let i = 1; i <= totalPages; i++) pageNums.push(i);
+
+      const results = await Promise.all(
+        pageNums.map(async (n) => {
+          try {
+            const res = await fetch(`/reader/${bookId}/api/page/${n}/chunks`);
+            if (!res.ok) return { pageNumber: n, error: 'HTTP ' + res.status, chunks: [], chunkCount: 0 };
+            return await res.json();
+          } catch (err) {
+            return { pageNumber: n, error: err.message || String(err), chunks: [], chunkCount: 0 };
+          }
+        })
+      );
+
+      STATE.current = results;
       container.innerHTML = '';
 
-      const summary = el('div', { className: 'cv-summary' }, [
-        `Page ${data.pageNumber} — ${data.chunkCount} chunk${data.chunkCount !== 1 ? 's' : ''}`,
-      ]);
-      container.appendChild(summary);
+      // Top summary
+      const totalChunks = results.reduce((a, r) => a + (r.chunkCount || 0), 0);
+      container.appendChild(el('div', { className: 'cv-summary' }, [
+        `${totalPages} page${totalPages !== 1 ? 's' : ''} · ${totalChunks} chunk${totalChunks !== 1 ? 's' : ''} total`,
+      ]));
 
-      if (data.chunkCount === 0) {
-        container.appendChild(el('div', { className: 'cv-empty' }, [
-          'No chunks for this page yet. Either vision/span processing has not completed, or the page has no extractable content.',
+      // Emit each page as a labeled section.
+      for (const pageView of results) {
+        const pageSection = el('section', {
+          className: 'cv-page-section',
+          'data-page': String(pageView.pageNumber),
+          id: `cv-page-${pageView.pageNumber}`,
+        });
+
+        pageSection.appendChild(el('div', { className: 'cv-page-header' }, [
+          el('span', { className: 'cv-page-num' }, [`Page ${pageView.pageNumber}`]),
+          el('span', { className: 'cv-page-count' }, [
+            pageView.error
+              ? `error: ${pageView.error}`
+              : `${pageView.chunkCount || 0} chunk${(pageView.chunkCount || 0) !== 1 ? 's' : ''}`,
+          ]),
         ]));
-        return;
+
+        if (pageView.error) {
+          pageSection.appendChild(el('div', { className: 'cv-error' }, [
+            'Failed to load chunks for this page: ' + pageView.error,
+          ]));
+        } else if ((pageView.chunkCount || 0) === 0) {
+          pageSection.appendChild(el('div', { className: 'cv-empty' }, [
+            '(no chunks — vision/span processing may not have completed, or this page has no extractable content)',
+          ]));
+        } else {
+          for (const c of pageView.chunks) {
+            pageSection.appendChild(renderChunk(c, openSpanPopover, onEdgeClickNavigate));
+          }
+        }
+        container.appendChild(pageSection);
       }
 
-      for (const c of data.chunks) {
-        container.appendChild(renderChunk(c, openSpanPopover, onEdgeClickNavigate));
-      }
-
-      // If the page has equations, typeset them so LaTeX in
-      // chunk bodies renders the same as in pages mode.
+      // Typeset LaTeX everywhere in the chunks view.
       if (window.MathJax && MathJax.typesetPromise) {
         MathJax.typesetPromise([container]).catch(() => {});
+      }
+
+      // Scroll the current page into view so the user lands
+      // where they were when they opened Chunks mode.
+      const anchor = document.getElementById(`cv-page-${anchorPageNumber}`);
+      if (anchor) {
+        // Use 'auto' not 'smooth' — on first load a smooth
+        // scroll fights the DOM mount and flashes.
+        anchor.scrollIntoView({ behavior: 'auto', block: 'start' });
       }
     } catch (err) {
       console.error('chunks-view load failed:', err);
@@ -294,5 +361,14 @@
     }
   }
 
-  window.GydeChunksView = { load, closePopover, STATE };
+  // Jump an already-loaded chunks view to a specific page's
+  // section. Used by reader.js goToPage so Prev/Next arrows
+  // scroll through the existing chunks-view DOM instead of
+  // re-fetching everything.
+  function jumpTo(pageNumber) {
+    const anchor = document.getElementById(`cv-page-${pageNumber}`);
+    if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  window.GydeChunksView = { load, jumpTo, closePopover, STATE };
 })();

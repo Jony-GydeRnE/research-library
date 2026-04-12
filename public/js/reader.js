@@ -67,8 +67,18 @@
       pageIndicator.style.display = '';
       headerPrevBtn.style.display = '';
       headerNextBtn.style.display = '';
+      // Only (re)load the full chunks scroll the FIRST time
+      // the user enters chunks mode. Subsequent mode switches
+      // should leave the chunks DOM mounted and just scroll to
+      // the current page — this keeps mode switches feeling
+      // instant and preserves any state the user has set up
+      // (popovers, scroll position within a chunk, etc).
       if (window.GydeChunksView) {
-        window.GydeChunksView.load(R.bookId, R.currentPage, chunksContent);
+        if (!chunksContent || chunksContent.childElementCount === 0) {
+          window.GydeChunksView.load(R.bookId, R.currentPage, chunksContent);
+        } else {
+          window.GydeChunksView.jumpTo(R.currentPage);
+        }
       }
     }
 
@@ -144,6 +154,20 @@
       return;
     }
 
+    // Chunks mode already has all pages rendered; just scroll.
+    // Skip the /api/page/:num fetch since we don't need the HTML.
+    if (mode === 'chunks') {
+      R.currentPage = num;
+      currentPageNum.textContent = num;
+      pageJump.value = num;
+      updateArrowState();
+      if (window.GydeChunksView) window.GydeChunksView.jumpTo(num);
+      updateActiveSectionForPage(num);
+      saveBookmark(num);
+      history.replaceState(null, '', `/reader/${R.bookId}/page/${num}`);
+      return;
+    }
+
     try {
       const res = await fetch(`/reader/${R.bookId}/api/page/${num}`);
       if (!res.ok) throw new Error('Page not found');
@@ -162,7 +186,9 @@
       } else if (mode === 'pdf') {
         originalImg.src = `/images/${R.bookId}/page-${num}.png`;
       } else if (mode === 'chunks' && window.GydeChunksView) {
-        window.GydeChunksView.load(R.bookId, num, chunksContent);
+        // Chunks view is already scrolling across all pages;
+        // Prev/Next arrows just scroll to the right section.
+        window.GydeChunksView.jumpTo(num);
       }
 
       updateActiveSectionForPage(num);

@@ -1660,3 +1660,36 @@ mjx-container {
   flex-wrap: wrap;
   gap: 0.3rem;
 }
+
+/* Chunks view — scroll-all-pages page dividers */
+.cv-page-section {
+  margin-bottom: 2.5rem;
+  scroll-margin-top: 1rem;
+}
+.cv-page-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.6rem 0 0.5rem 0;
+  margin: 1.5rem 0 0.9rem 0;
+  border-bottom: 2px solid var(--r-border);
+  position: sticky;
+  top: 0;
+  background: var(--r-bg);
+  z-index: 5;
+}
+.cv-page-section:first-of-type .cv-page-header {
+  margin-top: 0;
+}
+.cv-page-num {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--r-heading);
+  letter-spacing: 0.01em;
+}
+.cv-page-count {
+  font-size: 0.75rem;
+  color: var(--r-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
