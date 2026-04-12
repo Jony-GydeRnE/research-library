@@ -89,7 +89,7 @@ No hallucination is possible because the agent didn't write a single sentence of
 
 3. **Persistent state per research session.** When the agent is exploring, it needs to track: which nodes it has visited, which paths it has tried and abandoned, what the current best path looks like, and what the user's question actually was. This is the equivalent of CC's conversation context — but for graph traversal, not code editing.
 
-4. **A budget / stopping criterion.** CC has a context window limit and a per-conversation cost. The agent needs: max traversal steps (say 50 tool calls), max wall-clock time (say 5 minutes), and a "path quality" threshold (when the path connects the question to the answer with confidence above X at every step, stop and surface it).
+4. **A budget / stopping criterion.** CC has a context window limit and a per-conversation cost. The agent needs: max traversal steps (say 50 tool calls), max wall-clock time (say 5 minutes), and a "path quality" threshold (when the path connects the question to the answer with confidence above X at every step, stop and surface it).  Quick math: ChatGPT latest model is $2.5 for 1M tokens inputted and only $.25 for 1M cached tokens: so we must store important/repeated queries, for MongoDB, this is merely $.001 per month for 1M tokens/4M characters. So caching queries, storing in DB, perhaps storing token outputs by queries, might be important to us.
 
 5. **The output format.** Not prose. A structured path: ordered list of (chunk, relationship to next chunk, confidence) tuples, each linking to the reader at the exact page. The user reads the path, clicks into any node to see the full context, and judges whether the path is correct. The LLM's opinion is advisory; the grounding is in the chunks themselves.
 
@@ -124,3 +124,94 @@ You're describing a system that is buildable with today's technology. Every comp
 The pivot from "LLM answers with citations" to "LLM navigates and surfaces verified paths" is architecturally clean. It doesn't require throwing away anything you've built. The chunks, edges, embeddings, and funnel pipeline are all reusable. What changes is the chat layer: instead of building a context dump and asking the LLM to synthesize, you give the LLM tools and let it explore.
 
 The CC development model (read anthropic's docs, study the harness, understand the tool interface) is the right reference. The reason CC works is not model quality — it's the loop. Give Gyde the same loop over the physics graph and the same thing happens: iterative, verifiable, grounded exploration that produces real results instead of plausible-sounding fiction.
+
+---
+
+## Addendum — 2026-04-12 (after the Q&A in `gyde-agent-tech-questions.md`)
+
+The original reflection above is still the right spine. This addendum is a second pass capturing the ideas that crystallized after Jony pushed back on stopping criteria, token economics, and the vibes gap. These belong in the vision doc, not the tech spec, because they shape *why* the architecture looks the way it does.
+
+### Three layers, not one
+
+The vision above treats "the graph" and "the agent's work" as one thing. They aren't. There are three layers with very different time horizons, costs, and write rules:
+
+**Layer 1 — The graph.** Chunks, spans, edges, embeddings. Immutable at chat time. Built by ingestion, read by agents, never modified by the chat loop. This is the library's ground truth — and traversing it is nearly free. A Y/N decision on one edge is ~2-5K input tokens and 10 output tokens → **~$0.00001 per step** at Sonnet input rates. 10,000 traversal steps cost $1. Traversal is not a budget concern.
+
+**Layer 2 — The collection workspace.** A filesystem-like workspace scoped to a Collection that persists across chat sessions. The agent reads, writes, edits, and deletes files here. This is the true CC analog: CC's working directory is the repo, GR's working directory is the collection workspace. It outlives any single chat. It's where the agent keeps its visited sets, its candidate paths, its dead ends, its vibes. Multiple agents can share it. It accumulates over time. In MongoDB terms: a new `WorkspaceFile` collection, scoped by `collectionId` and `path`, with `content` and `updatedAt`. Storage is pennies.
+
+**Layer 3 — The query cache.** Computed on demand, keyed by question-embedding cosine. If a new question is >0.95 cosine to a cached one AND the relevant neighborhood of Layer 1 hasn't changed since the cache was written, return the cached path. Marginal cost of the thousandth user asking the same question: zero. Invalidation events: a new book ingests and creates a shorter path; an edge's confidence drops below threshold; the user marks a path stale.
+
+The agent operates in Layer 2, reads Layer 1, writes to Layer 3 when it finds something cache-worthy. The user sees Layer 3 (the answer) or Layer 2 (the workspace, if they want to watch the agent think).
+
+### The stopping problem, resolved
+
+The naive worry: "if the path doesn't exist, the agent runs forever." Three independent stopping conditions kill this worry:
+
+1. **Found a verified path** of bounded length with min-confidence above threshold → stop, surface, cache.
+2. **Frontier exhausted** — the BFS reached everything within `maxDepth` of the seed without finding the target. **The frontier itself is the answer.** It's the list of nodes the agent visited that didn't connect — i.e. the precise shape of what the library doesn't yet contain. That list is also the crawler's target queue: "here are the chunks we'd need to ingest to make this question answerable."
+3. **Budget cap hit** — checkpoint the workspace to Layer 2 and exit cleanly. The next session resumes by reading the workspace. **This is the CC-beating property.** CC's context window is a hard ceiling; when the window closes, CC's memory dies. GR's workspace doesn't. A research session can run for days, checkpointing hourly, resuming indefinitely, with cost accumulating at pennies per hour.
+
+### Unbounded research, concretely
+
+Imagine the user asks "Why does B factor through c_ij?" in a collection containing Rodina + hidden zeros + Lagrangians notes.
+
+- **Step 0 (milliseconds, <$0.000001):** Create session workspace. Check Layer 3 cache — miss.
+- **Step 1 (~50ms, ~$0.00003):** Embed the query (one-time, cached). Cosine search across collection chunks. Top 10 returned. Pick 3 seed nodes by neighborhood summary. Write to `frontier.txt`.
+- **Steps 2-8 (~200ms each, ~$0.000002 each):** BFS outward along `proves` / `prerequisite` / `uses_definition` edges from each seed. Y/N per edge. Update `visited.txt`, extend `currentPath`. Writes to workspace are small MongoDB upserts.
+- **Step 9 (~200ms, ~$0.00005):** Verify the candidate path by reading full chunk text at each node — does the claimed relationship actually hold? Not "does the edge exist" (it's in the DB) but "does the text at this node contain the reasoning the edge claims?"
+- **Step 10 (~50ms):** Check for shorter paths. None exist. 4-step path is minimal.
+- **Surface.** Write to `paths/verified-001.txt` and Layer 3 cache. Return to user.
+
+**Total: ~20 steps, ~$0.0002, ~4 seconds.** One-fifth of a cent. At 100 sessions per day across a single user's workflow: $0.02/day. Essentially free at solo-user scale. And this is *without* caching — the second user asking a similar question hits Layer 3 for $0.
+
+Jony's math check: the entire verified knowledge base of mathematical physics is maybe 600-1000 books. 600 × 3,500 chunks/book = 2.1M chunks. At 500 tokens/chunk, 1.05 billion tokens total. At $2.50/Mt that's **$2,625 to read every chunk in physics once**. But the agent doesn't read everything — it follows edges and reads maybe 100-1000 chunks per question, ignoring the rest. At 1,000 chunks per session, one session = $0.003. The entire physics corpus is traversable at a cost that rounds to zero.
+
+**Corollary:** speed is not a constraint. CC often thinks for 20-40 minutes to produce a good answer. GR can think for 4 hours, or 4 days, or 4 weeks — none of that costs more than pennies because input tokens during inner-loop traversal are the only spend, and they're cheap. The constraint is not time or dollars. The constraint is: *does each step make progress toward the query?* That's detectable structurally (is the agent finding new nodes? is path confidence going up?). Lack of progress is the signal to backtrack or stop — not a timer.
+
+### Multiple agents, different time horizons
+
+Once Layer 2 exists, nothing stops the system from running agents at different scales concurrently:
+
+- A **long-running agent** exploring "what is the complete proof structure of the hidden zeros paper" — runs for days, checkpoints hourly, accumulates findings in `collections/hidden-zeros/workspace/background-exploration/`. Its output is not a chat reply; it's a progressively-built map of what the paper proves and what depends on what.
+- A **short query agent** that spins up for 30 seconds when the user asks a specific question. Before doing its own traversal, it reads the workspace. If the long-running agent already explored the relevant subgraph, the short agent just reads its notes and returns immediately.
+
+The long-running agent is building the collection's *understanding* over time. The short agent exploits that understanding for specific queries. Neither blocks the other. This is closer to how human research actually works: you have background thinking that runs continuously, and foreground queries that interrupt it.
+
+Nobody has built this seriously at the research-assistant layer as far as I know. The ingredients (persistent workspace, cheap traversal, agent-to-agent handoff via shared files) all exist.
+
+### Vibes — a first-class epistemic category
+
+Jony's sharpest observation in the Q&A: every "grounded AI" system is obsessed with eliminating hallucination, and in the process kills the class of outputs that are actually most valuable in research — **the not-yet-verified connection that a human would write on a sticky note and put on the wall for six months until it clicked.**
+
+These aren't hallucinations. They're intuitions. "The c_ij pole structure feels like the boundary operator in simplicial homology. I can't prove it. No edge exists in the graph. But the zero condition on codimension-1 boundaries looks like a coboundary condition." That's not a citation. It's a candidate connection with no current path.
+
+In the workspace, vibes should be a first-class folder with explicit epistemic status:
+
+```
+vibes/
+  vibe-001.txt:
+    note: "c_ij pole structure ↔ simplicial boundary operator?"
+    seed_nodes: [Rodina p6 i84, <any homology chunk>]
+    current_status: unverified — no path exists in graph
+    do_not_cite: true
+    created: 2026-04-12
+    last_checked: 2026-04-12
+```
+
+The agent flags vibes as unverified, never uses them in a surfaced path, but doesn't delete them. **When new content is ingested** — say, a paper on positive geometry linking amplitude poles to algebraic topology — the system checks all open vibes against the new graph. If a path suddenly exists from Rodina p6 to a homology chunk, the vibe gets **promoted** to a candidate path and resurfaces with a "this vibe just became verifiable" notification.
+
+This is what mathematical intuition actually does: structural similarity noticed, held in peripheral vision, waits for the piece that makes it click. The system supports that workflow explicitly instead of trying to eliminate it.
+
+Vibes can also be structural observations about the graph that don't fit the current query but seem significant. "Node i84 has 23 incoming edges from 4 different books — whatever it says is load-bearing for this entire domain." That's a vibe about the graph's shape, not a content claim. It informs future traversals without being a citation.
+
+The distinction: **a vibe is never a citation.** It never appears in a surfaced path unless promoted by finding a verified edge. But it persists. It accumulates. Over time, the vibes folder becomes the agent's accumulated intuition layer — the closest thing an LLM-driven system can have to the "feel" a human expert develops for a field.
+
+### Neighborhood summaries (the map-vs-road-signs distinction)
+
+A small but important idea: rather than having the agent read full chunk text on every hop (expensive, slow, noisy), each node has a pre-computed **neighborhood summary** — what this chunk is about, what it connects to, what questions it can answer, what it assumes. Computed once at ingestion, updated when new edges arrive. The agent reads the summary (map) to decide direction, and drops into full chunk text (road sign) only when verifying a specific claim.
+
+This keeps inner-loop steps cheap and fast — the summary is maybe 200 tokens vs the chunk's 500+ tokens, and the summary is specifically optimized for navigation decisions ("from here you can reach definitions of X, proofs of Y, examples of Z") rather than content delivery. Computing them is a Phase C optimization, not a Phase A requirement, but the architecture should leave room for them.
+
+### What this all means for the tech spec
+
+The tech spec (`gyde-agent-tech-spec.md`) describes Phase A as stateless tool calls over Layer 1 — the minimum useful slice. That's right. But the full vision extends through Layers 2 and 3, across multi-agent time horizons, with vibes as a first-class category. Phase A is the seed; the tech spec's Phase B/C/D sequence is the first pass at growing the rest of it. Some ideas (neighborhood summaries, vibes folder, long-running background agents, workspace checkpoint-and-resume) aren't yet in the spec and should be added as phases become real. The spec is correct as an immediate build plan; this addendum is the north star it's pointing toward.

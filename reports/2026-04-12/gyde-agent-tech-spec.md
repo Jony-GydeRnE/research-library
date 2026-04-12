@@ -2,6 +2,45 @@
 
 Written 2026-04-12. Converts the vision in `vision-gyde-as-agent.md` into a buildable blueprint.
 
+**Revision note (2026-04-12, later):** Updated after the Q&A in `gyde-agent-tech-questions.md`. Five code-level tensions with the existing codebase were found and are now reflected in the spec: (1) confidence letter direction was inverted, (2) `search_chunks` needs a query embedding (small cost, not free), (3) Edge indices on `fromChunkId`/`toChunkId` must ship before Phase A, (4) the grounding gate (`detectFakeCitations`) must be skipped when tools are active, (5) `TraversalSession` is deferred — Phase A uses a lightweight `exclude_chunk_ids` parameter instead. Also added the three-layer model (immutable graph / collection workspace / query cache) and stopping criteria that allow unbounded research sessions via checkpoint-and-resume. See §0 below.
+
+---
+
+## 0. Three-Layer Model (the foundation everything else rests on)
+
+Everything in this spec is an implementation of three layers with very different read/write rules, costs, and time horizons. Internalize this before reading the phases.
+
+**Layer 1 — The graph (immutable at chat time).** Chunks, spans, edges, embeddings, confidence scores. Built by the ingestion pipeline. Agents only READ this layer. Traversal is nearly free ($0 per hop for MongoDB, ~$0.00001 per Y/N decision at Sonnet input rates). This is the library's ground truth.
+
+**Layer 2 — The collection workspace (persistent, agent-writable).** A filesystem-like workspace scoped to a Collection that outlives any single chat session. The agent reads, writes, edits, and deletes files here. This is the CC analog: CC's working directory is the repo; GR's working directory is the collection workspace. The folder structure is flexible and agent-determined, but typical entries include:
+
+```
+collections/<collectionId>/workspace/
+  sessions/<sessionId>/
+    query.txt         ← the user's question
+    frontier.txt      ← nodes queued for exploration
+    visited.txt       ← nodes already checked (with verdict)
+    paths/            ← candidate and verified paths
+    dead-ends/        ← directions ruled out, with reasons
+  vibes/              ← unverified hunches, kept across sessions
+  neighborhoods/      ← cached per-node summaries (optional, Phase C+)
+  pinned-paths/       ← paths the user has endorsed
+```
+
+The workspace is stored in MongoDB (a new `WorkspaceFile` collection) not the real filesystem, so it's scoped per Collection and survives across chats. Because each file is small (KB scale) and MongoDB storage is ~$0.001/month per million tokens, the workspace is essentially free to maintain indefinitely.
+
+**Layer 3 — The query cache (computed on demand).** Keyed by query-embedding cosine similarity. When a new question is >0.95 cosine to a cached question AND the underlying graph hasn't changed in the relevant neighborhood, return the cached path (cost: $0, latency: <10ms). Invalidated when: (a) a new book is ingested and creates a shorter path, (b) an edge's confidence drops below threshold after re-scoring, or (c) the user explicitly marks a cached path as stale.
+
+**Why this matters for the spec:** Phase A builds against Layer 1 only (stateless tool calls). Phase B adds a minimal slice of Layer 2 (TraversalSession, the short-term memory inside one chat). Phase C extends Layer 2 to full collection workspace and adds Layer 3 caching. Phase D adds the inferential-distance metric as a derived structural property. Each phase is a strict superset of the previous.
+
+**Stopping criteria — why unbounded research is safe.** A classic agent-loop worry is "what if the path doesn't exist, does it run forever?" Three independent stopping conditions:
+
+1. **Found a verified path** of length ≤ `maxPathLength` with min-confidence ≥ `pathConfidenceThreshold` → stop, surface path, cache.
+2. **Frontier exhausted** — the BFS reached all nodes within `maxDepth` of the seed without finding the target → stop, report "no path exists in current library, here's the frontier", and the frontier itself becomes the crawler target list.
+3. **Budget cap hit** (token budget, wall-clock, or step count) → **checkpoint the workspace to Layer 2 and exit cleanly**. The next session resumes by reading the workspace and picking up where the previous agent left off. This is the CC-beating property: CC's context window has a hard ceiling; GR's workspace doesn't.
+
+**Cost ceiling sanity check.** A Y/N inner-loop step (read one chunk's neighborhood summary + outgoing edges, emit Y/N per edge) is ~2-5K input tokens and ~10 output tokens. At $2.50/Mt input, that's ~$0.00001 per step. 10,000 traversal steps = $1. A full physics-library traversal of 600 books × 100 relevant chunks per book = 60K chunk touches ≈ $0.60. Unbounded research is not a budget problem.
+
 ---
 
 ## 1. Premise
@@ -24,11 +63,15 @@ Expose the existing edge graph as callable tools that the current `claudeService
 
 | Tool | Signature | Implementation | Source |
 |---|---|---|---|
-| `search_chunks` | `(query: string, book_filter?: ObjectId, limit?: number) → ChunkResult[]` | Embedding cosine search on existing `Chunk.embedding` vectors | Reuse logic from `funnelService.js` candidate pool |
-| `follow_edges` | `(chunk_id: ObjectId, direction?: 'from'\|'to'\|'both', relationship_type?: string) → EdgeResult[]` | `Edge.find({ fromChunkId \| toChunkId })` with optional filters | Direct MongoDB query on existing Edge collection |
+| `search_chunks` | `(query: string, book_filter?: ObjectId, limit?: number) → ChunkResult[]` | Embed the query string via `embeddingService` (~$0.00002, ~200ms), then cosine search against `Chunk.embedding`. **Cache embeddings keyed by query text within the session** so the same query never embeds twice. | Reuse candidate-pool logic from `funnelService.js`; add in-session query-embedding cache |
+| `follow_edges` | `(chunk_id: ObjectId, direction?: 'from'\|'to'\|'both', relationship_type?: string, exclude_chunk_ids?: ObjectId[]) → EdgeResult[]` | `Edge.find({ fromChunkId \| toChunkId })` with optional filters; neighbors in `exclude_chunk_ids` are filtered out to prevent loops without a full session model | Direct MongoDB query on existing Edge collection |
 | `read_chunk` | `(chunk_id: ObjectId) → ChunkDetail` | `Chunk.findById().populate('bookId')` + associated `Span.find({ chunkId })` | Direct MongoDB query |
-| `get_path` | `(from_chunk: ObjectId, to_chunk: ObjectId, max_depth?: number) → PathResult` | BFS/Dijkstra over Edge collection, weighted by confidence letter (a=best, z=worst) | **New code**, but small — ~80 lines of graph traversal |
+| `get_path` | `(from_chunk: ObjectId, to_chunk: ObjectId, max_depth?: number) → PathResult` | Confidence-weighted BFS (effectively Dijkstra) over the Edge collection. **Weight mapping: `z→1, y→2, ..., a→26` — LOWER weight = MORE confident, because `z=100%` and `a≈4%` in `compressionService.fractionToConfidence`.** | **New code**, ~80-120 lines |
 | `verify_quote` | `(chunk_id: ObjectId, claimed_text: string) → { exists: boolean, actual_text: string }` | Substring match against `Chunk.rawText` or associated `Page.rawText` | Direct string check |
+
+**⚠ Confidence-letter direction — this was inverted in the original draft.** `compressionService.js` maps `fraction 0 → 'a'` and `fraction 1 → 'z'`, i.e. `z` is the most confident, `a` is the least. Any BFS weight mapping must respect this: `a→26, z→1` so Dijkstra prefers high-confidence edges. A naive `a→1, z→26` mapping is a silent correctness bug — it makes `get_path` return the *least* confident path.
+
+**The `exclude_chunk_ids` parameter on `follow_edges` is the Phase A answer to loop prevention.** Without a full `TraversalSession` model, the agent accumulates visited IDs in its own context window across tool calls and passes them back as `exclude_chunk_ids`. This works for 3-15 hop traversals (well within the model's context). Phase B replaces this with a durable session model.
 
 **Where these live:**
 
@@ -48,6 +91,25 @@ routes/
 User asks "Why does B factor through c_ij?" → Claude searches for relevant chunks, follows edges from the best hit, reads the target chunks, and answers with grounded citations that link to real chunk IDs. No hallucinated books. No fabricated page numbers. The graph constrains the answer.
 
 **Estimated effort:** 1-2 sessions. The hard part is the tool-use loop in the streaming handler; the graph queries themselves are trivial MongoDB calls.
+
+**Grounding gate compatibility fix.** `claudeService.streamResponse` currently runs `detectFakeCitations(fullText)` on the completed response. When tool-use is active, the model's final text references real chunk IDs returned from `read_chunk` — the tools ARE the grounding mechanism, so the fake-citation check is redundant and only adds latency. Fix: in `streamResponse`, if `toolCallsMade > 0`, skip `detectFakeCitations()`. This is ~5 lines.
+
+**Edge indices — required before `get_path` ships.** Current `Edge` model has only `{ fromBookId }` and `{ toBookId }` indices. The BFS queries by `fromChunkId` / `toChunkId` repeatedly; without indices each step is a full collection scan. Add two separate indices (not compound — the `$or` in the BFS query can't use a compound index):
+
+```js
+edgeSchema.index({ fromChunkId: 1 });
+edgeSchema.index({ toChunkId: 1 });
+```
+
+Fine at today's 1200 edges, mandatory well before 100K.
+
+**Streaming-handler refactor is bigger than the original estimate.** The current `streamResponse` uses `client.messages.stream()` with only `content_block_delta` text handling. Tool-use with streaming requires a proper state machine:
+
+```
+state: 'text' | 'tool_input_accumulating' | 'executing_tool' | 'done'
+```
+
+Handling `input_json_delta` events, collecting full tool input before executing, then re-entering the stream with a new API call. Realistic line count: **150-200 lines** replacing the current simple loop, not the 80 previously estimated. Not a blocker — just the accurate number.
 
 ---
 
@@ -321,9 +383,24 @@ get_path(from_chunk_id, to_chunk_id, max_depth = 6):
   return { found: false, visited: visited.size, max_depth_reached: true }
 ```
 
-For confidence-weighted shortest path (Dijkstra), map confidence letters to numeric weights: `a=1, b=2, ..., z=26`. Lower weight = higher confidence = preferred path. This makes the agent prefer paths through high-confidence edges.
+For confidence-weighted shortest path (Dijkstra), map confidence letters to numeric weights **respecting `compressionService.fractionToConfidence`**: `z→1, y→2, x→3, ..., a→26`. **LOWER weight = MORE confident = preferred path.** Since `z = fraction 1.0` (most confident) and `a = fraction 0` (least), this mapping makes Dijkstra prefer edges closest to `z`. The earlier draft had this backwards.
 
-**Performance:** With ~1200 edges and max_depth=6, BFS visits at most a few hundred nodes. Sub-second even without indexing. Add compound index `{ fromChunkId: 1, toChunkId: 1 }` on Edge for safety.
+```js
+// correct weight helper
+function confidenceWeight(letter) {
+  const code = (letter || 'a').toLowerCase().charCodeAt(0) - 'a'.charCodeAt(0);
+  return 26 - code;  // z→1, a→26
+}
+```
+
+**Performance:** With ~1200 edges and max_depth=6, BFS visits at most a few hundred nodes. Sub-second even without indexing. But ship the required indices anyway — see Phase A notes:
+
+```js
+edgeSchema.index({ fromChunkId: 1 });
+edgeSchema.index({ toChunkId: 1 });
+```
+
+Not compound — the BFS's `$or: [{ fromChunkId }, { toChunkId }]` cannot use a compound index on `{ fromChunkId: 1, toChunkId: 1 }`. Two separate indices.
 
 ---
 
@@ -442,12 +519,20 @@ The single highest-leverage change: add `tools` to the `anthropic.messages.creat
 
 | File | Change | Lines (est.) |
 |---|---|---|
-| `services/graphToolService.js` | **New.** 5 tool functions + tool definitions array | ~200 |
-| `services/claudeService.js` | Add tools to API call, implement tool-use loop | ~80 |
+| `services/graphToolService.js` | **New.** 5 tool functions + tool definitions array + in-session query-embedding cache | ~250 |
+| `services/claudeService.js` | Add tools to API call, implement tool-use state machine, skip `detectFakeCitations` when `toolCallsMade > 0` | ~150-200 |
 | `server.js` | SSE events for tool calls (optional, for UI feedback) | ~30 |
 | `views/chat.ejs` | Render tool-call indicators in chat (optional) | ~40 |
-| `models/Edge.js` | Add compound index `{ fromChunkId: 1, toChunkId: 1 }` | ~2 |
+| `models/Edge.js` | Add `{ fromChunkId: 1 }` and `{ toChunkId: 1 }` indices (two separate, not compound) | ~4 |
 
-**Total new code: ~350 lines.** No new dependencies. No new infrastructure. Just wiring.
+**Total new code: ~450-500 lines** (revised up from ~350 after inspecting `claudeService.streamResponse`, which needs a proper state machine for tool-use streaming rather than the simple text-only loop it has today). No new dependencies. No new infrastructure. Just wiring + the one must-fix correctness bug (confidence direction).
+
+**Pre-flight checklist before Phase A code goes in:**
+
+1. ✅ Confirm `compressionService.fractionToConfidence` direction (done: `z=1.0, a=0`)
+2. ⏳ Add Edge indices in a separate commit first, measure BFS latency on the current graph
+3. ⏳ Add query-embedding cache to `graphToolService` (a simple `Map<string, number[]>` scoped per chat session)
+4. ⏳ Refactor `streamResponse` to a state machine BEFORE adding tools (smaller change to review)
+5. ⏳ Add the `toolCallsMade > 0` skip on `detectFakeCitations`
 
 That's the seed. Plant it, see if the chat LLM actually uses the tools well, and let the agent loop grow from there.
