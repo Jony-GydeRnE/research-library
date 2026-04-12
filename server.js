@@ -397,7 +397,8 @@ app.post('/api/chat/:chatId/message', async (req, res) => {
   try {
     const Chat = require('./models/Chat');
     const { streamResponse } = require('./services/claudeService');
-    const { message, generalKnowledge } = req.body;
+    const pipeline = require('./config/pipeline');
+    const { message, generalKnowledge, useTools } = req.body;
 
     const chat = await Chat.findById(req.params.chatId);
     if (!chat) return res.status(404).json({ error: 'Chat not found' });
@@ -413,6 +414,12 @@ app.post('/api/chat/:chatId/message', async (req, res) => {
       'Connection': 'keep-alive',
     });
 
+    // Phase A — tool-use is opt-in. Client can pass useTools:true
+    // per message; the pipeline.AGENT_TOOLS_DEFAULT env toggle
+    // flips the default. Plain-chat behavior is unchanged when
+    // both are false.
+    const toolsEnabled = useTools === true || (useTools !== false && pipeline.AGENT_TOOLS_DEFAULT);
+
     await streamResponse(
       chat.toObject(),
       (chunk) => {
@@ -425,7 +432,22 @@ app.post('/api/chat/:chatId/message', async (req, res) => {
         res.write(`data: ${JSON.stringify({ type: 'done', text: fullText })}\n\n`);
         res.end();
       },
-      { generalKnowledge: generalKnowledge === true }
+      {
+        generalKnowledge: generalKnowledge === true,
+        useTools: toolsEnabled,
+        onToolCall: (name, input) => {
+          res.write(`data: ${JSON.stringify({ type: 'tool_call', tool: name, input })}\n\n`);
+        },
+        onToolResult: (name, result) => {
+          const summary = result?.error
+            ? { error: result.error }
+            : {
+                returned: result?.returned ?? result?.length ?? result?.total ?? null,
+                found: result?.found,
+              };
+          res.write(`data: ${JSON.stringify({ type: 'tool_result', tool: name, summary })}\n\n`);
+        },
+      }
     );
   } catch (err) {
     console.error('Chat message error:', err);

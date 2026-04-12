@@ -1,9 +1,13 @@
 const mongoose = require('mongoose');
 
-// a-z scale: each letter ≈ 3.84% increment
-// For edge classification OUTPUT: confidence a=most confident, z=least confident
-// For search-class tags on SPANS: confidence a≈4%, z≈100%
-// These are inverted — see config/pipeline.js for mapping if needed
+// a-z scale: each letter ≈ 3.84% increment.
+// Confidence direction matches compressionService.fractionToConfidence:
+//   z = ~100% confident (best), a = ~3.85% confident (worst).
+// The edge-pick prompt (prompts/edge-pick.txt) teaches the picker
+// this same direction ("z (~100%) unambiguous, u (~80%) strong, ...").
+// IMPORTANT for get_path / graphToolService: Dijkstra weights must be
+// `z → 1, a → 26` so the lower-weight / shortest path through the
+// graph is the one with the highest confidence edges.
 
 const edgeSchema = new mongoose.Schema({
   fromChunkId: { type: mongoose.Schema.Types.ObjectId, ref: 'Chunk' },
@@ -43,5 +47,12 @@ const edgeSchema = new mongoose.Schema({
 
 edgeSchema.index({ fromBookId: 1 });
 edgeSchema.index({ toBookId: 1 });
+// Graph-tool BFS traversal indices (Phase A — gyde-agent).
+// get_path and follow_edges repeatedly query
+//   Edge.find({ $or: [{ fromChunkId }, { toChunkId }] })
+// to find neighbors of a chunk. Two separate indices, NOT a compound
+// index — the `$or` query cannot use `{ fromChunkId:1, toChunkId:1 }`.
+edgeSchema.index({ fromChunkId: 1 });
+edgeSchema.index({ toChunkId: 1 });
 
 module.exports = mongoose.model('Edge', edgeSchema);

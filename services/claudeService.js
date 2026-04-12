@@ -979,17 +979,104 @@ async function detectFakeCitations(text) {
   return { fakes, hasIssues: fakes.length > 0 };
 }
 
+// ─── Graph-tool preamble injected into system prompt when tools
+// are active. Tells the model what the tools are for and how to
+// use them without bloating the base context. Kept in code rather
+// than a prompt file because the tool names/shapes are owned by
+// graphToolService and they should stay in sync.
+const TOOL_SYSTEM_PREAMBLE = `
+
+GRAPH TRAVERSAL TOOLS ARE AVAILABLE.
+
+You have access to five tools that let you navigate the research
+library's verified edge graph directly: search_chunks, follow_edges,
+read_chunk, get_path, and verify_quote.
+
+Guidelines:
+- For any non-trivial research question, PREFER to call tools
+  rather than answer from the context dump. The tools return real
+  chunk IDs from MongoDB — citations produced this way are
+  structurally grounded and cannot be hallucinated.
+- Seed with search_chunks (one natural-language query), then
+  follow_edges from the best hits to expand the neighborhood,
+  then read_chunk to confirm a node actually says what you think.
+- Pass exclude_chunk_ids to follow_edges with the list of nodes
+  you have already visited in this turn so you don't loop.
+- Use get_path when the user asks "how does A relate to B" or
+  "trace the chain from X to Y" — it returns the confidence-
+  weighted shortest path, or found=false if no path exists
+  (found=false is itself an answer: "your library does not yet
+  connect these two ideas").
+- Use verify_quote before attributing an exact phrase to a chunk.
+- When you cite a chunk in your final reply, refer to it by its
+  real chunk_id, book title, and page — all of which are returned
+  by the tools.
+
+The graph is the ground truth. Your job is to navigate it, not
+to generate physics from training data.`;
+
+/**
+ * Stream a response from Claude.
+ *
+ * opts.generalKnowledge — bypass grounding and let the model use
+ *   training data (no tools, no citation validation).
+ * opts.useTools — enable Phase A graph-tool traversal. When true,
+ *   the call runs as a tool-use state machine: stream → detect
+ *   tool_use → execute via graphToolService → append result →
+ *   re-stream, looping until the model emits end_turn. When false
+ *   (default), behavior is identical to the pre-tool implementation
+ *   so regular chat is unaffected. This is the toggle Jony asked
+ *   for: tool-use is isolated from the main chat path so bugs in
+ *   the state machine can't break plain chat.
+ * opts.onToolCall — optional callback fired when the model starts
+ *   executing a tool, signature (name, input) — used by the SSE
+ *   handler to push UI indicators.
+ * opts.onToolResult — optional callback fired after a tool returns,
+ *   signature (name, result).
+ */
 async function streamResponse(chat, onChunk, onDone, opts = {}) {
   const generalKnowledgePrefix = opts.generalKnowledge
     ? `GENERAL KNOWLEDGE MODE: The user has explicitly requested an answer from your general training data. Answer freely, but begin your response with: "⚠️ General knowledge answer (not grounded in your library):" and do NOT use any [[cite]] tags.\n\n`
     : '';
 
-  const system = generalKnowledgePrefix + await buildContext(chat);
+  let system = generalKnowledgePrefix + await buildContext(chat);
+  if (opts.useTools && !opts.generalKnowledge) {
+    system += TOOL_SYSTEM_PREAMBLE;
+  }
 
   const messages = chat.messages
     .slice(-pipeline.CHAT_MAX_HISTORY)
     .map(m => ({ role: m.role, content: m.content }));
 
+  // ── Tool-use path ──────────────────────────────────────────
+  // Isolated from the plain streaming path so a bug in the state
+  // machine cannot break regular chat.
+  if (opts.useTools && !opts.generalKnowledge) {
+    try {
+      const fullText = await streamWithTools({
+        system,
+        messages,
+        onChunk,
+        onToolCall: opts.onToolCall,
+        onToolResult: opts.onToolResult,
+      });
+      // Tools ARE the grounding — skip detectFakeCitations when
+      // tool calls were used. The chunk IDs returned from the
+      // tools are structurally real, not model-generated strings.
+      onDone(fullText);
+      return;
+    } catch (err) {
+      console.error('[claudeService] tool-use stream failed, no fallback:', err.message);
+      // Surface the error via onDone so the user sees it instead of
+      // a silent hang. Do NOT fall back to plain streaming — that
+      // would hide bugs. The gate in server.js controls whether
+      // this path runs at all.
+      onDone(`⚠️ Tool-use traversal failed: ${err.message}`);
+      return;
+    }
+  }
+
+  // ── Plain streaming path — unchanged from pre-Phase-A ──────
   let fullText = '';
 
   const stream = await client.messages.stream({
@@ -1035,6 +1122,115 @@ This usually means the topic isn't covered by the books currently in your librar
   }
 
   onDone(fullText);
+}
+
+// ─── Tool-use state machine ────────────────────────────────────
+// Loop:
+//   1. client.messages.stream(...tools)
+//   2. stream events: text_delta → onChunk; tool_use blocks
+//      accumulate via finalMessage()
+//   3. if stop_reason === 'tool_use':
+//        for each tool_use block: execute via graphToolService
+//        append assistant message with full content (text + tool_use)
+//        append user message with tool_result blocks
+//        loop again
+//   4. if stop_reason === 'end_turn': break, return accumulated text
+//
+// Safety caps: AGENT_MAX_TOOL_CALLS iterations, AGENT_MAX_TURNS
+// total API round-trips. Both fail-closed — a runaway loop exits
+// with the accumulated text rather than looping forever.
+async function streamWithTools({ system, messages, onChunk, onToolCall, onToolResult }) {
+  const graphToolService = require('./graphToolService');
+  const maxTurns = pipeline.AGENT_MAX_TURNS || 12;
+  const maxToolCalls = pipeline.AGENT_MAX_TOOL_CALLS || 20;
+
+  // Per-invocation session object — holds the query-embedding
+  // cache and (Phase B) visited-node state. Lives and dies with
+  // this call.
+  const session = {};
+
+  // Working message history. We mutate this across iterations by
+  // appending the assistant's full response and the user's
+  // tool_result follow-ups.
+  const workingMessages = messages.map(m => ({ role: m.role, content: m.content }));
+
+  let turn = 0;
+  let totalToolCalls = 0;
+  let accumulatedText = '';
+
+  while (turn < maxTurns) {
+    turn++;
+    let turnText = '';
+
+    const stream = await client.messages.stream({
+      model: pipeline.CHAT_MODEL || 'claude-sonnet-4-20250514',
+      max_tokens: 4096,
+      system,
+      messages: workingMessages,
+      tools: graphToolService.TOOL_DEFINITIONS,
+    });
+
+    for await (const event of stream) {
+      if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
+        turnText += event.delta.text;
+        onChunk(event.delta.text);
+      }
+    }
+
+    const finalMessage = await stream.finalMessage();
+    accumulatedText += turnText;
+
+    if (finalMessage.stop_reason !== 'tool_use') {
+      // end_turn / max_tokens / stop_sequence — done.
+      return accumulatedText;
+    }
+
+    // Extract tool_use blocks from the assistant's response and
+    // append the whole content array (text + tool_use) as the
+    // assistant message. Anthropic requires the assistant turn to
+    // be echoed back verbatim before the tool_result messages.
+    const assistantContent = finalMessage.content;
+    workingMessages.push({ role: 'assistant', content: assistantContent });
+
+    const toolUseBlocks = assistantContent.filter(b => b.type === 'tool_use');
+    const toolResults = [];
+
+    for (const block of toolUseBlocks) {
+      if (totalToolCalls >= maxToolCalls) {
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: block.id,
+          content: JSON.stringify({ error: 'tool-call budget exhausted' }),
+          is_error: true,
+        });
+        continue;
+      }
+      totalToolCalls++;
+
+      try { onToolCall && onToolCall(block.name, block.input); } catch (_) {}
+
+      const result = await graphToolService.executeTool(block.name, block.input, session);
+
+      try { onToolResult && onToolResult(block.name, result); } catch (_) {}
+
+      toolResults.push({
+        type: 'tool_result',
+        tool_use_id: block.id,
+        content: JSON.stringify(result),
+        is_error: !!result?.error,
+      });
+    }
+
+    workingMessages.push({ role: 'user', content: toolResults });
+    // Loop — the next iteration will stream the model's follow-up
+    // response, which may be either a final text turn or another
+    // round of tool calls.
+  }
+
+  // Hit maxTurns without a natural stop. Return whatever text
+  // accumulated and log — this is the fail-closed exit.
+  console.warn(`[claudeService] streamWithTools hit maxTurns=${maxTurns}, tool_calls=${totalToolCalls}`);
+  return accumulatedText || '⚠️ Traversal hit the turn limit without reaching a final answer.';
 }
 
 module.exports = { streamResponse, buildContext, determineScope, detectFakeCitations };

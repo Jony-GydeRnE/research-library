@@ -86,6 +86,18 @@ module.exports = {
   CHAT_STREAMING: true,
   CHAT_MAX_HISTORY: 20,
 
+  // ─── AGENT (Phase A — graph tools for chat) ──────────────────
+  // Master toggle for tool-use in chat. Default OFF so regular
+  // chat behavior is unchanged until we've validated the state
+  // machine in a real session. Flip with AGENT_TOOLS_DEFAULT=1 in
+  // .env or pass { useTools: true } per-call from server.js.
+  AGENT_TOOLS_DEFAULT: process.env.AGENT_TOOLS_DEFAULT === '1',
+  // Hard caps on the tool-use loop inside streamWithTools —
+  // fail-closed safeguards, not cost targets. At Sonnet prices a
+  // 20-tool-call exploration is ~$0.02.
+  AGENT_MAX_TURNS: parseInt(process.env.AGENT_MAX_TURNS, 10) || 12,
+  AGENT_MAX_TOOL_CALLS: parseInt(process.env.AGENT_MAX_TOOL_CALLS, 10) || 20,
+
   // ─── FUTURE: EDGE CLASSIFICATION (Phase 3) ───────────────────
   EDGE_MODEL: process.env.EDGE_MODEL || 'claude-opus-4-6',
   EDGE_STOPPING_CONFIDENCE: 't',
