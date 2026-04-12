@@ -555,7 +555,7 @@ async function renderBookMetadata(book) {
       const targetChunk = chunkMap[String(e.toChunkId)];
       const targetBook = bookMap[String(e.toBookId)];
       if (!targetChunk || !targetBook) continue;
-      const key = String(e.fromSpanId);
+      const key = String(e.fromSpanId || e.fromChunkId || e._id);
       if (!edgesBySpan.has(key)) edgesBySpan.set(key, []);
       // Materialize a 200-char quote from the target chunk so the AI
       // can lift it into a verbatim [[cite]] tag without having to
@@ -864,7 +864,7 @@ async function getAllCrossBookEdges(opts = {}) {
   if (inScope.length === 0) return null;
 
   // Batch-load every referenced span, chunk, and book in one round-trip
-  const spanIds = [...new Set(inScope.map(e => String(e.fromSpanId)).filter(Boolean))];
+  const spanIds = [...new Set(inScope.map(e => e.fromSpanId).filter(id => id).map(String))];
   const chunkIds = [...new Set(inScope.flatMap(e => [String(e.fromChunkId), String(e.toChunkId)]).filter(Boolean))];
   const bookIds = [...new Set(inScope.flatMap(e => [String(e.fromBookId), String(e.toBookId)]).filter(Boolean))];
 
