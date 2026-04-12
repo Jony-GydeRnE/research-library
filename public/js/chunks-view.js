@@ -1,43 +1,59 @@
 /**
- * Chunks view — metadata-forward reader mode.
+ * Chunks reader mode — metadata-forward view.
  *
- * Shows, for the current page:
- *   - one block per chunk (bordered card, header with structural
- *     type / tags / concept tags / span count / edge count)
- *   - each chunk's spans rendered inline, with intermediate
- *     sentence periods replaced by clickable ';;' separators
- *   - clicking ';;' (or the compact [i] badge next to a span)
- *     opens a popover showing the span's tags and all outgoing
- *     edges ranked by confidence
- *   - chunk-level edges (funnel writes cross-book llm edges at
- *     the chunk level, not always the span level) shown as a
- *     collapsed row below each chunk
+ * Layout per page:
+ *   ┌─ Page N · M chunks ─────────────────────────────────────┐
+ *   │ ┌─ #idx narrative · 3 spans ──────────────────────────┐ │
+ *   │ │ [tag] [tag] [tag]                                   │ │
+ *   │ │                                                     │ │
+ *   │ │ Span text with LaTeX intact \(c_{ij}=0\). ;;        │ │
+ *   │ │                                                     │ │
+ *   │ │ (on ;; click: inline panel appears here, tabs       │ │
+ *   │ │  Tags | Edges, ranked by confidence z → a)          │ │
+ *   │ │                                                     │ │
+ *   │ │ Second span text. ;;                                │ │
+ *   │ │ Third span text. ;;                                 │ │
+ *   │ └─────────────────────────────────────────────────────┘ │
+ *   └─────────────────────────────────────────────────────────┘
  *
- * No external framework — just vanilla DOM. State is kept on
- * window.GydeChunksView for debugging.
+ * Rules:
+ *   - Every span ends with a clickable ';;' — even single-sentence
+ *     spans — so the user always has a consistent click target.
+ *   - Multi-sentence spans ALSO get ';;' substituted for their
+ *     intermediate sentence terminators (server side), but the
+ *     primary click target is the trailing ';;'.
+ *   - Clicking ';;' toggles an inline detail panel immediately
+ *     below the span's line. Only one panel is open at a time
+ *     per chunk; clicking another span's ';;' moves the panel.
+ *   - The panel has two tabs: Tags and Edges. Default is Tags
+ *     (small, cheap). Edges are ranked by confidence (z → a).
+ *   - Edge rows show: confidence letter badge, relationship,
+ *     direction arrow, target book title (resolved server-side),
+ *     target page, and a short text preview.
+ *
+ * FUTURE: when opened from Pages mode, render single-page; when
+ * opened from Scroll/PDF, render scroll-all-pages. Currently
+ * always scroll-all-pages per Jony's interim preference.
  */
 (function () {
   'use strict';
 
-  const STATE = {
-    current: null,   // last-loaded view payload
-    popover: null,   // active popover element
-  };
+  const STATE = { current: null };
 
-  // ─── Helpers ──────────────────────────────────────────────
+  // ─── Tiny DOM helper ──────────────────────────────────────
   function el(tag, attrs, children) {
     const n = document.createElement(tag);
     if (attrs) {
       for (const k of Object.keys(attrs)) {
         if (k === 'className') n.className = attrs[k];
         else if (k === 'style') n.setAttribute('style', attrs[k]);
-        else if (k.startsWith('data-')) n.setAttribute(k, attrs[k]);
         else if (k === 'html') n.innerHTML = attrs[k];
         else if (k === 'onClick') n.addEventListener('click', attrs[k]);
+        else if (k.startsWith('data-') || k === 'id' || k === 'title' || k === 'href' || k === 'target') n.setAttribute(k, attrs[k]);
         else n.setAttribute(k, attrs[k]);
       }
     }
-    if (children) {
+    if (children != null) {
       for (const c of [].concat(children)) {
         if (c == null || c === false) continue;
         n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
@@ -46,245 +62,318 @@
     return n;
   }
 
-  function confColor(letter) {
-    if (!letter) return 'var(--r-text-muted)';
+  // ─── Confidence visualization ─────────────────────────────
+  function confIdx(letter) {
+    if (!letter) return -1;
     const c = letter.toLowerCase().charCodeAt(0) - 'a'.charCodeAt(0);
-    // a (0)   -> red-ish
-    // m (12)  -> amber
-    // z (25)  -> green
-    if (c >= 18) return '#3fb86c';   // high confidence (s-z)
-    if (c >= 10) return '#d6a040';   // medium (k-r)
-    return '#c66';                    // low (a-j)
+    return (c >= 0 && c <= 25) ? c : -1;
+  }
+  function confPct(letter) {
+    const i = confIdx(letter);
+    return i < 0 ? '' : Math.round(((i + 1) / 26) * 100) + '%';
+  }
+  function confBand(letter) {
+    const i = confIdx(letter);
+    if (i >= 18) return 'high';   // s-z
+    if (i >= 10) return 'mid';    // k-r
+    return 'low';                  // a-j
   }
 
-  function pct(letter) {
-    if (!letter) return '';
-    const c = letter.toLowerCase().charCodeAt(0) - 'a'.charCodeAt(0);
-    if (c < 0 || c > 25) return '';
-    return Math.round(((c + 1) / 26) * 100) + '%';
+  // ─── Escape text for innerHTML injection that preserves LaTeX ─
+  // MathJax scans TEXT nodes for \(...\) and $...$, but if we
+  // want to interleave element boundaries inside prose we need
+  // innerHTML — which requires us to escape HTML special chars
+  // while leaving LaTeX delimiters alone. This is a narrow
+  // escape: &, <, > only.
+  function htmlEscape(s) {
+    return String(s || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
 
-  // Render a span's text with ';;' separators as clickable spans.
-  // The whole span text is wrapped in a data-span-id span so any
-  // click inside fires the popover too.
-  function renderSpanInline(s, onSepClick) {
-    // Split on ;; but KEEP the separators.
-    const parts = s.renderedText.split(/(;;)/);
-    const nodes = parts.map((p, idx) => {
-      if (p === ';;') {
-        return el('span', {
-          className: 'cv-sep',
-          'data-span-id': s.spanId,
-          title: 'Click for tags and edges',
-          onClick: (e) => { e.stopPropagation(); onSepClick(e, s); },
-        }, [';;']);
-      }
-      return document.createTextNode(p);
-    });
-    const wrap = el('span', {
-      className: 'cv-span',
-      'data-span-id': s.spanId,
-      onClick: (e) => { onSepClick(e, s); },
-    }, nodes);
-    // Attach a compact [i] badge AFTER the span text so even
-    // single-sentence spans (which have no ;; inside) still have
-    // something clickable.
-    wrap.appendChild(
-      el('sup', {
-        className: 'cv-badge',
-        'data-span-id': s.spanId,
-        title: 'Span metadata',
-        onClick: (e) => { e.stopPropagation(); onSepClick(e, s); },
-      }, [`[${s.searchClass || 'N'}${s.edges && s.edges.length ? '·' + s.edges.length : ''}]`])
-    );
+  // ─── Render one span's prose with intra-span ;; separators.
+  // Server has already replaced internal sentence periods with
+  // ';;' when safe (no LaTeX). We just need to render the prose
+  // and make the ';;' tokens visually the same as the trailing
+  // end-of-span marker — both are display-only, both are inert
+  // (the clickable one is the trailing marker added by the
+  // parent render).
+  function spanProseHtml(text) {
+    const escaped = htmlEscape(text);
+    // Turn any ;; that appears in the span text into styled
+    // (non-clickable) marks so they match the trailing one.
+    return escaped.replace(/;;/g, '<span class="cv-inner-sep">;;</span>');
+  }
+
+  // ─── Inline detail panel ──────────────────────────────────
+  // Toggled under the span row when ';;' is clicked.
+  let openPanelKey = null;
+  function detailKey(chunkId, spanId) { return `${chunkId}::${spanId}`; }
+
+  function renderTagsBlock(span) {
+    const wrap = el('div', { className: 'cv-detail-tags' });
+    const chips = [];
+    if (span.role) chips.push(el('span', { className: 'cv-chip cv-chip-role' }, [span.role]));
+    if (span.searchClass) chips.push(el('span', { className: 'cv-chip cv-chip-class' }, ['class ' + span.searchClass]));
+    if (span.gapType) chips.push(el('span', { className: 'cv-chip cv-chip-gap' }, ['gap: ' + span.gapType]));
+    for (const t of (span.contextTags || [])) {
+      chips.push(el('span', { className: 'cv-chip cv-chip-ctx' }, [t]));
+    }
+    if (chips.length === 0) {
+      wrap.appendChild(el('div', { className: 'cv-detail-empty' }, ['(no tags on this span)']));
+    } else {
+      for (const c of chips) wrap.appendChild(c);
+    }
     return wrap;
   }
 
-  // Build a single chunk card.
-  function renderChunk(c, onSpanClick, onEdgeClick) {
-    const header = el('div', { className: 'cv-chunk-header' }, [
-      el('span', { className: 'cv-chunk-idx' }, [`#${c.chunkIndex != null ? c.chunkIndex : '?'}`]),
-      el('span', { className: 'cv-chunk-type' }, [c.structuralType || 'unknown']),
-      el('span', { className: 'cv-chunk-count' }, [`${c.spans.length} span${c.spans.length !== 1 ? 's' : ''}`]),
-      c.hasMissingProof
-        ? el('span', { className: 'cv-chunk-flag', title: 'Span flagged a missing proof' }, ['⚠ missing proof'])
-        : null,
-    ]);
-
-    // Tags row
-    const tags = el('div', { className: 'cv-chunk-tags' }, [
-      ...(c.contextTags || []).map(t => el('span', { className: 'cv-tag cv-tag-ctx' }, [t])),
-      ...(c.conceptTags || []).map(t => el('span', { className: 'cv-tag cv-tag-concept' }, [t])),
-    ]);
-
-    // Body: spans rendered inline with ;; separators.
-    const body = el('div', { className: 'cv-chunk-body' });
-    for (let i = 0; i < c.spans.length; i++) {
-      if (i > 0) body.appendChild(document.createTextNode(' '));
-      body.appendChild(renderSpanInline(c.spans[i], onSpanClick));
+  function renderEdgesBlock(edges) {
+    const wrap = el('div', { className: 'cv-detail-edges' });
+    if (!edges || edges.length === 0) {
+      wrap.appendChild(el('div', { className: 'cv-detail-empty' }, ['(no edges on this span)']));
+      return wrap;
     }
-    if (c.spans.length === 0 && c.sourceText) {
-      body.appendChild(document.createTextNode(c.sourceText));
+    for (const e of edges) {
+      const row = el('a', {
+        className: 'cv-edge',
+        href: e.targetBookId && e.targetPage ? `/reader/${e.targetBookId}/page/${e.targetPage}` : '#',
+        target: '_blank',
+        title: `${e.relationship} · conf ${e.confidence} (${confPct(e.confidence)})${e.method ? ' · ' + e.method : ''}`,
+      }, [
+        el('span', { className: 'cv-edge-conf cv-conf-' + confBand(e.confidence) }, [e.confidence || '?']),
+        el('span', { className: 'cv-edge-rel' }, [e.relationship || 'unknown']),
+        el('span', { className: 'cv-edge-arrow' }, [e.direction === 'in' ? '←' : '→']),
+        el('span', { className: 'cv-edge-target' }, [
+          el('span', { className: 'cv-edge-book' }, [
+            e.targetBookTitle || '(unknown book)',
+          ]),
+          el('span', { className: 'cv-edge-page' }, ['p.' + (e.targetPage != null ? e.targetPage : '?')]),
+        ]),
+        el('span', { className: 'cv-edge-preview' }, [e.targetPreview || '']),
+      ]);
+      wrap.appendChild(row);
     }
-
-    // Chunk-level edges (if any) — collapsible row.
-    const edgeRowChildren = [];
-    if (c.chunkLevelEdges && c.chunkLevelEdges.length > 0) {
-      edgeRowChildren.push(
-        el('div', { className: 'cv-chunk-edges-label' }, [
-          `Chunk-level edges (${c.chunkLevelEdges.length}) — ranked by confidence:`,
-        ])
-      );
-      for (const e of c.chunkLevelEdges) {
-        edgeRowChildren.push(renderEdgeRow(e, onEdgeClick));
-      }
-    }
-    const edgeRow = edgeRowChildren.length > 0
-      ? el('div', { className: 'cv-chunk-edges' }, edgeRowChildren)
-      : null;
-
-    return el('div', { className: 'cv-chunk', 'data-chunk-id': c.chunkId }, [
-      header,
-      (c.contextTags.length + c.conceptTags.length) > 0 ? tags : null,
-      body,
-      edgeRow,
-    ]);
+    return wrap;
   }
 
-  function renderEdgeRow(e, onClick) {
-    const conf = e.confidence || '?';
-    const row = el('div', {
-      className: 'cv-edge-row',
-      onClick: () => onClick && onClick(e),
-    }, [
-      el('span', {
-        className: 'cv-edge-conf',
-        style: `background:${confColor(conf)};`,
-        title: `confidence ${conf} (${pct(conf)})`,
-      }, [conf]),
-      el('span', { className: 'cv-edge-rel' }, [e.relationship || 'unknown']),
-      el('span', { className: 'cv-edge-arrow' }, [e.direction === 'in' ? '←' : '→']),
-      el('span', { className: 'cv-edge-target' }, [
-        (e.targetBookTitle || '(unknown book)').slice(0, 40),
-        ' p.', String(e.targetPage ?? '?'),
-      ]),
-      el('span', { className: 'cv-edge-preview' }, [e.targetPreview || '']),
+  function makeDetailPanel(chunk, span) {
+    const panel = el('div', {
+      className: 'cv-detail',
+      'data-span-id': span.spanId,
+    });
+
+    // Tabs
+    const tabs = el('div', { className: 'cv-detail-tabs' });
+    const tagsTab = el('button', { className: 'cv-tab active', type: 'button' }, [
+      'Tags', el('span', { className: 'cv-tab-count' }, [String((span.contextTags || []).length + (span.role ? 1 : 0))]),
     ]);
+    const edgesTab = el('button', { className: 'cv-tab', type: 'button' }, [
+      'Edges', el('span', { className: 'cv-tab-count' }, [String((span.edges || []).length)]),
+    ]);
+    tabs.appendChild(tagsTab);
+    tabs.appendChild(edgesTab);
+    panel.appendChild(tabs);
+
+    // Body containers
+    const tagsBody = renderTagsBlock(span);
+    const edgesBody = renderEdgesBlock(span.edges || []);
+    edgesBody.style.display = 'none';
+    panel.appendChild(tagsBody);
+    panel.appendChild(edgesBody);
+
+    tagsTab.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      tagsTab.classList.add('active');
+      edgesTab.classList.remove('active');
+      tagsBody.style.display = '';
+      edgesBody.style.display = 'none';
+    });
+    edgesTab.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      edgesTab.classList.add('active');
+      tagsTab.classList.remove('active');
+      edgesBody.style.display = '';
+      tagsBody.style.display = 'none';
+    });
+
+    return panel;
+  }
+
+  function closeAnyOpenDetail(chunkEl) {
+    const existing = chunkEl.querySelector('.cv-detail');
+    if (existing) existing.remove();
+    chunkEl.querySelectorAll('.cv-sep.active').forEach(s => s.classList.remove('active'));
+  }
+
+  function toggleDetail(chunkEl, chunk, span, sepEl) {
+    const key = detailKey(chunk.chunkId, span.spanId);
+    const isOpen = openPanelKey === key;
+
+    // Always close any existing detail in this chunk first.
+    closeAnyOpenDetail(chunkEl);
+
+    if (isOpen) {
+      openPanelKey = null;
+      return;
+    }
+
+    const panel = makeDetailPanel(chunk, span);
+    // Insert right after the span's row element (which is
+    // sepEl.parentElement — the .cv-span-row).
+    const row = sepEl.closest('.cv-span-row');
+    if (row && row.parentElement) {
+      row.parentElement.insertBefore(panel, row.nextSibling);
+    } else {
+      chunkEl.appendChild(panel);
+    }
+    sepEl.classList.add('active');
+    openPanelKey = key;
+
+    // Typeset any LaTeX in the edge previews.
+    if (window.MathJax && MathJax.typesetPromise) {
+      MathJax.typesetPromise([panel]).catch(() => {});
+    }
+  }
+
+  // ─── Render one span row ──────────────────────────────────
+  function renderSpanRow(chunk, span, chunkEl) {
+    const row = el('div', { className: 'cv-span-row', 'data-span-id': span.spanId });
+
+    // Prose (LaTeX-preserving via innerHTML).
+    const prose = el('span', { className: 'cv-span-text' });
+    prose.innerHTML = spanProseHtml(span.renderedText || '');
+    row.appendChild(prose);
+
+    // Trailing clickable ;; — the primary hit target.
+    const sep = el('span', {
+      className: 'cv-sep',
+      'data-span-id': span.spanId,
+      title: 'Click for tags / edges',
+    }, [';;']);
+    sep.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      toggleDetail(chunkEl, chunk, span, sep);
+    });
+    row.appendChild(sep);
+
+    // Also make the prose clickable — whole span is a hit target,
+    // but only the trailing ;; gets the "active" styling.
+    prose.addEventListener('click', (ev) => {
+      // Don't toggle if the user was selecting text.
+      const sel = window.getSelection();
+      if (sel && sel.toString().length > 0) return;
+      ev.stopPropagation();
+      toggleDetail(chunkEl, chunk, span, sep);
+    });
+
     return row;
   }
 
-  // ─── Popover ──────────────────────────────────────────────
-  function closePopover() {
-    if (STATE.popover) {
-      STATE.popover.remove();
-      STATE.popover = null;
-    }
-  }
-
-  function openSpanPopover(evt, span) {
-    closePopover();
-    const pop = el('div', { className: 'cv-popover' });
+  // ─── Render one chunk card ────────────────────────────────
+  function renderChunk(c) {
+    const chunkEl = el('div', { className: 'cv-chunk', 'data-chunk-id': c.chunkId });
 
     // Header
-    pop.appendChild(el('div', { className: 'cv-popover-header' }, [
-      el('span', { className: 'cv-popover-title' }, [`Span ${span.sentenceStart}-${span.sentenceEnd}`]),
-      el('span', { className: 'cv-popover-class' }, [`class: ${span.searchClass || 'N'}${span.gapType ? ' / ' + span.gapType : ''}`]),
-      el('button', { className: 'cv-popover-close', onClick: closePopover }, ['×']),
-    ]));
+    const header = el('div', { className: 'cv-chunk-header' }, [
+      el('span', { className: 'cv-chunk-idx' }, [`#${c.chunkIndex != null ? c.chunkIndex : '?'}`]),
+      el('span', { className: 'cv-chunk-type' }, [c.structuralType || 'unknown']),
+      el('span', { className: 'cv-chunk-meta' }, [
+        `${c.spans.length} span${c.spans.length !== 1 ? 's' : ''}`,
+      ]),
+      (c.chunkLevelEdges && c.chunkLevelEdges.length > 0)
+        ? el('span', { className: 'cv-chunk-meta cv-chunk-meta-edges' }, [
+            `${c.chunkLevelEdges.length} edge${c.chunkLevelEdges.length !== 1 ? 's' : ''}`,
+          ])
+        : null,
+      c.hasMissingProof ? el('span', { className: 'cv-chunk-flag' }, ['⚠ missing proof']) : null,
+    ]);
+    chunkEl.appendChild(header);
 
-    // Tags tab content
-    const tagsBlock = el('div', { className: 'cv-popover-section' });
-    tagsBlock.appendChild(el('div', { className: 'cv-popover-label' }, ['Tags']));
-    if ((span.contextTags || []).length === 0 && !span.role) {
-      tagsBlock.appendChild(el('div', { className: 'cv-popover-empty' }, ['(no tags)']));
-    } else {
-      const tagWrap = el('div', { className: 'cv-tag-wrap' });
-      if (span.role) tagWrap.appendChild(el('span', { className: 'cv-tag cv-tag-role' }, [span.role]));
-      for (const t of (span.contextTags || [])) {
-        tagWrap.appendChild(el('span', { className: 'cv-tag cv-tag-ctx' }, [t]));
-      }
-      tagsBlock.appendChild(tagWrap);
+    // Tag row (context + concept tags)
+    if ((c.contextTags || []).length > 0 || (c.conceptTags || []).length > 0) {
+      const tagRow = el('div', { className: 'cv-chunk-tagrow' });
+      for (const t of (c.contextTags || [])) tagRow.appendChild(el('span', { className: 'cv-chip cv-chip-ctx' }, [t]));
+      for (const t of (c.conceptTags || [])) tagRow.appendChild(el('span', { className: 'cv-chip cv-chip-concept' }, [t]));
+      chunkEl.appendChild(tagRow);
     }
-    pop.appendChild(tagsBlock);
 
-    // Edges block
-    const edgesBlock = el('div', { className: 'cv-popover-section' });
-    edgesBlock.appendChild(el('div', { className: 'cv-popover-label' }, [
-      `Edges (${(span.edges || []).length}) — ranked by confidence`,
-    ]));
-    if ((span.edges || []).length === 0) {
-      edgesBlock.appendChild(el('div', { className: 'cv-popover-empty' }, [
-        '(no span-level edges — check the chunk-level edges row below this chunk)',
-      ]));
+    // Body: stacked span rows
+    const body = el('div', { className: 'cv-chunk-body' });
+    if (c.spans.length === 0) {
+      // No spans — render raw chunk text as read-only prose.
+      const row = el('div', { className: 'cv-span-row cv-span-row-empty' });
+      const prose = el('span', { className: 'cv-span-text' });
+      prose.innerHTML = spanProseHtml(c.sourceText || '');
+      row.appendChild(prose);
+      body.appendChild(row);
     } else {
-      for (const e of span.edges) {
-        edgesBlock.appendChild(renderEdgeRow(e, onEdgeClickNavigate));
+      for (const s of c.spans) {
+        body.appendChild(renderSpanRow(c, s, chunkEl));
       }
     }
-    pop.appendChild(edgesBlock);
+    chunkEl.appendChild(body);
 
-    document.body.appendChild(pop);
+    // Chunk-level edges — collapsible "open edges" strip showing
+    // how many edges aren't yet attributed to a specific span.
+    if (c.chunkLevelEdges && c.chunkLevelEdges.length > 0) {
+      const synthSpan = {
+        spanId: '__chunk__',
+        contextTags: [],
+        role: null,
+        searchClass: null,
+        gapType: null,
+        edges: c.chunkLevelEdges,
+      };
+      const chunkEdgeRow = el('div', { className: 'cv-chunk-edges-row' }, [
+        el('span', { className: 'cv-chunk-edges-label' }, [
+          `${c.chunkLevelEdges.length} chunk-level edge${c.chunkLevelEdges.length !== 1 ? 's' : ''}`,
+        ]),
+        el('button', {
+          className: 'cv-chunk-edges-toggle',
+          type: 'button',
+        }, ['show']),
+      ]);
+      const btn = chunkEdgeRow.querySelector('.cv-chunk-edges-toggle');
+      let shown = false;
+      let panel = null;
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        if (shown) {
+          if (panel) panel.remove();
+          btn.textContent = 'show';
+          shown = false;
+          return;
+        }
+        panel = makeDetailPanel(c, synthSpan);
+        panel.classList.add('cv-detail-chunk');
+        // Start on Edges tab for the chunk-level list — that's
+        // what the button is really for.
+        const tabs = panel.querySelectorAll('.cv-tab');
+        if (tabs[1]) tabs[1].click();
+        chunkEdgeRow.parentElement.insertBefore(panel, chunkEdgeRow.nextSibling);
+        btn.textContent = 'hide';
+        shown = true;
+        if (window.MathJax && MathJax.typesetPromise) {
+          MathJax.typesetPromise([panel]).catch(() => {});
+        }
+      });
+      chunkEl.appendChild(chunkEdgeRow);
+    }
 
-    // Position near the click
-    const x = evt.clientX || 0;
-    const y = evt.clientY || 0;
-    const pw = pop.offsetWidth;
-    const ph = pop.offsetHeight;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const left = Math.min(Math.max(8, x - pw / 2), vw - pw - 8);
-    const top = (y + ph + 12 > vh) ? Math.max(8, y - ph - 12) : y + 12;
-    pop.style.left = left + 'px';
-    pop.style.top = top + 'px';
-
-    STATE.popover = pop;
+    return chunkEl;
   }
 
-  function onEdgeClickNavigate(e) {
-    if (!e.targetBookId || !e.targetPage) return;
-    const url = `/reader/${e.targetBookId}/page/${e.targetPage}`;
-    window.open(url, '_blank');
-  }
-
-  // Close popover on outside click
-  document.addEventListener('click', (e) => {
-    if (!STATE.popover) return;
-    if (!STATE.popover.contains(e.target)) closePopover();
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closePopover();
-  });
-
-  // ─── Main load ────────────────────────────────────────────
-  //
-  // FUTURE BEHAVIOR (not yet implemented — tracked as TODO):
-  // Chunks view should inherit the presentation of the mode it
-  // was opened FROM. If the user was in Pages mode and clicks
-  // Chunks, chunks should render as a single-page view mirroring
-  // Pages. If the user was in Scroll or PDF mode and clicks
-  // Chunks, chunks should render as a scroll-of-all-pages. This
-  // makes the Chunks mode feel like a metadata skin over the
-  // chosen reading layout rather than a separate UI.
-  //
-  // FOR NOW the user asked for the scrolling variant only.
-  // Chunks mode always renders all pages sequentially with a
-  // page-number anchor between each. The current page is
-  // scrolled into view on first load so the Prev/Next arrows
-  // still feel like navigation. Mode switches don't change the
-  // current page or remove highlights — they're handled by
-  // reader.js setMode() and the DOM of the other modes stays
-  // mounted but hidden.
+  // ─── Main loader: scroll-all-pages ────────────────────────
   async function load(bookId, anchorPageNumber, container) {
     if (!container) return;
     const totalPages = (window.__READER__ && window.__READER__.totalPages) || 1;
 
-    container.innerHTML = '<div class="cv-loading">Loading chunks for all ' + totalPages + ' page' + (totalPages !== 1 ? 's' : '') + '…</div>';
+    container.innerHTML =
+      '<div class="cv-loading">Loading chunks for all ' + totalPages +
+      ' page' + (totalPages !== 1 ? 's' : '') + '…</div>';
 
     try {
-      // Fetch all page-chunk views in parallel. For big books
-      // this is ~totalPages concurrent reads; each hits a
-      // single Mongo query chain (Chunk+Span+Edge+Book). Same
-      // pattern the scroll mode uses for HTML pages.
       const pageNums = [];
       for (let i = 1; i <= totalPages; i++) pageNums.push(i);
 
@@ -303,72 +392,52 @@
       STATE.current = results;
       container.innerHTML = '';
 
-      // Top summary
       const totalChunks = results.reduce((a, r) => a + (r.chunkCount || 0), 0);
       container.appendChild(el('div', { className: 'cv-summary' }, [
-        `${totalPages} page${totalPages !== 1 ? 's' : ''} · ${totalChunks} chunk${totalChunks !== 1 ? 's' : ''} total`,
+        `${totalPages} page${totalPages !== 1 ? 's' : ''} · ${totalChunks} chunk${totalChunks !== 1 ? 's' : ''}`,
       ]));
 
-      // Emit each page as a labeled section.
-      for (const pageView of results) {
-        const pageSection = el('section', {
+      for (const pv of results) {
+        const section = el('section', {
           className: 'cv-page-section',
-          'data-page': String(pageView.pageNumber),
-          id: `cv-page-${pageView.pageNumber}`,
+          'data-page': String(pv.pageNumber),
+          id: `cv-page-${pv.pageNumber}`,
         });
-
-        pageSection.appendChild(el('div', { className: 'cv-page-header' }, [
-          el('span', { className: 'cv-page-num' }, [`Page ${pageView.pageNumber}`]),
+        section.appendChild(el('div', { className: 'cv-page-header' }, [
+          el('span', { className: 'cv-page-num' }, [`Page ${pv.pageNumber}`]),
           el('span', { className: 'cv-page-count' }, [
-            pageView.error
-              ? `error: ${pageView.error}`
-              : `${pageView.chunkCount || 0} chunk${(pageView.chunkCount || 0) !== 1 ? 's' : ''}`,
+            pv.error ? 'error: ' + pv.error : `${pv.chunkCount || 0} chunk${(pv.chunkCount || 0) !== 1 ? 's' : ''}`,
           ]),
         ]));
 
-        if (pageView.error) {
-          pageSection.appendChild(el('div', { className: 'cv-error' }, [
-            'Failed to load chunks for this page: ' + pageView.error,
-          ]));
-        } else if ((pageView.chunkCount || 0) === 0) {
-          pageSection.appendChild(el('div', { className: 'cv-empty' }, [
-            '(no chunks — vision/span processing may not have completed, or this page has no extractable content)',
+        if (pv.error) {
+          section.appendChild(el('div', { className: 'cv-error' }, ['Failed: ' + pv.error]));
+        } else if ((pv.chunkCount || 0) === 0) {
+          section.appendChild(el('div', { className: 'cv-empty' }, [
+            '(no chunks — vision/span processing incomplete, or nothing on this page)',
           ]));
         } else {
-          for (const c of pageView.chunks) {
-            pageSection.appendChild(renderChunk(c, openSpanPopover, onEdgeClickNavigate));
-          }
+          for (const c of pv.chunks) section.appendChild(renderChunk(c));
         }
-        container.appendChild(pageSection);
+        container.appendChild(section);
       }
 
-      // Typeset LaTeX everywhere in the chunks view.
       if (window.MathJax && MathJax.typesetPromise) {
         MathJax.typesetPromise([container]).catch(() => {});
       }
 
-      // Scroll the current page into view so the user lands
-      // where they were when they opened Chunks mode.
       const anchor = document.getElementById(`cv-page-${anchorPageNumber}`);
-      if (anchor) {
-        // Use 'auto' not 'smooth' — on first load a smooth
-        // scroll fights the DOM mount and flashes.
-        anchor.scrollIntoView({ behavior: 'auto', block: 'start' });
-      }
+      if (anchor) anchor.scrollIntoView({ behavior: 'auto', block: 'start' });
     } catch (err) {
       console.error('chunks-view load failed:', err);
       container.innerHTML = '<div class="cv-error">Failed to load chunks: ' + (err.message || err) + '</div>';
     }
   }
 
-  // Jump an already-loaded chunks view to a specific page's
-  // section. Used by reader.js goToPage so Prev/Next arrows
-  // scroll through the existing chunks-view DOM instead of
-  // re-fetching everything.
   function jumpTo(pageNumber) {
     const anchor = document.getElementById(`cv-page-${pageNumber}`);
     if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  window.GydeChunksView = { load, jumpTo, closePopover, STATE };
+  window.GydeChunksView = { load, jumpTo, STATE };
 })();
