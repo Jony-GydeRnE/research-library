@@ -29,3 +29,7 @@ After any session that produces structured data from a DB query, a benchmark run
 - `2026-04-11/ground-truth-inverse-view.md` — for each of 23 equations, the list of notes pages the SYSTEM actually routed edges from, ranked by edge score. Shows the real content locations.
 - `2026-04-11/analysis-equation-failures.md` — deep analysis of why p40/42/43 (eq.9-11), p57-59 (eq.14), and p51-53 (eq.15-18) appear to miss but mostly don't. Covers code flow, cosine ranking, picker prompt behavior, and resolution-granularity problem. **No code changes, just reasoning.**
 - `2026-04-11/mapping-user-pages-to-rodina.md` — **THE ACTUAL MAPPING.** For notes pages p18-29, p40-43, p51-53, p57-59: every chunk on each page (content + tags), every edge to Rodina (target page, chunk, equation, relationship, conf/relev), and a summary table of primary targets. 675 lines.
+
+### 2026-04-12 — Grounding gate + vision pivot
+- `2026-04-12/grounding-gate-shipped.md` — implementation notes for commit `fc3112d`: citation validator, Yes/No gatekeeper UI, settings toggle, expected behaviors, known limitations, follow-ups.
+- `2026-04-12/vision-gyde-as-agent.md` — **VISION DOCUMENT.** CC's reflection on what makes CC work (persistent state, tools, the loop, verification), how that maps to physics/math research, what "Gyde as a persistent research agent" would look like architecturally, what's already built vs what needs building, and why the pivot from "LLM answers with citations" to "LLM navigates verified graph paths" is the right move.
