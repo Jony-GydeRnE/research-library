@@ -2,7 +2,17 @@ const mongoose = require('mongoose');
 
 const messageSchema = new mongoose.Schema({
   role: { type: String, enum: ['user', 'assistant'], required: true },
-  content: { type: String, required: true },
+  // Mixed so tool-use turns can hold Anthropic block arrays
+  // (tool_use / tool_result blocks) alongside plain-text turns.
+  // kind='text' → content is a String (the normal chat case).
+  // kind='tool' → content is an array of Anthropic content blocks,
+  //               persisted so the next tool-use turn on this chat
+  //               can replay the prior traversal history. These
+  //               turns are filtered out of the UI render in
+  //               views/chat.ejs and of any assistant-text JSON
+  //               passed to the client.
+  content: { type: mongoose.Schema.Types.Mixed, required: true },
+  kind: { type: String, enum: ['text', 'tool'], default: 'text' },
   timestamp: { type: Date, default: Date.now },
 }, { _id: false });
 

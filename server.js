@@ -399,13 +399,19 @@ app.post('/api/chat/:chatId/message', async (req, res) => {
     const { streamResponse } = require('./services/claudeService');
     const pipeline = require('./config/pipeline');
     const { message, generalKnowledge, useTools } = req.body;
+    const chatId = req.params.chatId;
 
-    const chat = await Chat.findById(req.params.chatId);
+    // Atomic $push avoids the lost-update race where two
+    // concurrent requests would each load, mutate, and save a
+    // stale copy of chat.messages. findByIdAndUpdate runs
+    // server-side so the user message is appended without
+    // clobbering anything else.
+    const chat = await Chat.findByIdAndUpdate(
+      chatId,
+      { $push: { messages: { role: 'user', content: message, kind: 'text' } } },
+      { new: true }
+    );
     if (!chat) return res.status(404).json({ error: 'Chat not found' });
-
-    // Add user message
-    chat.messages.push({ role: 'user', content: message });
-    await chat.save();
 
     // Stream response via SSE
     res.writeHead(200, {
@@ -425,11 +431,21 @@ app.post('/api/chat/:chatId/message', async (req, res) => {
       (chunk) => {
         res.write(`data: ${JSON.stringify({ type: 'chunk', text: chunk })}\n\n`);
       },
-      async (fullText) => {
-        // Save assistant message
-        chat.messages.push({ role: 'assistant', content: fullText });
-        await chat.save();
-        res.write(`data: ${JSON.stringify({ type: 'done', text: fullText })}\n\n`);
+      async (fullText, meta = {}) => {
+        // Persist tool turns first (if any) so they appear
+        // before the final assistant message in chat.messages,
+        // matching the order Claude saw them during the loop.
+        // One atomic $push with $each keeps it to a single write.
+        const toolTurns = meta.toolTurns || [];
+        const payload = [
+          ...toolTurns,
+          { role: 'assistant', content: fullText, kind: 'text' },
+        ];
+        await Chat.findByIdAndUpdate(
+          chatId,
+          { $push: { messages: { $each: payload } } }
+        );
+        res.write(`data: ${JSON.stringify({ type: 'done', text: fullText, toolTurnsCount: toolTurns.length })}\n\n`);
         res.end();
       },
       {
@@ -465,9 +481,12 @@ app.post('/api/chat/:chatId/respond', async (req, res) => {
   try {
     const Chat = require('./models/Chat');
     const { streamResponse } = require('./services/claudeService');
+    const pipeline = require('./config/pipeline');
     const generalKnowledge = req.body && req.body.generalKnowledge === true;
+    const useTools = req.body && req.body.useTools;
+    const chatId = req.params.chatId;
 
-    const chat = await Chat.findById(req.params.chatId);
+    const chat = await Chat.findById(chatId);
     if (!chat) return res.status(404).json({ error: 'Chat not found' });
 
     res.writeHead(200, {
@@ -476,18 +495,45 @@ app.post('/api/chat/:chatId/respond', async (req, res) => {
       'Connection': 'keep-alive',
     });
 
+    const toolsEnabled = useTools === true || (useTools !== false && pipeline.AGENT_TOOLS_DEFAULT);
+
     await streamResponse(
       chat.toObject(),
       (chunk) => {
         res.write(`data: ${JSON.stringify({ type: 'chunk', text: chunk })}\n\n`);
       },
-      async (fullText) => {
-        chat.messages.push({ role: 'assistant', content: fullText });
-        await chat.save();
-        res.write(`data: ${JSON.stringify({ type: 'done', text: fullText })}\n\n`);
+      async (fullText, meta = {}) => {
+        // Atomic $push for the same race-safety reason as
+        // /message. Tool turns (if any) go before the final
+        // assistant text in a single write.
+        const toolTurns = meta.toolTurns || [];
+        const payload = [
+          ...toolTurns,
+          { role: 'assistant', content: fullText, kind: 'text' },
+        ];
+        await Chat.findByIdAndUpdate(
+          chatId,
+          { $push: { messages: { $each: payload } } }
+        );
+        res.write(`data: ${JSON.stringify({ type: 'done', text: fullText, toolTurnsCount: toolTurns.length })}\n\n`);
         res.end();
       },
-      { generalKnowledge }
+      {
+        generalKnowledge,
+        useTools: toolsEnabled,
+        onToolCall: (name, input) => {
+          res.write(`data: ${JSON.stringify({ type: 'tool_call', tool: name, input })}\n\n`);
+        },
+        onToolResult: (name, result) => {
+          const summary = result?.error
+            ? { error: result.error }
+            : {
+                returned: result?.returned ?? result?.length ?? result?.total ?? null,
+                found: result?.found,
+              };
+          res.write(`data: ${JSON.stringify({ type: 'tool_result', tool: name, summary })}\n\n`);
+        },
+      }
     );
   } catch (err) {
     console.error('Respond error:', err);

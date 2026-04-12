@@ -1044,16 +1044,28 @@ async function streamResponse(chat, onChunk, onDone, opts = {}) {
     system += TOOL_SYSTEM_PREAMBLE;
   }
 
-  const messages = chat.messages
-    .slice(-pipeline.CHAT_MAX_HISTORY)
-    .map(m => ({ role: m.role, content: m.content }));
+  // Build the message array sent to the Claude API from chat
+  // history. Tool-kind turns hold Anthropic block arrays
+  // (tool_use / tool_result) from prior traversals and must be
+  // passed through untouched. The slice cap has to respect
+  // tool-sequence boundaries: a tool_use block MUST be
+  // immediately followed by its matching tool_result, or the API
+  // rejects the call. sliceWithToolBoundaries walks backwards
+  // from the end, counts text-kind messages up to
+  // CHAT_MAX_HISTORY, and snaps the cut to the nearest text
+  // boundary so no tool-use/tool_result pair gets split.
+  const slicedHistory = sliceWithToolBoundaries(
+    chat.messages || [],
+    pipeline.CHAT_MAX_HISTORY
+  );
+  const messages = slicedHistory.map(m => ({ role: m.role, content: m.content }));
 
   // ── Tool-use path ──────────────────────────────────────────
   // Isolated from the plain streaming path so a bug in the state
   // machine cannot break regular chat.
   if (opts.useTools && !opts.generalKnowledge) {
     try {
-      const fullText = await streamWithTools({
+      const { fullText, toolTurns } = await streamWithTools({
         system,
         messages,
         onChunk,
@@ -1063,7 +1075,9 @@ async function streamResponse(chat, onChunk, onDone, opts = {}) {
       // Tools ARE the grounding — skip detectFakeCitations when
       // tool calls were used. The chunk IDs returned from the
       // tools are structurally real, not model-generated strings.
-      onDone(fullText);
+      // Pass tool turns back to the caller so they can be
+      // persisted atomically alongside the final assistant text.
+      onDone(fullText, { toolTurns });
       return;
     } catch (err) {
       console.error('[claudeService] tool-use stream failed, no fallback:', err.message);
@@ -1071,7 +1085,7 @@ async function streamResponse(chat, onChunk, onDone, opts = {}) {
       // a silent hang. Do NOT fall back to plain streaming — that
       // would hide bugs. The gate in server.js controls whether
       // this path runs at all.
-      onDone(`⚠️ Tool-use traversal failed: ${err.message}`);
+      onDone(`⚠️ Tool-use traversal failed: ${err.message}`, { toolTurns: [] });
       return;
     }
   }
@@ -1116,12 +1130,12 @@ This usually means the topic isn't covered by the books currently in your librar
 
 [[GYDE_ASK_GENERAL_KNOWLEDGE]]`;
 
-      onDone(gatekeeperMsg);
+      onDone(gatekeeperMsg, { toolTurns: [] });
       return;
     }
   }
 
-  onDone(fullText);
+  onDone(fullText, { toolTurns: [] });
 }
 
 // ─── Tool-use state machine ────────────────────────────────────
@@ -1153,10 +1167,12 @@ async function streamWithTools({ system, messages, onChunk, onToolCall, onToolRe
   // appending the assistant's full response and the user's
   // tool_result follow-ups.
   const workingMessages = messages.map(m => ({ role: m.role, content: m.content }));
+  const startLen = workingMessages.length;
 
   let turn = 0;
   let totalToolCalls = 0;
   let accumulatedText = '';
+  let finalAssistantIdx = -1;
 
   while (turn < maxTurns) {
     turn++;
@@ -1180,19 +1196,19 @@ async function streamWithTools({ system, messages, onChunk, onToolCall, onToolRe
     const finalMessage = await stream.finalMessage();
     accumulatedText += turnText;
 
+    // Always append the assistant's full response (including any
+    // tool_use blocks) so workingMessages remains a valid replay.
+    workingMessages.push({ role: 'assistant', content: finalMessage.content });
+
     if (finalMessage.stop_reason !== 'tool_use') {
-      // end_turn / max_tokens / stop_sequence — done.
-      return accumulatedText;
+      // end_turn / max_tokens / stop_sequence — done. The final
+      // assistant message is the one we just appended.
+      finalAssistantIdx = workingMessages.length - 1;
+      break;
     }
 
-    // Extract tool_use blocks from the assistant's response and
-    // append the whole content array (text + tool_use) as the
-    // assistant message. Anthropic requires the assistant turn to
-    // be echoed back verbatim before the tool_result messages.
-    const assistantContent = finalMessage.content;
-    workingMessages.push({ role: 'assistant', content: assistantContent });
-
-    const toolUseBlocks = assistantContent.filter(b => b.type === 'tool_use');
+    // Extract tool_use blocks and execute them.
+    const toolUseBlocks = finalMessage.content.filter(b => b.type === 'tool_use');
     const toolResults = [];
 
     for (const block of toolUseBlocks) {
@@ -1227,10 +1243,56 @@ async function streamWithTools({ system, messages, onChunk, onToolCall, onToolRe
     // round of tool calls.
   }
 
-  // Hit maxTurns without a natural stop. Return whatever text
-  // accumulated and log — this is the fail-closed exit.
-  console.warn(`[claudeService] streamWithTools hit maxTurns=${maxTurns}, tool_calls=${totalToolCalls}`);
-  return accumulatedText || '⚠️ Traversal hit the turn limit without reaching a final answer.';
+  if (finalAssistantIdx === -1) {
+    // Hit maxTurns without a natural stop. Fail-closed.
+    console.warn(`[claudeService] streamWithTools hit maxTurns=${maxTurns}, tool_calls=${totalToolCalls}`);
+    return {
+      fullText: accumulatedText || '⚠️ Traversal hit the turn limit without reaching a final answer.',
+      toolTurns: [],
+    };
+  }
+
+  // Separate the final assistant text from the intermediate
+  // tool-use / tool_result turns. Everything between the
+  // original input history (startLen) and the final assistant
+  // message (finalAssistantIdx) is tool scaffolding the caller
+  // should persist with kind='tool'. The final assistant text is
+  // returned separately and persisted as kind='text' so the UI
+  // renders it normally.
+  const toolTurns = workingMessages
+    .slice(startLen, finalAssistantIdx)
+    .map(m => ({ role: m.role, content: m.content, kind: 'tool' }));
+
+  return { fullText: accumulatedText, toolTurns };
+}
+
+// ─── sliceWithToolBoundaries ───────────────────────────────────
+// Walk backwards through chat history, counting text-kind
+// messages until we hit maxText, then snap the cut to the nearest
+// text-kind message so no tool_use/tool_result pair straddles the
+// boundary. A tool sequence is [assistant with tool_use ...,
+// user with tool_result ...]; we keep them as an indivisible
+// group attached to the most recent text message before them.
+function sliceWithToolBoundaries(allMessages, maxText) {
+  if (!allMessages || allMessages.length === 0) return [];
+  let textSeen = 0;
+  let cutIdx = 0;
+  for (let i = allMessages.length - 1; i >= 0; i--) {
+    const m = allMessages[i];
+    if (m.kind !== 'tool') {
+      textSeen++;
+      if (textSeen > maxText) {
+        cutIdx = i + 1;
+        break;
+      }
+    }
+  }
+  // If the cut lands inside a tool sequence, advance forward to
+  // the next text-kind message so the sequence stays intact.
+  while (cutIdx < allMessages.length && allMessages[cutIdx].kind === 'tool') {
+    cutIdx++;
+  }
+  return allMessages.slice(cutIdx);
 }
 
 module.exports = { streamResponse, buildContext, determineScope, detectFakeCitations };

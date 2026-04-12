@@ -73,7 +73,7 @@ window.MathJax = {
   <% } %>
 
   <div class="chat-messages" id="chatMessages">
-    <% (chat.messages || []).forEach(function(msg) { %>
+    <% (chat.messages || []).filter(function(m){ return m.kind !== 'tool'; }).forEach(function(msg) { %>
       <div class="chat-message chat-message-<%= msg.role %>">
         <div class="chat-message-label"><%= msg.role === 'user' ? 'You' : 'Claude' %></div>
         <div class="chat-message-content"><%= msg.role === 'user' ? msg.content : '' %></div>
@@ -108,7 +108,7 @@ window.MathJax = {
   var sending = false;
 
   // Render existing assistant messages with markdown+MathJax
-  var existingMsgs = <%- JSON.stringify((chat.messages || []).filter(m => m.role === 'assistant').map(m => m.content)) %>;
+  var existingMsgs = <%- JSON.stringify((chat.messages || []).filter(m => m.role === 'assistant' && m.kind !== 'tool').map(m => m.content)) %>;
   var assistantDivs = messagesEl.querySelectorAll('.chat-message-assistant .chat-message-content');
   existingMsgs.forEach(function(text, i) {
     if (assistantDivs[i]) {
