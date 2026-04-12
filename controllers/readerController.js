@@ -1,6 +1,7 @@
 const Book = require('../models/Book');
 const Page = require('../models/Page');
 const { getSidebarData } = require('../services/sidebarData');
+const { getPageChunkView } = require('../services/chunkViewService');
 
 exports.showReader = async (req, res) => {
   try {
@@ -53,6 +54,20 @@ exports.showReader = async (req, res) => {
   } catch (err) {
     console.error('Reader error:', err);
     res.status(500).send('Error loading reader');
+  }
+};
+
+// Chunks view: returns the metadata-forward representation of
+// one page (chunks, spans, tags, edges ranked by confidence).
+// Consumed by public/js/chunks-view.js for the "Chunks" reader mode.
+exports.getPageChunks = async (req, res) => {
+  try {
+    const { bookId, pageNumber } = req.params;
+    const view = await getPageChunkView(bookId, parseInt(pageNumber, 10));
+    res.json(view);
+  } catch (err) {
+    console.error('getPageChunks error:', err);
+    res.status(500).json({ error: err.message });
   }
 };
 

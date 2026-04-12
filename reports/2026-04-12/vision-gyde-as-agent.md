@@ -212,6 +212,47 @@ A small but important idea: rather than having the agent read full chunk text on
 
 This keeps inner-loop steps cheap and fast — the summary is maybe 200 tokens vs the chunk's 500+ tokens, and the summary is specifically optimized for navigation decisions ("from here you can reach definitions of X, proofs of Y, examples of Z") rather than content delivery. Computing them is a Phase C optimization, not a Phase A requirement, but the architecture should leave room for them.
 
+### Four agent archetypes (2026-04-12, from minime-and-tutor-agent.md and philospher-agent.md)
+
+After the three-layer model was locked in, Jony introduced a parallel axis: not just layers of persistence, but layers of **agency**. Four archetypes form a natural hierarchy:
+
+```
+PHILOSOPHER   (slowest, most autonomous — generates direction from graph anomalies)
+     │
+EXPLORER      (medium — the Phase C agent loop; traverses, builds paths, stores vibes)
+     │
+SUBJECT TUTOR (domain-specialist — owns a verified canonical subgraph per subject,
+               shared across users)
+     │
+MINIME        (fastest, most personal — mirrors how ONE human reasons)
+```
+
+Each layer can invoke the one below. A philosopher delegates investigation to an explorer; an explorer consults a subject tutor when it enters well-mapped territory; a MiniMe calls any of them on behalf of its user. Each has a different relationship to the knowledge graph: the philosopher observes global structure, the explorer traverses, the subject tutor perfects, the MiniMe personalizes.
+
+**Why this isn't just renaming Phase C.** The tech spec's Phase C is the Explorer. The other three are new:
+
+- **Philosopher** is a meta-level process that reads the explorer's accumulated workspace (dead ends, promoted vibes, edge-confidence evolution) and generates conjectures from patterns. It doesn't traverse — it reflects. Two sub-modes: **trend-aware** (has arXiv / crawler signal) and **isolationist** (only the local graph, no external cultural priors — the mode most likely to find connections humans missed because every human shares similar priors about what's interesting).
+- **Subject Tutor** owns a canonical subgraph for a domain (QFT, algebraic topology, etc). Not per-user — shared infrastructure. Verified edges contributed by any user improve the tutor for everyone. This is the closest thing to collaborative knowledge building in the system: not social media, but shared improvement of the verified edge graph.
+- **MiniMe** is a per-user reasoning profile trained on one user's reading history, notes, vibes, and traversal patterns. Its output is never "the user's opinion" — it's "how they navigate this domain." The Jobs "talk to Aristotle" dream: not a simulation of a person but a navigation agent over their knowledge graph.
+
+**Mechanisms that fall out of the hierarchy:**
+- **Dead-end clustering**: the philosopher computes cut sets over accumulated traversal dead ends. If 12 different traversals dead-end at nodes tagged `[non-planar_invariants]`, that's a signal — either "we need more books" or "this is a fundamental gap in the field itself." Distinguishing those two cases is the philosopher's job.
+- **Autonomous vibe confidence evolution**: vibes gain confidence from structural events the graph itself generates. New book ingested → re-check all open vibes → any now reachable get promoted to candidates. Multiple unresolved vibes in the same region accumulate as circumstantial evidence that something structural is there.
+- **Agent-to-agent communication protocol**: MiniMe → Explorer → Subject Tutor → Explorer → MiniMe, passing questions and paths down and up the hierarchy. The message format is small (chunk IDs, path objects, vibe records) — there's no free-form natural-language step between layers.
+- **Scheduler for background agents**: a cron-like process that wakes the philosopher periodically without user input. The philosopher reads what accumulated since its last wake, generates 1-3 new questions, and dispatches explorers to chase them. Runs while the user is away.
+
+**Where this lives in the phase plan:**
+- Phase A (shipped): graph tools for chat
+- Phase B: TraversalSession + vibe auto-promote sweep + collection workspace
+- Phase C: Explorer (autonomous agent loop)
+- Phase D: Inferential distance metric
+- **Phase E**: Subject Tutors (canonical subgraph seeding per domain, subject-page UI)
+- **Phase F**: MiniMe (per-user reasoning profile, public workspace page)
+- **Phase G**: Philosopher (scheduler + dead-end clustering + conjecture-generation prompt, isolationist mode as config flag)
+- **Phase H**: Full four-layer hierarchy + cross-user edge contribution
+
+Phases E-H are the horizon, not the immediate build. But they're the "why" behind the architectural choices in A-D. When we're deciding whether to build the collection workspace as a filesystem abstraction or as a flat Mongo collection, the answer is "filesystem abstraction" because Phase E-H need to read and write structured workspace content from multiple independent agents at different timescales.
+
 ### What this all means for the tech spec
 
 The tech spec (`gyde-agent-tech-spec.md`) describes Phase A as stateless tool calls over Layer 1 — the minimum useful slice. That's right. But the full vision extends through Layers 2 and 3, across multi-agent time horizons, with vibes as a first-class category. Phase A is the seed; the tech spec's Phase B/C/D sequence is the first pass at growing the rest of it. Some ideas (neighborhood summaries, vibes folder, long-running background agents, workspace checkpoint-and-resume) aren't yet in the spec and should be added as phases become real. The spec is correct as an immediate build plan; this addendum is the north star it's pointing toward.

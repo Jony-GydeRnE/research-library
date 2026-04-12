@@ -13,6 +13,8 @@
   const modePagesBtn = document.getElementById('modePagesBtn');
   const modeScrollBtn = document.getElementById('modeScrollBtn');
   const modePdfBtn = document.getElementById('modePdfBtn');
+  const modeChunksBtn = document.getElementById('modeChunksBtn');
+  const chunksContent = document.getElementById('readerChunksContent');
 
   let mode = localStorage.getItem('gyde-reader-mode') || 'pages';
   let scrollLoaded = false;
@@ -24,10 +26,11 @@
     mode = newMode;
     localStorage.setItem('gyde-reader-mode', mode);
 
-    [modePagesBtn, modeScrollBtn, modePdfBtn].forEach(b => b.classList.remove('active'));
+    [modePagesBtn, modeScrollBtn, modePdfBtn, modeChunksBtn].forEach(b => b && b.classList.remove('active'));
     content.style.display = 'none';
     scrollContent.style.display = 'none';
     originalView.style.display = 'none';
+    if (chunksContent) chunksContent.style.display = 'none';
 
     if (mode === 'pages') {
       modePagesBtn.classList.add('active');
@@ -58,6 +61,15 @@
       pageIndicator.style.display = '';
       headerPrevBtn.style.display = '';
       headerNextBtn.style.display = '';
+    } else if (mode === 'chunks') {
+      modeChunksBtn && modeChunksBtn.classList.add('active');
+      if (chunksContent) chunksContent.style.display = '';
+      pageIndicator.style.display = '';
+      headerPrevBtn.style.display = '';
+      headerNextBtn.style.display = '';
+      if (window.GydeChunksView) {
+        window.GydeChunksView.load(R.bookId, R.currentPage, chunksContent);
+      }
     }
 
     updateArrowState();
@@ -71,6 +83,10 @@
   modePagesBtn.addEventListener('click', () => setMode('pages'));
   modeScrollBtn.addEventListener('click', () => setMode('scroll'));
   modePdfBtn.addEventListener('click', () => setMode('pdf'));
+  if (modeChunksBtn) modeChunksBtn.addEventListener('click', () => setMode('chunks'));
+  // Expose setMode for chunks-view so page-nav from within the
+  // chunks panel can refresh after a page change.
+  window.__readerSetMode = setMode;
   setMode(mode);
 
   // ─── LOAD ALL PAGES (scroll) ───────────────────────────────────
@@ -145,6 +161,8 @@
         }
       } else if (mode === 'pdf') {
         originalImg.src = `/images/${R.bookId}/page-${num}.png`;
+      } else if (mode === 'chunks' && window.GydeChunksView) {
+        window.GydeChunksView.load(R.bookId, num, chunksContent);
       }
 
       updateActiveSectionForPage(num);

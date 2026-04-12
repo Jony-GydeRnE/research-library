@@ -100,6 +100,7 @@
           <button class="mode-btn active" id="modePagesBtn" data-mode="pages">Pages</button>
           <button class="mode-btn" id="modeScrollBtn" data-mode="scroll">Scroll</button>
           <button class="mode-btn" id="modePdfBtn" data-mode="pdf">PDF</button>
+          <button class="mode-btn" id="modeChunksBtn" data-mode="chunks" title="Show chunks, spans, tags and edges — the metadata-forward view of this page">Chunks</button>
         </div>
       </div>
       <div class="reader-header-right">
@@ -150,6 +151,9 @@
       <div class="reader-original" id="readerOriginal" style="display:none;">
         <img id="originalPageImg" src="/images/<%= book._id %>/page-<%= pageNumber %>.png" alt="Page original">
       </div>
+
+      <!-- Chunks mode (metadata-forward view) -->
+      <div class="reader-chunks-content" id="readerChunksContent" style="display:none;"></div>
 
       <!-- Page jump (hidden, used by keyboard nav) -->
       <input type="hidden" id="pageJump" value="<%= pageNumber %>">
@@ -231,6 +235,7 @@
   <script src="/js/split-chat.js"></script>
   <script src="/js/notes-panel.js"></script>
   <script src="/js/metadata-panel.js"></script>
+  <script src="/js/chunks-view.js"></script>
 
   <!-- Sidebar toggle + tabs -->
   <script>
