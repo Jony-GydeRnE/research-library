@@ -274,20 +274,38 @@
   function renderChunk(c) {
     const chunkEl = el('div', { className: 'cv-chunk', 'data-chunk-id': c.chunkId });
 
-    // Header
-    const header = el('div', { className: 'cv-chunk-header' }, [
+    // Header. The PRIMARY label is "chunk #N" because the user's
+    // mental model is "chunks" first. Structural type only shows
+    // as a chip when it's NOT the default 'narrative' — theorem,
+    // definition, proof, example, etc. get a small badge. A
+    // 6-char suffix of the chunk's Mongo _id is appended so the
+    // user always has a unique handle on the chunk for DB lookups.
+    const shortId = c.chunkId ? c.chunkId.slice(-6) : '';
+    const totalEdges = (c.spans.reduce((a, s) => a + (s.edges || []).length, 0)
+                       + (c.chunkLevelEdges || []).length);
+    const headerChildren = [
+      el('span', { className: 'cv-chunk-label' }, ['chunk']),
       el('span', { className: 'cv-chunk-idx' }, [`#${c.chunkIndex != null ? c.chunkIndex : '?'}`]),
-      el('span', { className: 'cv-chunk-type' }, [c.structuralType || 'unknown']),
+      shortId ? el('span', { className: 'cv-chunk-shortid', title: 'last 6 of Mongo _id' }, [shortId]) : null,
       el('span', { className: 'cv-chunk-meta' }, [
         `${c.spans.length} span${c.spans.length !== 1 ? 's' : ''}`,
       ]),
-      (c.chunkLevelEdges && c.chunkLevelEdges.length > 0)
+      totalEdges > 0
         ? el('span', { className: 'cv-chunk-meta cv-chunk-meta-edges' }, [
-            `${c.chunkLevelEdges.length} edge${c.chunkLevelEdges.length !== 1 ? 's' : ''}`,
+            `${totalEdges} edge${totalEdges !== 1 ? 's' : ''}`,
           ])
         : null,
       c.hasMissingProof ? el('span', { className: 'cv-chunk-flag' }, ['⚠ missing proof']) : null,
-    ]);
+    ];
+    const header = el('div', { className: 'cv-chunk-header' }, headerChildren);
+
+    // Structural-type chip only when it's NOT 'narrative'.
+    // Narrative is the default unmarked state (most chunks) —
+    // surfacing it every time was noise. Theorems, definitions,
+    // proofs etc. remain visually distinct via this chip.
+    if (c.structuralType && c.structuralType !== 'narrative' && c.structuralType !== 'unknown') {
+      header.appendChild(el('span', { className: 'cv-chunk-type-chip', 'data-type': c.structuralType }, [c.structuralType]));
+    }
     chunkEl.appendChild(header);
 
     // Tag row (context + concept tags)

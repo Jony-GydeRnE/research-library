@@ -209,7 +209,22 @@ async function getPageChunkView(bookId, pageNumber) {
         return !chunkSpanSet.has(String(e.fromSpanId));
       })
       .map(e => formatEdge(e, c._id));
-    const chunkLevelEdges = dedupEdges(chunkLevelRaw);
+    let chunkLevelEdges = dedupEdges(chunkLevelRaw);
+
+    // Single-span attribution. If a chunk has exactly one span,
+    // every "chunk-level" edge must structurally belong to that
+    // one span — there's no other span for it to belong to. The
+    // funnel simply writes fromChunkId without bothering to set
+    // fromSpanId, but the meaning is unambiguous. Merge them
+    // into the span's edges and drop the separate chunk-level
+    // row for these chunks. For multi-span chunks we keep the
+    // chunk-level row so the user can still inspect edges whose
+    // span attribution is genuinely unknown.
+    if (renderedSpans.length === 1 && chunkLevelEdges.length > 0) {
+      const merged = dedupEdges([...renderedSpans[0].edges, ...chunkLevelEdges]);
+      renderedSpans[0].edges = merged;
+      chunkLevelEdges = [];
+    }
 
     out.push({
       chunkId: String(c._id),

@@ -1781,3 +1781,47 @@ mjx-container {
   background: var(--r-nav-btn-hover);
   border-color: var(--r-link);
 }
+
+/* Chunks view — additions for new header structure */
+.cv-chunk-label {
+  color: var(--r-text-muted);
+  font-weight: 500;
+}
+.cv-chunk-shortid {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.62rem;
+  color: var(--r-text-muted);
+  background: var(--r-code-bg);
+  padding: 1px 6px;
+  border-radius: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.75;
+}
+.cv-chunk-type-chip {
+  margin-left: auto;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.62rem;
+  padding: 1px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: rgba(63, 184, 108, 0.10);
+  color: #2a7a4b;
+  border: 1px solid rgba(63, 184, 108, 0.28);
+}
+.cv-chunk-type-chip[data-type="theorem"] {
+  background: rgba(45, 90, 123, 0.10);
+  color: var(--r-link);
+  border-color: rgba(45, 90, 123, 0.3);
+}
+.cv-chunk-type-chip[data-type="definition"] {
+  background: rgba(214, 160, 64, 0.10);
+  color: #8a6820;
+  border-color: rgba(214, 160, 64, 0.3);
+}
+.cv-chunk-type-chip[data-type="proof"] {
+  background: rgba(150, 100, 180, 0.10);
+  color: #7b4fa0;
+  border-color: rgba(150, 100, 180, 0.3);
+}

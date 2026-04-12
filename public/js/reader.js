@@ -38,6 +38,11 @@
       pageIndicator.style.display = '';
       headerPrevBtn.style.display = '';
       headerNextBtn.style.display = '';
+      // Reset main scroll so Pages view always lands at top of
+      // the current page (otherwise coming from a scrolled
+      // Chunks / Scroll position leaves Pages at the wrong
+      // offset and looks like "I went back to the start").
+      if (readerMain) readerMain.scrollTop = 0;
       // When returning to pages mode, re-apply the citation highlight if any.
       applyHighlightToVisible();
       updateActiveSectionForPage(R.currentPage);
@@ -53,6 +58,10 @@
         applyHighlightToVisible();
         // Rebuild scroll-spy in case the sidebar was regenerated.
         setupScrollSpy();
+        // Preserve reading position when re-entering scroll
+        // mode: scroll the current page's section into view.
+        const target = document.getElementById(`scroll-page-${R.currentPage}`);
+        if (target) target.scrollIntoView({ behavior: 'auto', block: 'start' });
       }
     } else if (mode === 'pdf') {
       modePdfBtn.classList.add('active');

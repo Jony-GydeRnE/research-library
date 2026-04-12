@@ -90,6 +90,16 @@ window.MathJax = {
   <div class="chat-input-area">
     <div class="chat-input-wrap">
       <input type="text" class="chat-input" id="chatInput" placeholder="Send a message..." autocomplete="off">
+      <!-- Graph tools toggle (Phase A). When active the next
+           message is sent with useTools:true so Claude runs the
+           graph-tool traversal loop (search_chunks, follow_edges,
+           read_chunk, get_path, verify_quote) instead of a
+           context-dump RAG reply. State is persisted in
+           localStorage so the setting survives navigation. -->
+      <button class="chat-tools-btn" id="chatToolsBtn" type="button" title="Toggle graph traversal tools for next message">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+        <span>tools</span>
+      </button>
       <button class="chat-send-btn" id="chatSendBtn" title="Send">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
       </button>
@@ -105,7 +115,24 @@ window.MathJax = {
   var messagesEl = document.getElementById('chatMessages');
   var input = document.getElementById('chatInput');
   var sendBtn = document.getElementById('chatSendBtn');
+  var toolsBtn = document.getElementById('chatToolsBtn');
   var sending = false;
+  var useTools = localStorage.getItem('gyde-use-tools') === '1';
+  function syncToolsBtn() {
+    if (!toolsBtn) return;
+    toolsBtn.classList.toggle('active', useTools);
+    toolsBtn.title = useTools
+      ? 'Graph tools ON — Claude will traverse the edge graph for the next message. Click to turn off.'
+      : 'Graph tools OFF — Claude will reply from static context. Click to enable traversal.';
+  }
+  if (toolsBtn) {
+    toolsBtn.addEventListener('click', function() {
+      useTools = !useTools;
+      localStorage.setItem('gyde-use-tools', useTools ? '1' : '0');
+      syncToolsBtn();
+    });
+    syncToolsBtn();
+  }
 
   // Render existing assistant messages with markdown+MathJax
   var existingMsgs = <%- JSON.stringify((chat.messages || []).filter(m => m.role === 'assistant' && m.kind !== 'tool').map(m => m.content)) %>;
@@ -275,6 +302,10 @@ window.MathJax = {
     if (overrideOpts && overrideOpts.generalKnowledge) body.generalKnowledge = true;
     var strictGrounding = localStorage.getItem('gyde-grounding-strict') !== '0';
     if (!strictGrounding) body.generalKnowledge = true;
+    // Phase A graph-tool traversal — opt-in via the tools button.
+    // When true the server runs streamWithTools() instead of the
+    // plain chat stream.
+    if (useTools && !body.generalKnowledge) body.useTools = true;
     streamFrom('/api/chat/' + chatId + '/message', 'POST', body);
   }
 
@@ -634,6 +665,11 @@ window.MathJax = {
 .chat-send-btn { display:flex; align-items:center; justify-content:center; width:32px; height:32px; border:none; border-radius:8px; background:transparent; color:var(--app-text-muted); cursor:pointer; transition:all 0.12s ease; }
 .chat-send-btn:hover:not(:disabled) { background:var(--app-accent); color:#fff; }
 .chat-send-btn:disabled { opacity:0.3; cursor:default; }
+.chat-tools-btn { display:flex; align-items:center; gap:4px; height:28px; padding:0 9px; border:1px solid var(--app-border); border-radius:14px; background:transparent; color:var(--app-text-muted); cursor:pointer; font-size:0.72rem; font-family:inherit; text-transform:uppercase; letter-spacing:0.05em; transition:all 0.12s ease; }
+.chat-tools-btn:hover { background:var(--app-surface-hover, rgba(255,255,255,0.05)); color:var(--app-text); }
+.chat-tools-btn.active { background:var(--app-accent); color:#fff; border-color:var(--app-accent); }
+.chat-tools-btn.active svg { animation:cv-tools-spin 6s linear infinite; }
+@keyframes cv-tools-spin { from { transform:rotate(0); } to { transform:rotate(360deg); } }
 .typing-indicator { color:var(--app-text-muted); font-style:italic; }
 .chat-source-quote { padding:0.75rem 1rem; border-bottom:1px solid var(--app-border); flex-shrink:0; }
 .chat-source-quote blockquote { border-left:3px solid var(--app-accent); padding-left:0.7rem; color:var(--app-text-muted); font-style:italic; font-size:0.8rem; margin:0; }
