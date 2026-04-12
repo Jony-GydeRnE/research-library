@@ -96,6 +96,14 @@
           </button>
         </div>
       </div>
+      <div class="settings-section">
+        <label class="settings-label">Chat grounding mode</label>
+        <p class="settings-desc">When enabled, Gyde only shows responses grounded in your library. Unverified citations are blocked and you're asked before any general-knowledge answer is shown.</p>
+        <label class="settings-toggle">
+          <input type="checkbox" id="groundingModeToggle" checked onchange="localStorage.setItem('gyde-grounding-strict', this.checked ? '1' : '0')">
+          <span class="toggle-label">Strict grounding (recommended)</span>
+        </label>
+      </div>
       <div class="modal-actions">
         <button class="btn btn-primary" id="settingsCloseBtn">Done</button>
       </div>
@@ -251,7 +259,12 @@
       });
     }
 
-    function open() { modal.style.display = ''; markActive(); }
+    function open() {
+      modal.style.display = '';
+      markActive();
+      var gt = document.getElementById('groundingModeToggle');
+      if (gt) gt.checked = localStorage.getItem('gyde-grounding-strict') !== '0';
+    }
     function close() { modal.style.display = 'none'; }
 
     btn.addEventListener('click', function(e) { e.preventDefault(); open(); });

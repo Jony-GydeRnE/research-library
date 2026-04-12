@@ -397,7 +397,7 @@ app.post('/api/chat/:chatId/message', async (req, res) => {
   try {
     const Chat = require('./models/Chat');
     const { streamResponse } = require('./services/claudeService');
-    const { message } = req.body;
+    const { message, generalKnowledge } = req.body;
 
     const chat = await Chat.findById(req.params.chatId);
     if (!chat) return res.status(404).json({ error: 'Chat not found' });
@@ -424,7 +424,8 @@ app.post('/api/chat/:chatId/message', async (req, res) => {
         await chat.save();
         res.write(`data: ${JSON.stringify({ type: 'done', text: fullText })}\n\n`);
         res.end();
-      }
+      },
+      { generalKnowledge: generalKnowledge === true }
     );
   } catch (err) {
     console.error('Chat message error:', err);
@@ -442,6 +443,7 @@ app.post('/api/chat/:chatId/respond', async (req, res) => {
   try {
     const Chat = require('./models/Chat');
     const { streamResponse } = require('./services/claudeService');
+    const generalKnowledge = req.body && req.body.generalKnowledge === true;
 
     const chat = await Chat.findById(req.params.chatId);
     if (!chat) return res.status(404).json({ error: 'Chat not found' });
@@ -462,7 +464,8 @@ app.post('/api/chat/:chatId/respond', async (req, res) => {
         await chat.save();
         res.write(`data: ${JSON.stringify({ type: 'done', text: fullText })}\n\n`);
         res.end();
-      }
+      },
+      { generalKnowledge }
     );
   } catch (err) {
     console.error('Respond error:', err);

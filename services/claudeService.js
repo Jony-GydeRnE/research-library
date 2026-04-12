@@ -308,22 +308,14 @@ async function buildContext(chat) {
     const libraryNotes = await getLibraryNotes();
     if (libraryNotes) sections.push({ priority: 4, text: libraryNotes });
 
-    // Dump per-book metadata (chunks, spans, tags) for every book in
-    // the library. Previously library scope only included a terse
-    // book list via getLibraryOverview, which meant orphan / All Files
-    // chats couldn't answer "show me metadata for book X" — there was
-    // nothing to read from. Priority 5 matches the anchored-book
-    // priority in narrower scopes so the assembly step drops these
-    // first if the budget is tight (notes at priority 4 survive
-    // longer, which matches the user expectation that notes are
-    // their own writing and most valuable).
-    const libraryBooks = await Book.find({ status: { $ne: 'pending-citation' } })
-      .select('_id title author summary keyConcepts pageCount')
-      .lean();
-    for (const b of libraryBooks) {
-      const meta = await renderBookMetadata(b);
-      if (meta) sections.push({ priority: 5, text: meta });
-    }
+    // Library scope deliberately does NOT dump full per-book metadata
+    // (chunks, spans, tags) for every book. The full dump was giving
+    // the model enough nearby truth to hallucinate convincingly —
+    // it would stitch real-looking citations from chunk text it saw
+    // in context but attribute them to fabricated books/pages. The
+    // scope now includes: library overview (titles/IDs), cross-book
+    // edges, and notes. Full renderBookMetadata() only runs for books
+    // explicitly in scope (anchored book, collection books).
   }
 
   // ─── ADDITIVE FALLBACKS ────────────────────────────────────────
@@ -932,8 +924,67 @@ async function getAllCrossBookEdges(opts = {}) {
 
 // ─── STREAM RESPONSE ─────────────────────────────────────────────
 
-async function streamResponse(chat, onChunk, onDone) {
-  const system = await buildContext(chat);
+async function detectFakeCitations(text) {
+  const books = await Book.find({})
+    .select('_id title author').lean();
+  const realIds = new Set(books.map(b => String(b._id)));
+  const realAuthorLastNames = new Set(
+    books.flatMap(b => {
+      if (!b.author) return [];
+      return b.author.split(/,|and|&/i)
+        .map(a => a.trim().split(/\s+/).pop().toLowerCase())
+        .filter(a => a.length > 2);
+    })
+  );
+
+  const fakes = [];
+  let m;
+
+  // Tier A-1: [[cite bookId="FAKEID"]] structured tag
+  const citeTagRx = /\[\[cite bookId="([^"]+)"/g;
+  while ((m = citeTagRx.exec(text)) !== null) {
+    if (!realIds.has(m[1]))
+      fakes.push({ type: 'cite_tag', value: m[1] });
+  }
+
+  // Tier A-2: prose id= or id: <mongo hex>
+  const proseIdRx = /\bid[=:]\s*([0-9a-f]{24})\b/gi;
+  while ((m = proseIdRx.exec(text)) !== null) {
+    if (!realIds.has(m[1]))
+      fakes.push({ type: 'prose_id', value: m[1] });
+  }
+
+  // Tier A-3: AUTHOR's TITLE (possessive ref to unknown author)
+  const possessiveRx = /([A-Z][a-z]{2,})'s\s+[A-Z]/g;
+  while ((m = possessiveRx.exec(text)) !== null) {
+    if (!realAuthorLastNames.has(m[1].toLowerCase()))
+      fakes.push({ type: 'possessive_author', value: m[0] });
+  }
+
+  // Tier A-4: AUTHOR Ch. / AUTHOR § / AUTHOR Sec.
+  const chapterRx = /([A-Z][a-z]{2,})\s+(?:Ch\.|Chapter|§|Sec\.)\s*[\dIVXivx]/g;
+  while ((m = chapterRx.exec(text)) !== null) {
+    if (!realAuthorLastNames.has(m[1].toLowerCase()))
+      fakes.push({ type: 'author_chapter_ref', value: m[0] });
+  }
+
+  // Tier A-5: "TITLE" by AUTHOR — both unrecognized
+  const titleByRx = /"([^"]{10,120})"\s+by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})/g;
+  while ((m = titleByRx.exec(text)) !== null) {
+    const authorLastName = m[2].trim().split(/\s+/).pop().toLowerCase();
+    if (!realAuthorLastNames.has(authorLastName))
+      fakes.push({ type: 'title_by_unknown_author', value: `"${m[1]}" by ${m[2]}` });
+  }
+
+  return { fakes, hasIssues: fakes.length > 0 };
+}
+
+async function streamResponse(chat, onChunk, onDone, opts = {}) {
+  const generalKnowledgePrefix = opts.generalKnowledge
+    ? `GENERAL KNOWLEDGE MODE: The user has explicitly requested an answer from your general training data. Answer freely, but begin your response with: "⚠️ General knowledge answer (not grounded in your library):" and do NOT use any [[cite]] tags.\n\n`
+    : '';
+
+  const system = generalKnowledgePrefix + await buildContext(chat);
 
   const messages = chat.messages
     .slice(-pipeline.CHAT_MAX_HISTORY)
@@ -955,7 +1006,35 @@ async function streamResponse(chat, onChunk, onDone) {
     }
   }
 
+  if (!opts.generalKnowledge) {
+    const validation = await detectFakeCitations(fullText);
+    if (validation.hasIssues) {
+      console.log('[claudeService] Fake citations caught:',
+        validation.fakes.map(f => f.value).join(', '));
+
+      const fakeList = validation.fakes
+        .map(f => `• ${f.value}`)
+        .join('\n');
+
+      const gatekeeperMsg =
+`⚠️ **Gyde stopped this response.**
+
+The model referenced material that could not be verified against your library:
+${fakeList}
+
+This usually means the topic isn't covered by the books currently in your library.
+
+**Would you like a general-knowledge answer instead?**
+*It won't be grounded in your specific books or notes, but may still be useful.*
+
+[[GYDE_ASK_GENERAL_KNOWLEDGE]]`;
+
+      onDone(gatekeeperMsg);
+      return;
+    }
+  }
+
   onDone(fullText);
 }
 
-module.exports = { streamResponse, buildContext, determineScope };
+module.exports = { streamResponse, buildContext, determineScope, detectFakeCitations };

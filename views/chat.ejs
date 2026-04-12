@@ -237,6 +237,15 @@ window.MathJax = {
                 contentDiv.innerHTML = formatResponse(fullText);
                 scrollToBottom();
                 typesetSoon();
+              } else if (data.type === 'done' && data.text && data.text.indexOf('[[GYDE_ASK_GENERAL_KNOWLEDGE]]') !== -1) {
+                var cleanContent = data.text.replace('[[GYDE_ASK_GENERAL_KNOWLEDGE]]', '');
+                contentDiv.innerHTML = formatResponse(cleanContent);
+                var btnRow = document.createElement('div');
+                btnRow.className = 'gyde-confirm-row';
+                btnRow.innerHTML = '<button class="gyde-btn-confirm-yes" onclick="gydeRequestGeneralKnowledge()">\u2713 Yes, answer from general knowledge</button>' +
+                  '<button class="gyde-btn-confirm-no" onclick="this.closest(\'.gyde-confirm-row\').remove()">\u2717 No thanks</button>';
+                contentDiv.appendChild(btnRow);
+                scrollToBottom();
               } else if (data.type === 'error') {
                 contentDiv.innerHTML = '<span style="color:#e55;">Error: ' + escapeHtml(data.error) + '</span>';
               }
@@ -252,15 +261,30 @@ window.MathJax = {
     });
   }
 
-  function send() {
-    var text = input.value.trim();
+  function send(overrideOpts) {
+    var text = (overrideOpts && overrideOpts.message) || input.value.trim();
     if (!text || sending) return;
     sending = true;
-    input.value = '';
+    if (!overrideOpts) {
+      input.value = '';
+      addMessage('user', escapeHtml(text));
+    }
     input.disabled = true;
     sendBtn.disabled = true;
-    addMessage('user', escapeHtml(text));
-    streamFrom('/api/chat/' + chatId + '/message', 'POST', { message: text });
+    var body = { message: text };
+    if (overrideOpts && overrideOpts.generalKnowledge) body.generalKnowledge = true;
+    var strictGrounding = localStorage.getItem('gyde-grounding-strict') !== '0';
+    if (!strictGrounding) body.generalKnowledge = true;
+    streamFrom('/api/chat/' + chatId + '/message', 'POST', body);
+  }
+
+  function gydeRequestGeneralKnowledge() {
+    document.querySelectorAll('.gyde-confirm-row').forEach(function(el) { el.remove(); });
+    var lastUserMsgs = document.querySelectorAll('.chat-message[data-role="user"]');
+    var lastUserMsg = lastUserMsgs.length ? (lastUserMsgs[lastUserMsgs.length - 1].querySelector('.message-content') || {}).innerText || '' : '';
+    if (!lastUserMsg) return;
+    addMessage('assistant', '<span style="opacity:0.5">Thinking...</span>');
+    send({ message: lastUserMsg, generalKnowledge: true });
   }
 
   function escapeHtml(s) {

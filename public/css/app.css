@@ -1815,3 +1815,50 @@ body.chat-split-open .app-main {
 
 .notebook-entry-body p { margin: 0 0 0.6rem; }
 .notebook-entry-body p:last-child { margin-bottom: 0; }
+
+/* Gyde grounding gatekeeper */
+.gyde-confirm-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.gyde-btn-confirm-yes,
+.gyde-btn-confirm-no {
+  padding: 8px 18px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+.gyde-btn-confirm-yes {
+  background: var(--accent, #4a9eff);
+  color: white;
+}
+.gyde-btn-confirm-no {
+  background: transparent;
+  border-color: var(--app-border, #444);
+  color: var(--app-text-muted, #888);
+}
+.gyde-btn-confirm-yes:hover,
+.gyde-btn-confirm-no:hover { opacity: 0.8; }
+
+/* Settings grounding toggle */
+.settings-desc {
+  font-size: 12px;
+  color: var(--app-text-muted, #888);
+  margin: 4px 0 10px 0;
+  line-height: 1.5;
+}
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.toggle-label {
+  font-size: 13px;
+  color: var(--app-text, #ccc);
+}
