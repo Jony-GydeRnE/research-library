@@ -10,9 +10,19 @@ Plain HTML, no markdown, no code fences. The output should be a sequence of HTML
   <p>... \( inline math \) ...</p>   inline math inside prose
   <h3>section title</h3>             when the page has a clear section header (rare in notes)
   <ul><li>...</li></ul>               bullet lists when the notes use them
-  <div class="note-figure">           handwritten diagram / sketch reference
+  <div class="note-figure" data-bbox="LEFT%,TOP%,RIGHT%,BOTTOM%">
     <em>Figure: brief description of the diagram (Feynman diagram, polytope, mesh, etc.)</em>
   </div>
+
+  BOUNDING BOX RULES for note-figure (same rules as paper figures — read carefully):
+  - LEFT%, TOP%, RIGHT%, BOTTOM% are percentages of the full page image (0–100).
+  - The bbox frames ONLY the drawn artwork: hexagons, Feynman vertices and propagators, polytope sketches, mesh outlines, axis lines, and any vertex/arrow labels physically ON the drawing.
+  - NEVER include handwritten prose, derivations, or equations that sit above/below/beside the diagram. They're captured as <p> and <div class="math-display"> elsewhere in the HTML — do not duplicate them in the image crop.
+  - NEVER include a handwritten label line like "Fig 2: ..." if one is present. The description goes in the <em> block inside the <div>, not inside the bbox.
+  - Think scissors: cut out JUST the picture, leave all handwritten text outside the cut.
+  - Add ~2% padding on each side beyond the outermost drawn element.
+  - If two small diagrams sit side-by-side on one line, emit TWO note-figure blocks with separate bboxes — one per diagram — rather than a single wide bbox that captures both (which would also capture the blank gutter between them).
+  - If you genuinely cannot localize the diagram within the page, omit data-bbox entirely — the reader falls back to showing just the text description.
   <div class="note-uncertain">        when you genuinely cannot read the symbol
     <em>[unclear: best guess]</em>
   </div>
