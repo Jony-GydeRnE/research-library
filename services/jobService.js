@@ -55,7 +55,7 @@ async function visionProcessPage(pdfTmpPath, page, bookId, isFirstPage, kind = '
   const pageNum = page.pageNumber;
   const pngBuffer = await renderPageToImage(pdfTmpPath, pageNum, bookId);
   let html = await convertPageWithVision(pngBuffer, pageNum, isFirstPage, kind);
-  html = await detectAndCropFigures(html, bookId, pageNum, [], 792);
+  html = await detectAndCropFigures(html, bookId, pageNum);
 
   const h2 = html.match(/<h2[^>]*>([^<]+)<\/h2>/);
   const h3 = html.match(/<h3[^>]*>([^<]+)<\/h3>/);
@@ -64,6 +64,99 @@ async function visionProcessPage(pdfTmpPath, page, bookId, isFirstPage, kind = '
   const plainText = htmlToPlainText(html);
 
   return { html, plainText, chapterTitle: h2 ? h2[1] : null, sectionTitle: h3 ? h3[1] : null };
+}
+
+/**
+ * Reconcile-after-vision: make sure every rendered page PNG on disk
+ * is represented by a Page document with visionProcessed=true. This
+ * is the auto-recovery safety net for the bug we hit on the
+ * Lagrangians notes book — the original parallel vision burst
+ * saturated gpt-4o TPM, 33 pages returned 429s, the orchestrator
+ * moved on without retrying and marked the book "ready" with
+ * silent holes in the reader.
+ *
+ * Runs SERIALLY with a small per-page delay so it's guaranteed to
+ * stay under any TPM budget, and uses the existing PNG on disk —
+ * no re-rendering.
+ *
+ * Called at the end of generate-html, immediately before the book
+ * is transitioned to status='ready'. Tries up to maxRounds passes;
+ * each round picks up whatever is still missing/failed.
+ */
+async function reconcilePages(book, { maxRounds = 2, delayMs = 800 } = {}) {
+  const bookId = book._id.toString();
+  const IMAGE_DIR = path.join(__dirname, '..', 'uploads', 'images', bookId);
+  if (!fs.existsSync(IMAGE_DIR)) return { repaired: 0, stillMissing: 0 };
+
+  const kind = book.kind || 'paper';
+  let repaired = 0;
+
+  for (let round = 0; round < maxRounds; round++) {
+    // Find every rendered PNG on disk (page-N.png)
+    const pngs = fs.readdirSync(IMAGE_DIR)
+      .map(f => f.match(/^page-(\d+)\.png$/))
+      .filter(Boolean)
+      .map(m => parseInt(m[1], 10))
+      .sort((a, b) => a - b);
+
+    if (pngs.length === 0) return { repaired, stillMissing: 0 };
+
+    // Pages that are either (a) entirely absent from the DB, or
+    // (b) present but flagged visionProcessed=false.
+    const existing = await Page.find(
+      { bookId, pageNumber: { $in: pngs } },
+      'pageNumber visionProcessed'
+    ).lean();
+    const okSet = new Set(existing.filter(p => p.visionProcessed).map(p => p.pageNumber));
+    const needsFix = pngs.filter(n => !okSet.has(n));
+
+    if (needsFix.length === 0) return { repaired, stillMissing: 0 };
+
+    console.log(`  [reconcile round ${round + 1}] ${needsFix.length} pages need vision — serial retry`);
+
+    for (const pageNum of needsFix) {
+      const pngPath = path.join(IMAGE_DIR, `page-${pageNum}.png`);
+      try {
+        const buf = fs.readFileSync(pngPath);
+        const html = await convertPageWithVision(buf, pageNum, pageNum === 1, kind);
+        const plainText = htmlToPlainText(html);
+        const h2 = html.match(/<h2[^>]*>([^<]+)<\/h2>/);
+        const h3 = html.match(/<h3[^>]*>([^<]+)<\/h3>/);
+
+        let pageDoc = await Page.findOne({ bookId, pageNumber: pageNum });
+        if (!pageDoc) {
+          pageDoc = new Page({ bookId, pageNumber: pageNum });
+        }
+        if (!pageDoc.rawTextLegacy && pageDoc.rawText) pageDoc.rawTextLegacy = pageDoc.rawText;
+        pageDoc.htmlContent = html;
+        pageDoc.rawText = plainText;
+        if (h2) pageDoc.chapterTitle = h2[1];
+        if (h3) pageDoc.sectionTitle = h3[1];
+        pageDoc.hasEquations = true;
+        pageDoc.hasImages = true;
+        pageDoc.visionProcessed = true;
+        await pageDoc.save();
+        repaired++;
+      } catch (err) {
+        console.warn(`  [reconcile] page ${pageNum} failed: ${err.message}`);
+        await ErrorLog.create({
+          bookId, jobType: 'generate-html',
+          message: `reconcile page ${pageNum}: ${err.message}`,
+        });
+      }
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+
+  // Whatever's still not right after maxRounds.
+  const finalPngs = fs.readdirSync(IMAGE_DIR)
+    .map(f => f.match(/^page-(\d+)\.png$/)).filter(Boolean).map(m => parseInt(m[1], 10));
+  const finalOk = await Page.find(
+    { bookId, pageNumber: { $in: finalPngs }, visionProcessed: true },
+    'pageNumber'
+  ).lean();
+  const stillMissing = finalPngs.length - finalOk.length;
+  return { repaired, stillMissing };
 }
 
 async function visionProcessWithRetry(pdfTmpPath, page, bookId, isFirstPage, kind = 'paper') {
@@ -300,6 +393,16 @@ function defineJobs() {
 
       // Clean up temp PDF
       if (fs.existsSync(pdfTmpPath)) fs.unlinkSync(pdfTmpPath);
+
+      // Auto-recovery: reconcile any pages the parallel vision burst
+      // dropped (typically due to gpt-4o TPM 429s). Uses existing
+      // PNGs on disk — serial retry with a small delay.
+      try {
+        const rec = await reconcilePages(book);
+        if (rec.repaired > 0) console.log(`  [reconcile] repaired ${rec.repaired} page(s); still missing ${rec.stillMissing}`);
+      } catch (recErr) {
+        console.warn(`  [reconcile] failed: ${recErr.message}`);
+      }
 
       // Run regex pre-annotation (Step 2 — zero cost)
       console.log(`  Running regex pre-annotation...`);

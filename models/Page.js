@@ -15,6 +15,7 @@ const pageSchema = new mongoose.Schema({
 
   // Phase 2 fields
   rawTextLegacy: String,                    // Original pdf-parse text, preserved for highlight re-mapping
+  htmlContentLegacy: String,                // Pre-rewrite HTML, preserved when notesRewrite overwrites htmlContent
   visionProcessed: { type: Boolean, default: false },
   structuralAnnotations: [{                 // Regex-detected signals
     kind: String,                           // "theorem", "definition", "missing_proof", "citation", "equation"

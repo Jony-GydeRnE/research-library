@@ -1,0 +1,175 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Rewrite preview — notes p1</title>
+<style>
+  html, body { background: #0f0f0f !important; }
+  body {
+    color: #e6e6e6;
+    font-family: -apple-system, system-ui, sans-serif;
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 40px 32px 120px;
+    line-height: 1.65;
+    font-size: 16px;
+  }
+  .preview-header {
+    border-bottom: 1px solid #333;
+    margin-bottom: 32px;
+    padding-bottom: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .preview-header h1 { font-size: 13px; font-weight: 500; color: #888; margin: 0; letter-spacing: 0.08em; text-transform: uppercase; }
+  .preview-header .meta { font-size: 12px; color: #666; }
+
+  /* Content — override everything hard so reader.css can't leak in if cached */
+  #preview, #preview * { color: #e6e6e6; }
+  #preview h2 { font-size: 24px; margin-top: 34px; margin-bottom: 14px; color: #fff; font-weight: 600; }
+  #preview h3 { font-size: 18px; margin-top: 26px; margin-bottom: 10px; color: #d0d0d0; font-weight: 600; }
+  #preview p { margin: 14px 0; color: #d8d8d8; }
+  #preview strong { color: #ffffff; font-weight: 600; }
+  #preview em { color: #f0f0f0; }
+
+  /* kill any inherited white-box styling on math blocks */
+  #preview .math-display,
+  #preview div.math-display {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 6px 0 !important;
+    margin: 20px 0 !important;
+    overflow-x: auto;
+    color: #f5f5f5 !important;
+  }
+  #preview mjx-container { color: #f5f5f5 !important; }
+  #preview mjx-container[display="true"] { margin: 8px 0 !important; }
+
+  .toolbar { position: fixed; top: 16px; right: 24px; font-size: 12px; color: #888; z-index: 100; }
+  .toolbar a { color: #6ab0ff; text-decoration: none; margin-left: 12px; }
+</style>
+<script>
+  MathJax = {
+    tex: { inlineMath: [['\\(','\\)']], displayMath: [['\\[','\\]']] },
+    svg: { fontCache: 'global' },
+  };
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+</head>
+<body>
+  <div class="toolbar">
+    <a href="/reader/69d9ce81aa83b8b11c1837dd/page/1">open current DB page 1 →</a>
+  </div>
+  <div class="preview-header">
+    <h1>REWRITE PREVIEW — notes page 1</h1>
+    <div class="meta">Lagrangians & EL · not yet in DB</div>
+  </div>
+  <div id="preview">
+    <div class="page-content">
+
+<h2>Lagrangians and the Euler–Lagrange Equation</h2>
+
+<h3>Free-particle Lagrangian in Cartesian coordinates</h3>
+
+<p>A free particle of mass \(m\) in two dimensions has the Lagrangian</p>
+
+<div class="math-display">\[
+L = \frac{1}{2}\,m\!\left(\dot{x}^{2} + \dot{y}^{2}\right).
+\]</div>
+
+<h3>Switching to polar coordinates</h3>
+
+<p>Introduce coordinates \((r,\theta)\) with \(r > 0\) via the standard relations</p>
+
+<div class="math-display">\[
+x = r\cos\theta, \qquad y = r\sin\theta.
+\]</div>
+
+<p>Differentiating:</p>
+
+<div class="math-display">\[
+\dot{x} = \dot{r}\cos\theta - r\sin\theta\;\dot{\theta}, \qquad
+\dot{y} = \dot{r}\sin\theta + r\cos\theta\;\dot{\theta}.
+\]</div>
+
+<p>Squaring and summing gives</p>
+
+<div class="math-display">\[
+\dot{x}^{2} + \dot{y}^{2} = \dot{r}^{2} + r^{2}\dot{\theta}^{2},
+\]</div>
+
+<p>so the Lagrangian in polar coordinates is</p>
+
+<div class="math-display">\[
+L = \frac{1}{2}\,m\!\left(\dot{r}^{2} + r^{2}\dot{\theta}^{2}\right).
+\]</div>
+
+<h3>Euler–Lagrange equations in Cartesian coordinates</h3>
+
+<p>The Euler–Lagrange (EL) equation for a generalized coordinate \(q\) reads</p>
+
+<div class="math-display">\[
+\frac{d}{dt}\frac{\partial L}{\partial \dot{q}} - \frac{\partial L}{\partial q} = 0.
+\]</div>
+
+<p>In Cartesian coordinates, \(L\) depends on \(\dot{x}\) and \(\dot{y}\) but not on \(x\) or \(y\). The EL equations therefore give</p>
+
+<div class="math-display">\[
+\frac{d}{dt}(m\dot{x}) = 0 \quad \Longrightarrow \quad \ddot{x} = 0,
+\]</div>
+
+<div class="math-display">\[
+\frac{d}{dt}(m\dot{y}) = 0 \quad \Longrightarrow \quad \ddot{y} = 0.
+\]</div>
+
+<p>These are the equations of straight-line, constant-velocity motion.</p>
+
+<h3>Euler–Lagrange equations in polar coordinates</h3>
+
+<p>The same physics in polar coordinates requires applying the EL equation to each of \(r\) and \(\theta\). First compute the needed partial derivatives:</p>
+
+<div class="math-display">\[
+\frac{\partial L}{\partial \dot{r}} = m\dot{r}, \qquad
+\frac{\partial L}{\partial \dot{\theta}} = m r^{2}\dot{\theta}, \qquad
+\frac{\partial L}{\partial r} = m r\dot{\theta}^{2}, \qquad
+\frac{\partial L}{\partial \theta} = 0.
+\]</div>
+
+<p><strong>Radial equation (\(q = r\)):</strong></p>
+
+<div class="math-display">\[
+\frac{d}{dt}\frac{\partial L}{\partial \dot{r}} - \frac{\partial L}{\partial r} = 0
+\qquad\Longrightarrow\qquad
+\frac{d}{dt}(m\dot{r}) - m r\dot{\theta}^{2} = 0.
+\]</div>
+
+<p><strong>Angular equation (\(q = \theta\)):</strong></p>
+
+<div class="math-display">\[
+\frac{d}{dt}\frac{\partial L}{\partial \dot{\theta}} - \frac{\partial L}{\partial \theta} = 0
+\qquad\Longrightarrow\qquad
+\frac{d}{dt}\!\left(m r^{2}\dot{\theta}\right) = 0.
+\]</div>
+
+<p>The angular equation states that \(m r^{2}\dot{\theta}\) is constant in time. This is <strong>conservation of angular momentum</strong>: whenever the Lagrangian has no explicit dependence on a coordinate (\(\theta\) here), the conjugate momentum \(\partial L / \partial \dot{\theta}\) is conserved. This is a concrete instance of Noether's theorem applied to rotational symmetry.</p>
+
+<h3>From functions to functionals: the minimization viewpoint</h3>
+
+<p>In ordinary calculus, if \(f\colon U \subseteq \mathbb{R} \to \mathbb{R}\), the extrema of \(f\) satisfy \(f'(x) = 0\). The Euler–Lagrange equation is the generalization of this condition to <strong>functionals</strong> — maps from a space of functions to the reals.</p>
+
+<p>A prototype functional is the <strong>length</strong> of a curve \(\gamma\colon [0,1] \to \mathbb{R}^{2}\) in Euclidean space:</p>
+
+<div class="math-display">\[
+\mathcal{L}[\gamma] = \int_{0}^{1} \|\dot{\gamma}(t)\|\, dt.
+\]</div>
+
+<p>More generally, an <strong>action</strong> functional takes the form \(S[\gamma] = \int_{0}^{1} L(\gamma(t),\dot{\gamma}(t))\,dt\), where \(L\) is the Lagrangian. The curves that extremize \(S\) are found by requiring \(\delta S = 0\) under all infinitesimal variations of \(\gamma\) with fixed endpoints — this is <strong>the calculus of variations</strong>, and the resulting stationarity condition is precisely the Euler–Lagrange equation.</p>
+
+<p>This variational framework underpins all of classical mechanics and extends directly into field theory, where the "coordinates" \(q(t)\) are promoted to fields \(\phi(x)\) and the Lagrangian \(L\) becomes a Lagrangian density \(\mathcal{L}\). The field-theoretic Lagrangians that ultimately appear in scattering-amplitude calculations — such as the Lagrangians for colored scalar theories, the nonlinear sigma model, or Yang–Mills coupled to scalars — all derive their equations of motion from exactly this variational principle.</p>
+
+</div>
+  </div>
+</body>
+</html>

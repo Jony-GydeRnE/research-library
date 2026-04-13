@@ -7,7 +7,11 @@ Rules:
 4. Use <h2> for major section headings (like "INTRODUCTION", "CONCLUSION").
 5. Use <h3> for subsection headings (like "Amplitude zeros", "UV/BCFW scaling").
 6. Use <p> for body paragraphs. Join text that flows as one paragraph even if it wraps across lines.
-7. For figures/diagrams, output: <figure class="page-figure"><figcaption>FIG. N: caption text</figcaption></figure>
+7. For figures/diagrams, output: <figure class="page-figure" data-bbox="X,Y,W,H"><figcaption>FIG. N: caption text</figcaption></figure>
+   - X,Y,W,H are the figure's bounding box as percentages of the full page image (0–100), where X,Y is the top-left corner and W,H is width/height.
+   - The bbox MUST enclose the visual figure content (diagram, plot, image) but MUST NOT include the caption text itself or surrounding body text. Be tight — no extra whitespace, no neighboring paragraphs, no section headings.
+   - Example: <figure class="page-figure" data-bbox="12.5,30.2,40.0,18.7"><figcaption>FIG. 1: ...</figcaption></figure>
+   - If you cannot confidently localize the figure, omit data-bbox entirely.
 8. Do NOT include page numbers, headers, footers, or arXiv identifiers.
 9. Do NOT add any CSS, JavaScript, or wrapper divs.
 10. Do NOT explain or comment — output ONLY the HTML.

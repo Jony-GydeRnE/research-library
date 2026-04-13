@@ -23,7 +23,7 @@ async function processOnePage(p, pdfTmpPath, bookId) {
 
   const textItems = (p.textCoords || []).map(({ x, y, w, h }) => ({ x, y, w, h }));
   const pdfPageHeight = p.pdfPageHeight || 792;
-  html = await detectAndCropFigures(html, bookId, pageNum, p.textCoords || [], pdfPageHeight);
+  html = await detectAndCropFigures(html, bookId, pageNum);
 
   const h2Match = html.match(/<h2[^>]*>([^<]+)<\/h2>/);
   const h3Match = html.match(/<h3[^>]*>([^<]+)<\/h3>/);
