@@ -1,6 +1,8 @@
 # Metadata Logic — How Spans and Chunks Get Built, in English
 
-Written 2026-04-12. Research-only pass. No code changes in this document. Its purpose is to explain, step by step, how a PDF page becomes the chunks/spans/tags/edges you see in the Chunks reader mode, so you can reason about *why* the current output looks the way it does (mostly 1-span chunks, orphaned context like "these novel perspectives", dense sentences that should produce 4-5 spans becoming 1).
+Written 2026-04-12. Research pass + fix pass (**updated 2026-04-12 later**, see §8 for what changed).
+
+**This document has two halves.** Sections 0-7 describe how the pipeline worked *before* the 2026-04-12 fixes and diagnose the three structural defects that caused the observed 1-span chunks, orphaned pronouns, and multi-concept flattening. Section 8 describes what was changed, the new behavior, and how to re-ingest books to see the effect. Read 0-7 to understand *why* the fixes were needed; read 8 to know *what is live today*.
 
 For every stage I name the file, the function, and the line range, translate the code into plain English, and quote the relevant prompt verbatim so you can see what the LLM was actually asked to do. At the end there is a diagnosis mapping each observed defect to the specific place in the pipeline that causes it.
 
@@ -328,4 +330,152 @@ All three changes sit inside the current data model. None of them require schema
 
 ---
 
-*End of report. This is research-only; no code was changed. The recommended next step before resuming Phase B of GR is the three-part fix in §6: relax the chunker's search-class break rule, add a multi-concept decomposition example to both prompts, and scaffold the canonical-definition dictionary for the Subject Tutor. Then re-ingest the 6 current books and verify the chunks view shows multi-span chunks, no orphaned pronouns, and visible `uses_definition` edges.*
+*End of the research half. The fixes in §6 were all implemented in commit `64ac66b` (2026-04-12 later). See §8 for the new state of the pipeline.*
+
+---
+
+## 8. What Changed — 2026-04-12 (later)
+
+All three fixes from §6 shipped together in one commit. The structural tension between the span generator and the chunker is resolved. This section describes the new behavior, new files, how to re-ingest a book under the new rules, and what the live DB looks like after the first library-wide pass.
+
+### 8.1 Chunker fix — `services/chunkService.js`
+
+Three changes to `shouldBreakChunk()`, in priority order:
+
+1. **Cross-page break preserved** — different `pageNumber` still forces a break because the schema can't represent a chunk that bridges pages.
+2. **New overlap rule** — if the next span's `sentenceStart` is ≤ the current chunk's last `sentenceEnd`, the spans share a sentence range (multi-concept decomposition). Force a merge. Without this, the new prompt behavior would simply re-create 1-span chunks via a different path.
+3. **New anaphor merge** — compute the first word of `nextSpan.spanText` with a Unicode regex. If it's in `PRONOUN_STARTS` (`these, this, that, those, it, they, them, such, hence, thus, therefore, so, consequently, accordingly, moreover, furthermore`), force a merge. Overrides every downstream rule. This is the fix for "these novel perspectives" — the antecedent is in the current chunk, splitting would orphan it, so we don't split.
+4. **Search-class break removed** — the old rule 7 (any span with a non-N search class starts a new chunk) is gone. Gap tags are triage signals for the resolver, not structural boundaries. The `CHUNK_SPLIT_ON_SEARCH_CLASS` config flag still exists but is now default `false` and unread by the chunker; it's kept only for backwards compat.
+5. **Span cap bumped** — `CHUNK_MAX_SPANS` changed from 3 to 8 in `config/pipeline.js`. At 3, even simple 3-sentence paragraphs fragmented whenever the LLM emitted gap tags (which the prompt told it to emit on every sentence). At 8 a typical paragraph of 4-6 sentences + multi-concept decomposition fits in one chunk.
+
+### 8.2 Prompt fix — multi-concept decomposition
+
+Both `prompts/span-generation-full.txt` and `prompts/span-generation-short.txt` now include a **MULTI-CONCEPT DECOMPOSITION** rule directly after the SPECIFICITY rule. Verbatim from the full prompt (the short prompt has a condensed version):
+
+> **MULTI-CONCEPT DECOMPOSITION (critical, overrides the "one line per sentence" default):** when a single sentence introduces, defines, or invokes multiple distinct concepts, emit ONE SPAN PER CONCEPT with the SAME sentence range. Do not flatten concepts into a single span's tag array. The parser accepts overlapping ranges — the same "1" or "3-4" can appear on as many lines as you need. Each concept deserves its own anchor because each one is independently something the reader may need to look up, cite, or link an edge to.
+>
+> Rule of thumb: if removing any one concept from the sentence would change what the reader would have to look up, that concept needs its own span.
+>
+> Example — ONE sentence, FIVE distinct concepts, FIVE spans:
+> ```
+> [1] Tree amplitudes are rational functions of Lorentz invariant dot products of momenta.
+> →
+> 1 tree_amplitudes definition Ld
+> 1 rational_functions background Ld
+> 1 lorentz_invariance definition Ld
+> 1 dot_product definition Ld
+> 1 particle_momenta definition Ld
+> ```
+>
+> Counter-example — ONE sentence, ONE concept, ONE span:
+> ```
+> [7] We now define the Zariski topology on affine n-space.
+> →
+> 7 zariski_topology definition
+> ```
+>
+> The key difference: the first sentence says what tree amplitudes ARE by listing four other mathematical objects, any one of which a reader might need to learn separately. The second sentence only signals that a definition is coming, with no other concepts embedded in it.
+>
+> When in doubt, decompose. Over-decomposition is harmless (the chunker groups them back together); under-decomposition loses edges that can never be recovered later.
+
+**No parser changes were needed.** The DSL parser (`parseSpanOutput()` in `spanService.js`) already accepts multiple DSL lines with overlapping sentence ranges — each line becomes its own Span document. The only thing that needed changing was the model's behavior, which is controlled by the examples in the prompt.
+
+**"Over-decomposition is harmless" is enforced** by the chunker's new overlap rule (§8.1 rule 2). If the LLM decomposes a sentence into 5 spans with range `1 1 1 1 1`, the chunker merges them into a single chunk. If the LLM only produces 1 span, that's 1 span. Either way the chunker handles it. The bias is toward decomposing aggressively.
+
+### 8.3 Canonical definition dictionary — new model + service
+
+New file: `models/CanonicalDefinition.js`. Schema:
+
+```
+concept             String (unique, indexed)
+definitionChunkId   ObjectId → Chunk
+definitionSpanId    ObjectId → Span (nullable)
+definitionBookId    ObjectId → Book
+source              enum ['structural', 'role', 'tag']
+confidence          String, default 'z'
+createdAt/updatedAt Date
+```
+
+New file: `services/canonicalDefinitionService.js`. Three exported functions:
+
+- `buildCanonicalDictionary(opts)` — sweep all chunks (optionally scoped by `bookIds`), for each chunk compute its canonical-definition candidates, pick the winner per concept, upsert into `CanonicalDefinition`.
+- `linkSpansToCanonicalDefinitions(opts)` — for every span (optionally scoped), emit a `uses_definition` Edge from the span to its concept's canonical chunk, with `method='canonical-lookup'`, `confidence='z'`. Pure DB, no LLM.
+- `rebuildCanonicalForBook(bookId)` — convenience: drop this book's canonical edges, rebuild the library-wide dictionary, link just this book.
+
+**The extraction rule is conservative.** A chunk can become a canonical definition through three tiers (strongest first):
+
+- **Tier 0 `structural`** — `chunk.structuralType === 'definition'` **AND** at least one span in the chunk has `role === 'definition'`. Both signals must agree. This is a stricter bar than the original design because during the first live sweep we caught a bug where the chunk tagged "These novel perspectives have revealed surprising structures..." (a clear orphan, starts with a demonstrative) had `structuralType='definition'` from a page-level regex-annotation overlap. With the old rule, this chunk became the canonical definition for both `lagrangian_formalism` and `hidden_zeros`. The tightened rule rejects it because no span in the chunk has `role='definition'` — the one span has `role='background'`.
+- **Tier 1 `role`** — at least one span has `role='definition'` (and the chunk `structuralType` disagrees or is absent). The concept set is that span's `contextTags`.
+- **Tier 2 `tag`** — a `contextTag` on any span ends with `_definition`. The concept is that tag with the suffix stripped (`foo_definition → foo`). Weakest signal.
+
+**Defensive text guard.** Regardless of tier, `looksLikeRealDefinition(chunk)` rejects any chunk whose source text starts with a pronoun or demonstrative (same `PRONOUN_REJECT` regex as the chunker's merge rule). A real definition block never starts with "These" or "Thus". This filter caught the live bug above.
+
+**Self-edge suppression.** The linker skips spans that live inside their own canonical chunk. A span in a definition chunk tagged `tree_amplitudes` shouldn't point to itself as using-its-own definition.
+
+**Idempotency.** Both phases can be re-run at any time. The build `findOneAndUpdate`s with `upsert: true` and only replaces a row when a strictly better candidate is found. The linker pre-loads existing `canonical-lookup` edges into a Set and skips duplicates, so re-running only creates new edges when new spans or new definitions appeared.
+
+**Edge model change.** `models/Edge.js` gains `'canonical-lookup'` in the `method` enum.
+
+### 8.4 Re-ingestion script — `scripts/rebuild-metadata.js`
+
+Command-line runner that re-ingests metadata for one or more books after the fixes. Four stages, each flag-skippable:
+
+```
+1. spanService.generateSpansForBook          (OpenAI, ~$0.05-0.20/book)
+2. chunkService.generateChunksForBook        (DB only, free)
+3. embeddingService.generateEmbeddingsForBook (OpenAI, ~$0.002/book)
+4. canonicalDefinitionService.rebuildCanonicalForBook (DB only, free)
+```
+
+Usage:
+```
+# full re-ingestion of one book (costs money for steps 1+3)
+node scripts/rebuild-metadata.js --book 69d5dd60c826b8392d57012d
+
+# just re-run the chunker + canonical linker (free, no API calls)
+node scripts/rebuild-metadata.js --book 69d5dd60c826b8392d57012d --skip-spans --skip-embed
+
+# re-ingest every book in the library (cost: ~$0.30-$1.00 total for 6 books)
+node scripts/rebuild-metadata.js --all
+```
+
+The `--skip-spans --skip-embed` combo is the fastest way to see the effect of the chunker + canonical fixes on existing data without paying for new OpenAI calls. It just re-groups the existing spans under the new rules and rebuilds the canonical dictionary.
+
+### 8.5 Live measurements from the first sweep
+
+Ran `buildCanonicalDictionary({})` library-wide and `linkSpansToCanonicalDefinitions({})` over the current 6 books with the existing (un-regenerated) spans. Numbers reflect chunker fix + canonical dictionary only — the multi-concept prompt won't have effect until spans are regenerated.
+
+| Metric | Value |
+|---|---|
+| Chunks scanned | 2,116 |
+| Canonical concepts registered | 253 |
+| Tier 0 (structural + role) | 36 |
+| Tier 1 (role only) | 190 |
+| Tier 2 (tag suffix) | 27 |
+| Orphan chunks registered | **0** (pronoun guard rejected the "These novel perspectives..." chunk) |
+| `uses_definition` edges created by linker | 754 |
+| Unique target chunks | 99 |
+| Self-edges skipped | 323 |
+| Pre-existing canonical-lookup edges preserved | 15 |
+
+Examples of registered canonicals:
+- `planar_variables_massive_theory` → "Planar variables were a natural choice of basis over kinematic space..." (tier: structural)
+- `non_planar_variables_definition` → "Motivated by the kinematic mesh construction, we define..." (tier: structural)
+- `causal_diamond_regions` → span inside a FIG. 2 caption (tier: role)
+
+### 8.6 What the user should observe after re-ingesting
+
+After running `scripts/rebuild-metadata.js --book <id>` on a book (with span regeneration enabled so the new multi-concept prompt fires):
+
+1. **Chunks view** — most narrative paragraphs should now be 3-8 spans instead of 1 span. Multi-concept sentences like "Tree amplitudes are rational functions..." should show as multiple clickable `;;` markers within one chunk, each opening a different concept's tag + edge panel.
+2. **No orphan pronouns** — chunks should no longer start with "These", "This", "Thus", "Therefore" etc. unless there's no reasonable way to merge with the preceding chunk.
+3. **`uses_definition` edges everywhere** — clicking `;;` on any span containing a tagged concept should show a `uses_definition` edge with confidence `z` pointing to the canonical definition chunk. Zero LLM calls; pure lookup.
+4. **Fewer "chunk-level edges" rows** — because Fix 1 from the earlier chunks-view UI hardening merged single-span chunk edges into the span, and because multi-span chunks now cover more concepts per chunk, the separate chunk-level row should appear rarely.
+
+### 8.7 What's still NOT fixed (deferred — out of scope for this pass)
+
+- **Upstream structural-type mis-assignment.** The `inferStructuralType()` function in `chunkService.js` can still set `structuralType='definition'` based on page-level regex annotations alone, without a span role backing it. The canonical extractor now filters these out defensively, but the root-cause fix is in the regex pre-annotation pipeline (`services/regexService.js` and the structural pass in vision processing), which this report did not touch. If you see a real definition chunk that *should* be a canonical definition but isn't, that's because its span role didn't come through as `'definition'` — worth investigating as a prompt-tuning task for the span generator.
+- **Cross-page chunks.** The schema still forbids a chunk from bridging two pages. Orphan pronouns at the top of a page (where the antecedent is at the bottom of the previous page) cannot be merged. This is a schema migration, not a chunker change.
+- **Canonical definition *quality* judge.** The dictionary picks the best candidate by tier + page heuristics, but doesn't judge the actual quality of the definition text. A bad definition that happens to be in a `structuralType='definition'` chunk wins. A future Subject Tutor agent (Phase E in the vision doc) would audit canonicals and promote/demote them as edges accumulate.
+- **Re-ingestion of the current 6 books with the new span prompt.** This requires paid OpenAI calls. The user must run `scripts/rebuild-metadata.js --all` (or one book at a time) to see the multi-concept decomposition take effect on existing data. Everything above is already live for new ingestions.
+
