@@ -40,6 +40,35 @@ const chunkSchema = new mongoose.Schema({
   wordCount: Number,
   sourceText: String,                       // the actual text this chunk covers
 
+  // ─── Quality sweep bookkeeping (2026-04-12) ────────────
+  // Set by services/qualitySweepService.js when a repair
+  // pass touches this chunk. All nullable — no migration.
+  // qualitySweepVersion bumps when the sweep logic improves;
+  // the sweeper re-processes chunks whose version < current.
+  qualitySweepAt: { type: Date, default: null },
+  qualitySweepVersion: { type: Number, default: 0 },
+  qualityRepairApplied: { type: [String], default: [] },
+  qualityRepairStatus: {
+    type: String,
+    enum: ['untouched', 'repaired', 'merged', 'replaced',
+           'pattern-1-unrepairable', 'pattern-2-uncertain',
+           'pattern-2-review', 'pattern-3-content-free',
+           'pattern-3-no-edges', 'error'],
+    default: 'untouched',
+  },
+  // When Pattern 2 merges two chunks, the losers get this
+  // pointer set. Readers resolveChunkId() through the chain
+  // to find the canonical chunk. Never deleted.
+  mergedInto: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Chunk',
+    default: null,
+  },
+  // Non-null only when Pattern 2 produced a chunk spanning
+  // two pages (the schema otherwise forbids cross-page chunks).
+  // Array of page numbers the chunk covers.
+  crossesPages: { type: [Number], default: [] },
+
   createdAt: { type: Date, default: Date.now },
 });
 

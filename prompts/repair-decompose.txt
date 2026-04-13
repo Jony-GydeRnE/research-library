@@ -1,0 +1,60 @@
+You are repairing an academic-text span that the first-pass annotation flattened. The span covers a single sentence but the sentence invokes multiple distinct concepts — each concept should have been its own span, so the edge graph can anchor to each one independently. Your job is to decompose the span into one line per concept.
+
+OUTPUT FORMAT: one DSL line per concept. The DSL format is identical to the span-generation format:
+
+SENTENCE_RANGE CONTEXT_TAGS ROLE_TAG [SEARCH_CLASS]
+
+Where:
+- SENTENCE_RANGE is always the ORIGINAL span's range (e.g. "5" or "5-5"). All of your output lines will share this same range — that's the whole point of decomposition. The parser accepts overlapping ranges.
+- CONTEXT_TAGS is one concept tag per line, lowercase_snake_case. Exactly ONE concept per line.
+- ROLE_TAG is one of: claim, background, conjecture, result, review, definition, equation, application, citation, preview, proof, remark, example, figure_ref
+- SEARCH_CLASS is an optional gap marker: Ld (missing definition), Lv (missing derivation), Lp (missing proof), S (external citation), I{a-z} (internal ref), B{a-z} (broad search). Use these aggressively — any concept introduced without definition on this page should carry Ld.
+
+RULES:
+1. Output ONE line per distinct concept. If the sentence contains five concepts, output five lines, all with the same sentence range.
+2. Each line must have at least one context tag. A concept with no tag is not a concept — don't emit it.
+3. Use Ld liberally on concepts the sentence invokes without defining. This is how the canonical-definition lookup later finds a home for the concept.
+4. Normalize concept names: use the shortest reasonable canonical form. `tree_amplitudes` not `tree_level_amplitudes`. `lorentz_invariance` not `lorentz_invariant_dot_products`.
+5. If decomposition is impossible (e.g., the span is genuinely one concept, or the first pass was actually correct), output the special verdict line: REFUSE <one-line reason>. Do NOT output any DSL in that case.
+
+WORKED EXAMPLE — FIVE CONCEPTS IN ONE SENTENCE:
+
+Input sentence (range 3):
+  Tree amplitudes are rational functions of Lorentz invariant dot products of momenta.
+
+Output:
+3 tree_amplitudes definition Ld
+3 rational_functions background Ld
+3 lorentz_invariance definition Ld
+3 dot_product definition Ld
+3 particle_momenta definition Ld
+
+WORKED EXAMPLE — GENUINELY ONE CONCEPT:
+
+Input sentence (range 7):
+  We now define the Zariski topology on affine n-space.
+
+Output:
+7 zariski_topology definition
+
+WORKED EXAMPLE — PHYSICS SENTENCE WITH EMBEDDED GAPS:
+
+Input sentence (range 12):
+  Applying the Ward identity to the BCFW shift gives the transversality condition.
+
+Output:
+12 ward_identity background Ld
+12 bcfw_shift definition Ld
+12 transversality result Lv
+
+CONTEXT YOU HAVE:
+- The chunk's full source text (the single sentence being repaired)
+- 2 chunks BEFORE on the same page (may include definitions the sentence invokes)
+- 2 chunks AFTER on the same page (may reveal what this sentence is setting up)
+- The chunk's existing concept tags (which the first pass put into one flat list)
+
+Use the surrounding chunks to decide which concepts are definitional (get `definition` role) vs. assumed (get `background` role + Ld gap).
+
+Do not add new sentences. Do not rewrite the source text. Decompose only. Output DSL lines or the REFUSE verdict. No explanation.
+
+CONFIDENCE: on the last line, emit `CONFIDENCE: <0.00-1.00>` reflecting how confident you are in the decomposition. 1.00 = clearly multi-concept, obvious decomposition. 0.50 = unclear, might be one concept. 0.00 = cannot decide.

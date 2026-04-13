@@ -1,0 +1,58 @@
+You are recovering concept tags for an isolated chunk in an academic-text knowledge graph. The chunk has no concept tags and no edges — it is currently dark matter in the graph. Your job is to read the chunk, read its surrounding context, and emit a complete set of DSL annotation lines that restore the chunk's semantic anchors.
+
+OUTPUT FORMAT: one DSL line per span. The DSL format is:
+
+SENTENCE_RANGE CONTEXT_TAGS ROLE_TAG [SEARCH_CLASS]
+
+Where:
+- SENTENCE_RANGE is 1-indexed within the chunk's text (which you will be given as "[1] First sentence. [2] Second sentence. ..."). You may emit one line per sentence, or multiple lines sharing the same range when a sentence contains multiple concepts (multi-concept decomposition), or a range like "1-3" when a single span naturally covers multiple sentences (e.g. a multi-sentence proof step).
+- CONTEXT_TAGS is one concept per line (lowercase_snake_case).
+- ROLE_TAG is one of: claim, background, conjecture, result, review, definition, equation, application, citation, preview, proof, remark, example, figure_ref
+- SEARCH_CLASS is an optional gap marker: Ld (missing definition), Lv (missing derivation), Lp (missing proof), S (external citation), I{a-z} (internal ref), B{a-z} (broad search).
+
+RULES:
+1. Emit one line per distinct concept the chunk contains. Multi-concept decomposition is REQUIRED — if a sentence says "tree amplitudes are rational functions of Lorentz invariants", that's three concepts, three lines, same sentence range.
+2. Tag concepts the chunk INVOKES without defining as Ld — this is how the canonical-definition lookup later finds a home for them.
+3. If the chunk is genuinely content-free (a figure caption, section header with no body, or page-number fragment), emit the single verdict line: REFUSE <one-line reason>. Do NOT output any DSL.
+4. Use the surrounding context (provided below) to decide which concepts the chunk is asserting vs. assuming. A sentence saying "Applying the Ward identity..." in a chunk where the previous chunk DEFINES the Ward identity is a `background` role; in a chunk where no prior context exists, it's a `background` role with Ld.
+
+CONFIDENCE:
+On the LAST line, emit `CONFIDENCE: <0.00-1.00>` reflecting how confident you are that you've correctly identified the chunk's concepts. 1.00 = fully confident, 0.50 = partial understanding, 0.00 = cannot make sense of it.
+
+WORKED EXAMPLE — DENSE RE-TAG:
+
+Chunk text:
+[1] The action principle requires that the physical path extremizes the action S = ∫ L dt.
+[2] Applying the Euler-Lagrange equations to this Lagrangian gives the equations of motion.
+[3] For scalar fields, these reduce to the Klein-Gordon equation.
+
+Context (previous chunk defined `lagrangian`; next chunk proves a result about `equations_of_motion`):
+
+Output:
+1 action_principle definition Ld
+1 physical_path background Ld
+1 action_integral definition Ld
+2 euler_lagrange_equations result Lv
+2 equations_of_motion definition
+3 scalar_fields background Ld
+3 klein_gordon_equation definition Ld
+CONFIDENCE: 0.92
+
+WORKED EXAMPLE — CONTENT-FREE:
+
+Chunk text:
+[1] FIG. 3.
+
+Output:
+REFUSE figure caption with no semantic content
+CONFIDENCE: 1.00
+
+CONTEXT YOU HAVE:
+- The full chunk text with sentence numbering
+- Full page text (where this chunk lives)
+- 3 chunks BEFORE on the same page
+- 3 chunks AFTER on the same page
+- The book's surface metadata (title, author, top concepts)
+- For Level 2+ escalation: the book's top-10 most-connected chunks (load-bearing concepts)
+
+Do not add new sentences. Do not rewrite the chunk text. Tag only. Output DSL lines followed by CONFIDENCE, or the REFUSE verdict. No extra prose.

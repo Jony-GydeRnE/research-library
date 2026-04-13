@@ -75,6 +75,14 @@ const bookSchema = new mongoose.Schema({
   // Populated either at upload time (?linkedBookId=...) or later
   // via the "Link to book" kebab action on a notes-kind book.
   linkedBookIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Book' }],
+
+  // ─── Quality sweep bookkeeping (2026-04-12) ────────────
+  qualitySweepAt: { type: Date, default: null },
+  qualitySweepVersion: { type: Number, default: 0 },
+  // Concept tags the canonical-definition lookup couldn't
+  // resolve during Pattern 1 / Pattern 3 repairs. This is the
+  // crawler's target queue: "ingest a paper that defines these".
+  missingDefinitions: { type: [String], default: [] },
 });
 
 bookSchema.index({ arxivId: 1 });

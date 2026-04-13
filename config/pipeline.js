@@ -95,6 +95,40 @@ module.exports = {
   CHAT_STREAMING: true,
   CHAT_MAX_HISTORY: 20,
 
+  // ─── QUALITY SWEEP (post-ingestion metadata repair) ─────────
+  // Surgically repairs bad chunks/spans in place using Opus
+  // with escalating context. Never re-runs vision, never asks
+  // the user to re-upload. See reports/2026-04-12/quality-sweep-spec.md.
+  QUALITY_SWEEP_ENABLED: process.env.QUALITY_SWEEP_ENABLED !== '0',
+  QUALITY_SWEEP_VERSION: parseInt(process.env.QUALITY_SWEEP_VERSION, 10) || 1,
+  QUALITY_SWEEP_MODEL: process.env.QUALITY_SWEEP_MODEL || 'claude-opus-4-6',
+  QUALITY_SWEEP_BATCH_SIZE: parseInt(process.env.QUALITY_SWEEP_BATCH_SIZE, 10) || 10,
+  QUALITY_SWEEP_MAX_ESCALATION: 3,                    // stop at Level 3
+  // Auto-merge threshold for Pattern 2 (raised from 0.6 to
+  // 0.85 per the review — merges are the highest-risk op).
+  QUALITY_SWEEP_AUTO_MERGE_THRESHOLD: 0.85,
+  // Anything in [QUEUE_THRESHOLD, AUTO_MERGE_THRESHOLD) goes
+  // to the QualitySweepReview collection for manual decision.
+  QUALITY_SWEEP_REVIEW_THRESHOLD: 0.60,
+  QUALITY_SWEEP_TOKEN_BUDGET_PER_BOOK: 200_000,       // hard cap, ~$3/book
+  QUALITY_SWEEP_COST_WARN_PER_BOOK_USD: 5,            // soft warning ceiling
+  // Opus pricing (approx, update when Anthropic changes it).
+  // Used only for local cost estimates in the stats row —
+  // real billing comes from the API invoice.
+  QUALITY_SWEEP_OPUS_INPUT_USD_PER_MT: 15,
+  QUALITY_SWEEP_OPUS_OUTPUT_USD_PER_MT: 75,
+
+  PATTERN_1_ENABLED: true,
+  PATTERN_2_ENABLED: true,
+  PATTERN_3_ENABLED: true,
+
+  // Pattern 1: dense 1-span chunk decomposition.
+  PATTERN_1_MIN_TAGS: 3,
+  PATTERN_1_MIN_WORDS: 25,
+
+  // Pattern 3: isolated nodes (no tags, no edges).
+  PATTERN_3_MIN_WORDS: 10,
+
   // ─── AGENT (Phase A — graph tools for chat) ──────────────────
   // Master toggle for tool-use in chat. Default OFF so regular
   // chat behavior is unchanged until we've validated the state

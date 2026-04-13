@@ -43,6 +43,25 @@ const spanSchema = new mongoose.Schema({
   endOffset: Number,
 
   embedding: [Number],
+
+  // ─── Quality sweep bookkeeping (2026-04-12) ────────────
+  // Same shape as Chunk.quality* fields. 'replaced' means
+  // this span was decomposed into multiple new spans by
+  // Pattern 1; readers should resolveSpanId() through
+  // replacedBy[] to reach a canonical replacement.
+  qualitySweepAt: { type: Date, default: null },
+  qualitySweepVersion: { type: Number, default: 0 },
+  qualityRepairStatus: {
+    type: String,
+    enum: ['untouched', 'repaired', 'replaced', 'error'],
+    default: 'untouched',
+  },
+  replacedBy: {
+    type: [mongoose.Schema.Types.ObjectId],
+    ref: 'Span',
+    default: [],
+  },
+
   createdAt: { type: Date, default: Date.now },
 });
 

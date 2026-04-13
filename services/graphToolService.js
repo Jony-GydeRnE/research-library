@@ -90,6 +90,74 @@ async function embedQueryCached(queryText, session) {
   return vec;
 }
 
+// ─── resolveSpanId / resolveChunkId — dangling-reference fix ──
+//
+// The quality sweep repairs bad chunks/spans by writing NEW
+// documents and marking old ones with qualityRepairStatus=
+// 'replaced' (Span, Pattern 1) or 'merged' (Chunk, Pattern 2).
+// Existing Edge documents may still reference the old ids.
+//
+// Rather than rewriting every edge in the DB, the read path
+// transparently redirects through these utilities. Every
+// consumer that renders or traverses an id (chunks view,
+// follow_edges, read_chunk, funnel on edge creation) calls
+// resolveSpanId / resolveChunkId first.
+//
+// Both functions are bounded: max depth 8, cycle-guarded,
+// fall back to the original id on any error. Better to render
+// a deprecated node than to render nothing.
+const RESOLVE_MAX_DEPTH = 8;
+
+async function resolveSpanId(spanId) {
+  if (!spanId) return spanId;
+  let current = String(spanId);
+  const seen = new Set();
+  for (let depth = 0; depth < RESOLVE_MAX_DEPTH; depth++) {
+    if (seen.has(current)) {
+      console.warn('[graphToolService.resolveSpanId] cycle detected at', current);
+      return spanId;
+    }
+    seen.add(current);
+    try {
+      const s = await Span.findById(current).select('qualityRepairStatus replacedBy').lean();
+      if (!s) return current; // span missing — keep current
+      if (s.qualityRepairStatus !== 'replaced') return current;
+      if (!Array.isArray(s.replacedBy) || s.replacedBy.length === 0) return current;
+      // Pick the first replacement — it's the earliest
+      // sentenceStart by the way Pattern 1 writes them.
+      current = String(s.replacedBy[0]);
+    } catch (err) {
+      console.warn('[graphToolService.resolveSpanId]', err.message);
+      return spanId;
+    }
+  }
+  return current;
+}
+
+async function resolveChunkId(chunkId) {
+  if (!chunkId) return chunkId;
+  let current = String(chunkId);
+  const seen = new Set();
+  for (let depth = 0; depth < RESOLVE_MAX_DEPTH; depth++) {
+    if (seen.has(current)) {
+      console.warn('[graphToolService.resolveChunkId] cycle detected at', current);
+      return chunkId;
+    }
+    seen.add(current);
+    try {
+      const c = await Chunk.findById(current).select('qualityRepairStatus mergedInto').lean();
+      if (!c) return current;
+      if (c.qualityRepairStatus !== 'merged') return current;
+      if (!c.mergedInto) return current;
+      current = String(c.mergedInto);
+    } catch (err) {
+      console.warn('[graphToolService.resolveChunkId]', err.message);
+      return chunkId;
+    }
+  }
+  return current;
+}
+
 // ─── Module-level chunk-embedding cache ────────────────────────
 // The first search_chunks call loads every chunk's embedding into
 // memory (~6K chunks × 1536 floats × 8B ≈ 75 MB). Subsequent calls
@@ -566,4 +634,7 @@ module.exports = {
   verify_quote,
   confidenceWeight,
   invalidateChunkCache,
+  // Dangling-reference resolution (quality sweep):
+  resolveSpanId,
+  resolveChunkId,
 };

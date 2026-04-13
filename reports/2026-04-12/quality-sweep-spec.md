@@ -69,7 +69,7 @@ The chunker's new anaphor-merge rule (2026-04-12) catches many of these at inges
 2. Call Opus with the **merge-or-disambiguate prompt** (new file: `prompts/repair-anaphor.txt`). Prompt asks Opus to decide:
    - **MERGE**: if the chunk is a continuation of its predecessor, return the merged span list for the combined chunk. Opus also identifies what the pronoun refers to.
    - **DISAMBIGUATE**: if the chunk is NOT a continuation, return a clarification — the pronoun's referent as a new contextTag (e.g., add `novel_perspectives_bcfw_zeros` as a tag so the chunk is no longer anchored only to a dangling pronoun).
-3. On **MERGE**: create a new Chunk document with the combined spans. Mark the two source chunks as `qualityRepairStatus: 'merged'`, `mergedInto: newChunkId`. Any existing edges referencing either old chunk get a new parallel edge to the merged chunk (old edges stay for backwards compat; the new edges are the canonical ones).
+3. On **MERGE**: **the merge confidence must be ≥ 0.85** (raised from the original 0.6). Merges permanently combine two chunks — the highest-risk operation in the sweep — so the auto-threshold is strict. If confidence is 0.6-0.85, the merge is queued into a new `QualitySweepReview` collection for manual review (visible in the stats modal as "Uncertain merges awaiting review — N pending"). Below 0.6, mark uncertain and skip. On auto-accepted merges, create a new Chunk document with the combined spans. Mark the two source chunks as `qualityRepairStatus: 'merged'`, `mergedInto: newChunkId`. Any existing edges referencing either old chunk get a new parallel edge to the merged chunk (old edges stay for backwards compat; the new edges are the canonical ones).
 4. On **DISAMBIGUATE**: update the chunk's spans with the new tags Opus produced. The chunk ID stays the same. Existing edges stay.
 5. Mark the chunk (or merged chunk) `qualitySweepAt: now`, `qualitySweepVersion: N`, `qualityRepairApplied: ['p2-merge']` or `['p2-disambiguate']`.
 
@@ -274,9 +274,38 @@ error                 String (if failed)
 
 The stats modal reads from this collection to show "Quality sweep: 23/340 chunks reviewed, 12 repaired, $0.14 spent".
 
-### 5.3 No deletions, ever
+### 5.3 No deletions, ever — and `resolveSpanId` / `resolveChunkId` utilities
 
 The sweep **never deletes** a span, chunk, or edge. It creates new documents and marks old ones with status. This makes every repair a pure add-only operation that's safe to roll back by querying `qualitySweepVersion` and reverting affected docs. Full audit trail.
+
+**But this introduces a dangling-reference problem.** When Pattern 1 decomposes span X into spans X1-X5 and marks X as `qualityRepairStatus: 'replaced'`, any existing Edge with `fromSpanId: X` is now pointing at a deprecated span. Same issue for Pattern 2 merges — edges pointing at the pre-merge chunks should resolve to the merged chunk. Without a resolution convention, the chunks view would silently render broken edges.
+
+**The fix is two small utility functions in `services/graphToolService.js`:**
+
+```
+resolveSpanId(spanId) → canonical spanId
+  If span.qualityRepairStatus is 'replaced' and span.replacedBy is
+  non-empty, return the FIRST replacement span id (the one with
+  the earliest sentenceStart, which is the most likely semantic
+  continuation). Walk the replacedBy chain recursively with a
+  cycle guard and a depth cap of 8. On any error, return the
+  original spanId unchanged (better to render a deprecated span
+  than nothing).
+
+resolveChunkId(chunkId) → canonical chunkId
+  If chunk.qualityRepairStatus is 'merged' and chunk.mergedInto
+  is set, return chunk.mergedInto. Walk the chain recursively
+  with the same cycle guard. On any error, return the original.
+```
+
+**Where this is used.**
+- `services/chunkViewService.js getPageChunkView` — before rendering edges for a span, resolve both ends through these utilities and prefer the canonical target. Old Edge documents with `fromSpanId=X` still exist but display points at `resolveSpanId(X)`.
+- `services/graphToolService.js follow_edges` and `read_chunk` — after fetching an edge or chunk, resolve the id so the agent always sees the canonical node.
+- `services/funnelService.js` — when writing new edges, always call `resolveChunkId` / `resolveSpanId` on the target to avoid re-creating dangling references.
+
+**Non-goals.** We do NOT rewrite old Edge documents to point at the new ids. The old edges stay, just transparently redirected at read time. This preserves full audit trail ("this edge was originally attributed to span X before it was decomposed") while making the UI and agent loop see only the canonical nodes. A future compaction job could later rewrite old edges in-place if the fragmentation becomes a performance problem, but at current scale it's fine.
+
+**Cycle guard.** Both functions use a `seen: Set` parameter (or closure) and a max-depth of 8 to prevent infinite loops from buggy replacedBy chains. If a cycle is detected, the function logs a warning and returns the originally-passed id.
 
 ---
 
@@ -496,4 +525,46 @@ This is also what Phase E of the vision doc (Subject Tutors) will be doing at a 
 
 ---
 
-*End of spec. No code yet. Answer the 12 open questions in §12, review the repair strategies in §1-4, and I'll implement.*
+---
+
+## 14. Decisions locked (2026-04-12 evening)
+
+All 12 open questions are answered. Two structural modifications adopted.
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Cross-page merges? | **Yes** — add `crossesPages` nullable field. Unrepaired orphans are worse than cross-page chunks. |
+| 2 | Auto-trigger vs manual-only | **Manual-only for v1.** Build a CLI / kebab trigger. Flip to automatic after confirming the sweep works on at least one book. |
+| 3 | Version bump policy | **Explicit command only** (`scripts/sweep-book.js --force-version`). Automatic re-sweep on config push is chaotic during active development. |
+| 4 | Kebab label | **"Improve metadata"** (not "Run quality sweep") |
+| 5 | Budget warning threshold | **$5/book** — pause and confirm above this. Configurable. |
+| 6 | Pattern 1: re-run chunker | **Yes** — chunker is the single source of truth for grouping. |
+| 7 | Pattern 3 "tagged but no edges" | **Yes, distinct stats bucket** (`pattern3RetaggedNoEdges`). It's crawler target data. |
+| 8 | Opus batch parallelism | **Sequential within batch** for v1. Parallel adds rate-limit complexity. |
+
+**Modification A — Auto-merge threshold raised from 0.6 to 0.85.**
+Pattern 2 merges are the highest-risk operation. A false merge corrupts two chunks at once. New thresholds:
+- `confidence ≥ 0.85` → auto-merge
+- `0.6 ≤ confidence < 0.85` → enqueue to `QualitySweepReview` collection for manual review; show count in stats modal
+- `confidence < 0.6` → mark `pattern-2-uncertain`, skip
+
+**Modification B — `resolveSpanId` / `resolveChunkId` utilities.**
+Added to §5.3. Without these, Pattern 1 decomposition silently breaks existing edges that point at the deprecated span. The utilities live in `services/graphToolService.js` and are called from `chunkViewService`, `follow_edges`, `read_chunk`, and `funnelService` edge creation. Old edges stay in the DB (full audit), read path transparently redirects to canonical ids.
+
+**Build order (CC).**
+1. Spec updates — done (this section + §1 Pattern 2 + §5.3).
+2. Schema additions to `Chunk`, `Span`, `Book` + new `QualitySweepJob`, `QualitySweepReview` collections.
+3. Config additions to `pipeline.js`.
+4. `resolveSpanId` / `resolveChunkId` in `graphToolService.js` (wire before any repair runs so it's ready when the repair writes deprecated flags).
+5. Three prompt files (`repair-decompose.txt`, `repair-anaphor.txt`, `repair-retag.txt`).
+6. `services/qualitySweepService.js` — detectors, repair functions per pattern, escalation loop.
+7. `scripts/sweep-book.js` — manual CLI trigger for one book or one chunk.
+8. Live validation: run detectors against Rodina (no repairs), inspect candidate list. Then run ONE repair per pattern on a known-bad chunk, inspect output, iterate prompts.
+9. Full sweep on Rodina after prompts are tuned.
+10. Wire the kebab UI + stats modal block (deferred — ship CLI first).
+
+Agenda auto-trigger is explicitly deferred to v2 per decision #2. The CLI path is enough to prove the loop works on real data.
+
+---
+
+*End of spec. Decisions locked. CC is cleared to build in the order above.*

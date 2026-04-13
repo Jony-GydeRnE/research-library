@@ -1,0 +1,86 @@
+You are repairing an orphaned chunk in an academic-text knowledge graph. The chunk starts with a pronoun or demonstrative ("these", "this", "that", "thus", "hence", ...) whose antecedent is elsewhere. Without resolving the reference, the chunk is semantically incomplete and cannot participate in the edge graph correctly.
+
+YOUR JOB: decide between three verdicts and output exactly one structured block.
+
+VERDICT 1 — MERGE
+The orphan chunk is a direct continuation of the previous chunk. The split between them is a fragmentation error — they should be one chunk. Emit merged span lines covering both chunks' content.
+
+VERDICT 2 — DISAMBIGUATE
+The orphan chunk is NOT a continuation (its pronoun refers to something further back, or a concept rather than a specific prior chunk). Add one or more new concept tags to the orphan that make its subject explicit, so the edge graph can anchor to it without the pronoun dependency.
+
+VERDICT 3 — UNCERTAIN
+You cannot decide with confidence. The repair loop will either escalate context or queue the chunk for manual review.
+
+OUTPUT FORMAT — exactly one block, no prose outside it:
+
+DECISION: MERGE | DISAMBIGUATE | UNCERTAIN
+CONFIDENCE: 0.00-1.00
+REASONING: <one sentence explaining the decision>
+---
+(For MERGE: emit DSL lines for the merged chunk. Use the original sentence ranges — the prev chunk's range for prev's content, the orphan's range for orphan's content.)
+(For DISAMBIGUATE: emit NEW DSL lines to APPEND to the orphan chunk. Include one line per clarifying concept tag, using the orphan's existing sentence range.)
+(For UNCERTAIN: leave this section empty.)
+
+CONFIDENCE GUIDANCE:
+- 0.95+: the merge/disambiguation is obvious. Previous chunk ends mid-thought and the orphan continues it. You are sure.
+- 0.85-0.95: confident but not airtight.
+- 0.60-0.85: plausible but debatable. Repair loop will queue for manual review.
+- 0.00-0.60: do not force a decision. Mark UNCERTAIN.
+
+Do NOT auto-merge below 0.85 — the repair loop enforces the threshold. Be honest about uncertainty.
+
+DSL FORMAT (same as original span generation):
+SENTENCE_RANGE CONTEXT_TAGS ROLE_TAG [SEARCH_CLASS]
+
+WORKED EXAMPLE — CLEAR MERGE:
+
+Prev chunk text:
+  These novel perspectives have revealed surprising structures and numerous additional simplifications that are completely hidden by the Lagrangian formalism.
+
+Orphan chunk text:
+  In particular, the discovery of hidden zeros in tree amplitudes has exposed a new layer of structure.
+
+Output:
+DECISION: MERGE
+CONFIDENCE: 0.92
+REASONING: The orphan's "In particular" directly extends the prev chunk's claim about novel perspectives revealing structure.
+---
+1-2 novel_perspectives hidden_zeros background
+3 hidden_zeros_tree_amplitudes result Lv
+
+WORKED EXAMPLE — CLEAR DISAMBIGUATE:
+
+Prev chunk text:
+  The theorem is proved by induction on the number of particles.
+
+Orphan chunk text:
+  These techniques extend naturally to loop-level amplitudes.
+
+Output:
+DECISION: DISAMBIGUATE
+CONFIDENCE: 0.88
+REASONING: "These techniques" refers to induction-based proof strategy, not specifically the prior theorem. Add an explicit tag.
+---
+4 induction_proof_techniques loop_amplitudes background Lv
+
+WORKED EXAMPLE — UNCERTAIN:
+
+Prev chunk text:
+  Proposition 3.1 establishes the key inequality.
+
+Orphan chunk text:
+  Thus we have a complete proof of the main result.
+
+Output:
+DECISION: UNCERTAIN
+CONFIDENCE: 0.45
+REASONING: "Thus" could refer to Prop 3.1 alone or a longer argument chain. Need more context.
+---
+
+CONTEXT YOU HAVE:
+- The PREVIOUS chunk on the same page (or the last chunk on the previous page if this orphan is at the top of a page)
+- The ORPHAN chunk (the one starting with the pronoun)
+- The NEXT chunk on the same page
+- The existing concept tags on all three
+
+Output the verdict block only. No extra prose.
