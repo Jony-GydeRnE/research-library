@@ -134,15 +134,16 @@
       wrap.appendChild(el('div', { className: 'cv-detail-empty' }, ['(no edges on this span)']));
       return wrap;
     }
-    // Build a /reader URL for an edge that lands in SCROLL
-    // mode with the target chunk's text preview passed as a
-    // ?highlight=... query parameter. The reader's existing
-    // applyHighlightToVisible() machinery picks up the query
-    // parameter, finds the matching text node in the scroll
-    // content, wraps it in a citation-callout-box, and scrolls
-    // it into view. Strips LaTeX delimiters from the preview
-    // so the whitespace/case-normalized matcher can find the
-    // text. URL-length-safe: capped at 200 chars.
+    // Build a /reader URL for an edge. Lands in PAGES mode
+    // (single-page fetch, <1s) at the exact target page so
+    // the user sees the cited passage immediately instead of
+    // waiting for the full book to stream in scroll mode. The
+    // ?highlight=... query parameter is picked up by the
+    // reader's applyHighlightToVisible() machinery which
+    // wraps the matching text node in a citation-callout-box
+    // and scrolls it into view. Strips LaTeX delimiters from
+    // the preview so the whitespace/case-normalized matcher
+    // can find the text. URL-length-safe: capped at 200 chars.
     function readerUrlFor(e) {
       if (!e.targetBookId || !e.targetPage) return '#';
       const q = (e.targetPreview || '')
@@ -154,14 +155,15 @@
         .slice(0, 200);
       const params = new URLSearchParams();
       if (q) params.set('highlight', q);
-      params.set('mode', 'scroll');
+      params.set('mode', 'pages');
       return `/reader/${e.targetBookId}/page/${e.targetPage}?${params.toString()}`;
     }
 
     for (const e of edges) {
+      const url = readerUrlFor(e);
       const row = el('a', {
         className: 'cv-edge',
-        href: readerUrlFor(e),
+        href: url,
         target: '_blank',
         title: `${e.relationship} · conf ${e.confidence} (${confPct(e.confidence)})${e.method ? ' · ' + e.method : ''}`,
       }, [
@@ -176,6 +178,23 @@
         ]),
         el('span', { className: 'cv-edge-preview' }, [e.targetPreview || '']),
       ]);
+      // Intercept the click: if the split-reader global is
+      // available on this page, open the target in the split
+      // iframe (instant, no tab, stays in the current reader
+      // context). Otherwise fall back to the plain link —
+      // cmd/ctrl-click and middle-click still open in a new
+      // tab as usual because the handler bails on modified
+      // clicks.
+      row.addEventListener('click', function (ev) {
+        if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button !== 0) return;
+        if (typeof window.__openSplitReader !== 'function') return;
+        ev.preventDefault();
+        if (window.__isSplitReaderOpen && window.__isSplitReaderOpen()) {
+          window.__updateSplitReader(url);
+        } else {
+          window.__openSplitReader(url);
+        }
+      });
       wrap.appendChild(row);
     }
     return wrap;
@@ -545,6 +564,14 @@
 
       const anchor = document.getElementById(`cv-page-${anchorPageNumber}`);
       if (anchor) anchor.scrollIntoView({ behavior: 'auto', block: 'start' });
+
+      // Scroll-spy: dispatch a `cv-page-change` event on the
+      // container as the user scrolls past page sections. The
+      // reader's setMode() uses this to keep R.currentPage in
+      // sync so switching modes never drops the user back to
+      // page 1. Activation zone matches the scroll-spy in
+      // reader.js: top 30% of viewport.
+      setupChunkScrollSpy(container);
     } catch (err) {
       console.error('chunks-view load failed:', err);
       container.innerHTML = '<div class="cv-error">Failed to load chunks: ' + (err.message || err) + '</div>';
@@ -554,6 +581,30 @@
   function jumpTo(pageNumber) {
     const anchor = document.getElementById(`cv-page-${pageNumber}`);
     if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  let _cvSpy = null;
+  function setupChunkScrollSpy(container) {
+    if (_cvSpy) { _cvSpy.disconnect(); _cvSpy = null; }
+    const sections = container.querySelectorAll('.cv-page-section');
+    if (!sections.length || !('IntersectionObserver' in window)) return;
+    const scrollRoot = container.closest('.reader-main') || null;
+    _cvSpy = new IntersectionObserver(function (entries) {
+      const hits = entries.filter(e => e.isIntersecting);
+      if (!hits.length) return;
+      hits.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+      const chosen = hits[hits.length - 1].target;
+      const pg = parseInt(chosen.getAttribute('data-page') || '', 10);
+      if (!pg) return;
+      container.dispatchEvent(new CustomEvent('cv-page-change', {
+        detail: { pageNumber: pg }, bubbles: true,
+      }));
+    }, {
+      root: scrollRoot,
+      rootMargin: '0px 0px -70% 0px',
+      threshold: 0,
+    });
+    sections.forEach(s => _cvSpy.observe(s));
   }
 
   window.GydeChunksView = { load, jumpTo, STATE };

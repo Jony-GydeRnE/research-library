@@ -56,9 +56,20 @@
       // Chunks / Scroll position leaves Pages at the wrong
       // offset and looks like "I went back to the start").
       if (readerMain) readerMain.scrollTop = 0;
+      // If the currently-mounted content is for a different
+      // page than R.currentPage (e.g. the user scrolled through
+      // chunks/scroll and landed on a new page, then switched
+      // to pages), pull in the right page. Without this the
+      // mode switch silently shows whatever page was last
+      // explicitly loaded via goToPage, usually page 1.
+      if (content.getAttribute('data-page') !== String(R.currentPage)) {
+        goToPage(R.currentPage);
+      }
       // When returning to pages mode, re-apply the citation highlight if any.
       applyHighlightToVisible();
       updateActiveSectionForPage(R.currentPage);
+      currentPageNum.textContent = R.currentPage;
+      pageJump.value = R.currentPage;
     } else if (mode === 'scroll') {
       modeScrollBtn.classList.add('active');
       scrollContent.style.display = '';
@@ -83,6 +94,8 @@
       pageIndicator.style.display = '';
       headerPrevBtn.style.display = '';
       headerNextBtn.style.display = '';
+      currentPageNum.textContent = R.currentPage;
+      pageJump.value = R.currentPage;
     } else if (mode === 'chunks') {
       modeChunksBtn && modeChunksBtn.classList.add('active');
       if (chunksContent) chunksContent.style.display = '';
@@ -110,6 +123,27 @@
   function updateArrowState() {
     headerPrevBtn.disabled = R.currentPage <= 1;
     headerNextBtn.disabled = R.currentPage >= R.totalPages;
+  }
+
+  // When the chunks-view scrolls past a new page section, it
+  // dispatches a 'cv-page-change' event so we can mirror
+  // R.currentPage. Without this, switching from chunks → any
+  // other mode always dropped back to whatever page was last
+  // explicitly loaded (usually page 1), which is the bug the
+  // user reported: "I'm on chunk 14, I hit scroll, it sends
+  // me to page 1". Listen on chunksContent so it works
+  // regardless of which mode is active when the event fires.
+  if (chunksContent) {
+    chunksContent.addEventListener('cv-page-change', function (ev) {
+      const pg = ev && ev.detail && ev.detail.pageNumber;
+      if (!pg) return;
+      R.currentPage = pg;
+      currentPageNum.textContent = pg;
+      pageJump.value = pg;
+      saveBookmark(pg);
+      updateActiveSectionForPage(pg);
+      updateArrowState();
+    });
   }
 
   modePagesBtn.addEventListener('click', () => setMode('pages'));
@@ -146,14 +180,26 @@
       scrollContent.appendChild(s);
     });
 
+    // Jump to whatever page we were on BEFORE scroll-loaded
+    // starts — otherwise the first-time entry always lands at
+    // page 1 even if the user was mid-book. Called both
+    // immediately and after MathJax to survive layout shifts.
+    function jumpToCurrent() {
+      const target = document.getElementById(`scroll-page-${R.currentPage}`);
+      if (target) target.scrollIntoView({ behavior: 'auto', block: 'start' });
+    }
+    jumpToCurrent();
+
     if (window.MathJax && MathJax.typesetPromise) {
       MathJax.typesetPromise([scrollContent])
         .then(() => {
           fixMathJaxErrors();
+          jumpToCurrent();
           applyHighlightToVisible();
           setupScrollSpy();
         })
         .catch(() => {
+          jumpToCurrent();
           applyHighlightToVisible();
           setupScrollSpy();
         });
@@ -202,6 +248,7 @@
 
       if (mode === 'pages') {
         content.innerHTML = data.htmlContent || '<div class="page-content"><p class="empty-page">No content.</p></div>';
+        content.setAttribute('data-page', String(num));
         if (window.MathJax && MathJax.typesetPromise) {
           MathJax.typesetPromise([content]).then(() => fixMathJaxErrors()).catch(() => {});
         }
