@@ -24,6 +24,8 @@ const Book = require('../models/Book');
 const Page = require('../models/Page');
 const { convertPageWithVision } = require('../services/visionService');
 const { detectAndCropFigures } = require('../services/figureService');
+const { extractPageTextLines } = require('../services/pdfService');
+const { getPdfBuffer } = require('../services/s3Service');
 
 const IMAGE_DIR = path.join(__dirname, '..', 'uploads', 'images');
 
@@ -87,6 +89,22 @@ async function main() {
   console.error(`[info] book: ${book.title}`);
   console.error(`[info] pages to reprocess: ${pageNums.join(',')}`);
 
+  // Fetch the PDF buffer once so we can extract per-line text
+  // coordinates for any page on demand. Used by figureService to
+  // derive figure vertical bounds from anchor text instead of
+  // vision-estimated BOTTOM% percentages.
+  let pdfBuffer = null;
+  try {
+    if (book.s3Key) {
+      pdfBuffer = await getPdfBuffer(book.s3Key);
+      console.error(`[info] loaded pdf buffer (${pdfBuffer.length} bytes)`);
+    } else {
+      console.warn('[warn] book has no s3Key — anchor matching disabled for this run');
+    }
+  } catch (err) {
+    console.warn(`[warn] pdf fetch failed (${err.message}) — anchor matching disabled`);
+  }
+
   const kind = book.kind || 'paper';
   let ok = 0, failed = 0;
   const t0 = Date.now();
@@ -105,7 +123,20 @@ async function main() {
       // Extract bbox attrs from the returned HTML before the crop
       // pass so we can log whether the model actually emitted them.
       const bboxMatches = html.match(/data-bbox="([^"]+)"/g) || [];
-      html = await detectAndCropFigures(html, bookId, pageNum);
+
+      // Pull raw text-item coordinates for this page so
+      // figureService can derive bottom edges from the caption
+      // anchor (column-filtered per figure).
+      let pageText = null;
+      if (pdfBuffer) {
+        try {
+          pageText = await extractPageTextLines(pdfBuffer, pageNum);
+        } catch (lineErr) {
+          console.warn(`  [p${pageNum}] text-item extract failed: ${lineErr.message}`);
+        }
+      }
+
+      html = await detectAndCropFigures(html, bookId, pageNum, pageText);
 
       const plainText = htmlToPlainText(html);
       const h2 = html.match(/<h2[^>]*>([^<]+)<\/h2>/);

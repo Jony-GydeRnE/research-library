@@ -309,4 +309,90 @@ function buildTextFromItems(items) {
   return output.join('\n');
 }
 
-module.exports = { extractPages };
+/**
+ * Extract per-line text + PDF coordinates for ONE page of a PDF. Used
+ * by figureService to compute figure bbox vertical edges from anchor
+ * text (the last line above the figure and the first line of the
+ * figcaption), instead of relying on the vision model to estimate
+ * BOTTOM% directly. That estimation was unreliable — the model
+ * consistently included caption + body text in the crop.
+ *
+ * Returns:
+ *   {
+ *     pageNumber,
+ *     pdfPageWidth,
+ *     pdfPageHeight,
+ *     lines: [{ text, y, h, xMin, xMax }]  // sorted top-to-bottom (PDF y descending)
+ *   }
+ *
+ * Each line is the concatenation of pdfjs text items that share the
+ * same baseline Y (within ±2pt). Text is returned raw — the caller
+ * normalizes for matching.
+ *
+ * pdfjs-dist is loaded via the legacy ESM path (same pattern as
+ * services/imageService.js).
+ */
+async function extractPageTextLines(pdfBuffer, pageNumber) {
+  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) });
+  const pdf = await loadingTask.promise;
+  if (pageNumber < 1 || pageNumber > pdf.numPages) {
+    await pdf.destroy();
+    throw new Error(`pageNumber ${pageNumber} out of range (1..${pdf.numPages})`);
+  }
+  const page = await pdf.getPage(pageNumber);
+  const viewport = page.getViewport({ scale: 1 });
+  const pdfPageWidth = viewport.width;
+  const pdfPageHeight = viewport.height;
+
+  const textContent = await page.getTextContent();
+  const items = textContent.items
+    .map((it) => ({
+      str: it.str || '',
+      x: it.transform[4],
+      y: it.transform[5],
+      h: Math.abs(it.transform[0]) || Math.abs(it.transform[3]) || 12,
+      w: it.width || 0,
+    }))
+    .filter((it) => it.str && it.str.trim());
+
+  // Return raw items. Line grouping has to be done DOWNSTREAM with
+  // knowledge of the target column's x-range, otherwise two-column
+  // academic papers get their left-column and right-column text
+  // items concatenated into single lines (because they share the
+  // same baseline Y). figureService uses the vision-model's bbox
+  // LEFT/RIGHT as the column filter before grouping.
+  await pdf.destroy();
+  return { pageNumber, pdfPageWidth, pdfPageHeight, items };
+}
+
+// Filter raw pdfjs text items to a given X range (in PDF coords)
+// and group the survivors into lines by baseline Y (±2pt). Returns
+// lines sorted top-to-bottom (PDF y descending).
+function groupItemsIntoLines(items, { xMin = -Infinity, xMax = Infinity } = {}) {
+  const filtered = items.filter((it) => {
+    const itemMidX = it.x + it.w / 2;
+    return itemMidX >= xMin && itemMidX <= xMax;
+  });
+  filtered.sort((a, b) => b.y - a.y);
+  const lines = [];
+  let cur = null;
+  for (const it of filtered) {
+    if (!cur || Math.abs(cur.y - it.y) > 2) {
+      cur = { items: [it], y: it.y, h: it.h, xMin: it.x, xMax: it.x + it.w };
+      lines.push(cur);
+    } else {
+      cur.items.push(it);
+      cur.h = Math.max(cur.h, it.h);
+      if (it.x < cur.xMin) cur.xMin = it.x;
+      if (it.x + it.w > cur.xMax) cur.xMax = it.x + it.w;
+    }
+  }
+  return lines.map((l) => {
+    const sorted = [...l.items].sort((a, b) => a.x - b.x);
+    const text = sorted.map((i) => i.str).join(' ').replace(/\s+/g, ' ').trim();
+    return { text, y: l.y, h: l.h, xMin: l.xMin, xMax: l.xMax };
+  }).filter((l) => l.text.length > 0);
+}
+
+module.exports = { extractPages, extractPageTextLines, groupItemsIntoLines };
