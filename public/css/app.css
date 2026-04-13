@@ -1164,13 +1164,14 @@ body.chat-split-open .app-main {
   transition: margin-left 0.12s ease;
 }
 
-/* Reader view uses .reader-wrapper instead of .app-main as the flex
-   child beside the app sidebar. Apply the same push rule so the
-   split-reader panel docks cleanly between the collapsed outer sidebar
-   and the outer reader's content, without overlapping either. */
-body.chat-split-open .reader-wrapper {
-  margin-left: var(--chat-split-left, 0px);
-  transition: margin-left 0.12s ease;
+/* Reader view right-dock: the split-reader panel docks to the RIGHT
+   edge of the window so the outer reader's sidebar stays glued to its
+   own content on the left. We push the reader wrapper's right edge
+   inward by the panel width via margin-right. Left margin stays 0 so
+   Rodina's sidebar and Rodina's content stay flush. */
+body.chat-split-open.chat-split-dock-right .reader-wrapper {
+  margin-right: var(--chat-split-right, 0px);
+  transition: margin-right 0.12s ease;
 }
 
 /* ═══════════════════════════════════════════════════

@@ -18,10 +18,20 @@
   var iframe = null;
   var divider = null;
   var isOpen = false;
+  // Dock mode: 'middle' = traditional chat split (panel between sidebar
+  // and chat content — original behavior). 'right' = reader split (panel
+  // docked to the right edge; outer reader content stays flush against
+  // its own sidebar on the left). Auto-detected from the DOM on open:
+  // if the calling page has .reader-wrapper we dock right so Rodina's
+  // sidebar doesn't get sandwiched away from Rodina's content.
+  var dockMode = 'middle';
   // Sidebar state restore-on-close. When open() fires we force-collapse
   // the outer app sidebar so both readers have equal real estate and no
   // sidebar bleeds into the middle of the layout. The user's original
   // collapsed-vs-open preference is captured here and restored on close().
+  // In reader context we DO NOT force-collapse the outer sidebar —
+  // right-docking means Rodina's sidebar stays next to Rodina's content
+  // as intended.
   var priorSidebarCollapsed = null;
 
   // Fraction of the non-sidebar width occupied by the reader panel.
@@ -116,21 +126,43 @@
     var sbw = getSidebarWidth();
     var available = Math.max(0, window.innerWidth - sbw);
     var panelWidth = Math.round(ratio * available);
-    panel.style.left = sbw + 'px';
-    panel.style.width = panelWidth + 'px';
-    // Divider sits at the right edge of the panel. Make the visible line
-    // thin but the hit area wide (see CSS ::before).
-    divider.style.left = (sbw + panelWidth - 3) + 'px';
-    // Push the chat view right by exactly the reader panel's width.
-    // (.app-main is a flex child after .app-sidebar — it already starts at
-    // the sidebar's right edge, so we only add the panel width as margin.)
-    document.body.style.setProperty('--chat-split-left', panelWidth + 'px');
+    if (dockMode === 'right') {
+      // Panel docks against the right edge of the window. Outer
+      // content (reader-wrapper) keeps its native left flush against
+      // the sidebar; we push its right edge in by the panel width via
+      // --chat-split-right.
+      panel.style.left = (window.innerWidth - panelWidth) + 'px';
+      panel.style.right = '0px';
+      panel.style.width = panelWidth + 'px';
+      divider.style.left = (window.innerWidth - panelWidth - 3) + 'px';
+      document.body.style.setProperty('--chat-split-right', panelWidth + 'px');
+      document.body.style.removeProperty('--chat-split-left');
+    } else {
+      // Middle dock — chat context. Panel sits between the app
+      // sidebar and the outer chat content, pushing chat right.
+      panel.style.left = sbw + 'px';
+      panel.style.right = 'auto';
+      panel.style.width = panelWidth + 'px';
+      divider.style.left = (sbw + panelWidth - 3) + 'px';
+      document.body.style.setProperty('--chat-split-left', panelWidth + 'px');
+      document.body.style.removeProperty('--chat-split-right');
+    }
   }
 
   function open(url) {
     ensureCreated();
     isOpen = true;
-    forceOuterSidebarCollapsed();
+    // Auto-detect dock mode: if the calling page has .reader-wrapper
+    // (the reader view), dock the split panel to the RIGHT so the
+    // outer reader's sidebar stays next to its own content. Otherwise
+    // (chat / files-notebook) stay with the legacy middle dock.
+    dockMode = document.querySelector('.reader-wrapper') ? 'right' : 'middle';
+    document.body.classList.toggle('chat-split-dock-right', dockMode === 'right');
+    // In middle-dock (chat) mode we force the outer sidebar collapsed
+    // so the layout stays clean. In right-dock (reader) mode we leave
+    // the outer sidebar alone — the new panel is on the opposite side
+    // so it never bleeds across the sidebar-to-content axis.
+    if (dockMode === 'middle') forceOuterSidebarCollapsed();
     document.body.classList.add('chat-split-open');
     panel.style.display = 'flex';
     divider.style.display = 'block';
@@ -147,10 +179,12 @@
   function close() {
     isOpen = false;
     document.body.classList.remove('chat-split-open');
+    document.body.classList.remove('chat-split-dock-right');
     if (panel) panel.style.display = 'none';
     if (divider) divider.style.display = 'none';
     if (iframe) iframe.src = 'about:blank';
     document.body.style.removeProperty('--chat-split-left');
+    document.body.style.removeProperty('--chat-split-right');
     restoreOuterSidebar();
   }
 
@@ -169,7 +203,15 @@
       if (!dragging) return;
       var sbw = getSidebarWidth();
       var available = Math.max(1, window.innerWidth - sbw);
-      var r = (e.clientX - sbw) / available;
+      var r;
+      if (dockMode === 'right') {
+        // Right-docked: dragging LEFT makes the panel wider. Ratio is
+        // the fraction of available width the panel occupies, so it's
+        // (window.innerWidth - clientX) / available.
+        r = (window.innerWidth - e.clientX) / available;
+      } else {
+        r = (e.clientX - sbw) / available;
+      }
       if (r < 0.25) r = 0.25;
       if (r > 0.8) r = 0.8;
       ratio = r;

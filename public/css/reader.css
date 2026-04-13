@@ -387,9 +387,10 @@
 .toc-link {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.5rem 1.25rem;
+  /* Right padding kept tight and consistent so the page number
+     sits at a fixed column regardless of nesting depth. */
+  padding: 0.5rem 0.85rem 0.5rem 1rem;
   text-decoration: none;
   color: var(--r-text);
   transition: all 0.1s ease;
@@ -414,7 +415,10 @@
 
 .section-link {
   font-size: 0.8rem;
-  padding-left: 2rem;
+  /* Nested level indents only the LEFT side. Keep the right
+     padding the same as .toc-link so section page numbers line
+     up in the same column as chapter page numbers. */
+  padding-left: 1.75rem;
   font-weight: 400;
   color: var(--r-text-muted);
 }
@@ -424,8 +428,12 @@
   color: var(--r-active-text);
 }
 
+/* Title + page number row. The title takes all remaining space
+   and ellipsizes if it can't fit; the page number sticks to the
+   right edge in a fixed-width column so every number lines up. */
 .toc-title {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;              /* required for flex children to shrink */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -434,8 +442,11 @@
 .toc-page {
   font-size: 0.7rem;
   color: var(--r-text-muted);
-  flex-shrink: 0;
+  flex: 0 0 auto;
+  min-width: 1.75rem;
+  text-align: right;
   font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
 }
 
 .toc-sections {
