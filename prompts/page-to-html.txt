@@ -8,12 +8,41 @@ Rules:
 5. Use <h3> for subsection headings (like "Amplitude zeros", "UV/BCFW scaling").
 6. Use <p> for body paragraphs. Join text that flows as one paragraph even if it wraps across lines.
 7. For figures/diagrams, output: <figure class="page-figure" data-bbox="LEFT,TOP,RIGHT,BOTTOM"><figcaption>FIG. N: caption text</figcaption></figure>
-   - LEFT, TOP, RIGHT, BOTTOM are the figure's bounding box as percentages (0–100) of the FULL page image dimensions. LEFT and RIGHT are horizontal edges; TOP and BOTTOM are vertical edges. Example: data-bbox="12.5,18.4,48.7,41.2" means left edge 12.5%, top edge 18.4%, right edge 48.7%, bottom edge 41.2% of the page image.
-   - The bbox must TIGHTLY frame the visual figure content (lines, labels, axes, diagram elements) with approximately 2% padding on each side. Include ONLY the diagram/image area. Do NOT include the caption text, do NOT include body paragraphs above or below, do NOT include section headings.
-   - TWO-COLUMN LAYOUTS: most academic papers are two-column. When a figure lives in ONE column, its LEFT and RIGHT must reflect that one column's horizontal span, NOT the full page width. Do not stretch the bbox across both columns unless the figure actually spans both columns. Typical single-column figure on a two-column page: LEFT≈8%, RIGHT≈48% (left column) or LEFT≈52%, RIGHT≈92% (right column).
-   - The caption text goes inside <figcaption> as usual — it's rendered as text below the image, not inside the crop. Never include caption characters inside the bbox region.
-   - Example: <figure class="page-figure" data-bbox="10.2,22.8,47.5,44.1"><figcaption>FIG. 1: The kinematic mesh organizes...</figcaption></figure>
-   - If you genuinely cannot localize the figure, omit data-bbox entirely — the reader falls back to a link to the original page.
+
+   LEFT, TOP, RIGHT, BOTTOM are percentages (0–100) of the FULL page image. LEFT/RIGHT are horizontal edges; TOP/BOTTOM are vertical edges.
+
+   THE SCISSORS TEST. Imagine cutting the figure out of the page with scissors as if you were physically clipping it for a scrapbook. You cut around the picture ONLY. You do NOT cut around the caption. You do NOT cut around the paragraph that follows the figure. You do NOT cut around equation blocks beneath the figure. The bbox is where those scissors would cut.
+
+   WHAT GOES INSIDE THE BBOX:
+     - Drawn shapes (lines, polygons, circles, arrows, meshes, Feynman diagram vertices/propagators)
+     - Labels that are physically part of the drawing (vertex labels like X_{35}, axis labels, arrow tags, annotations on curves, the "c_{ij}=0" badge sitting inside the mesh, Roman numerals, etc.)
+     - The rectangular frame of the figure itself if it has one
+
+   WHAT IS ALWAYS OUTSIDE THE BBOX — NEVER include any of these inside the crop region, no exceptions:
+     - The "FIG. N: caption text..." caption. It renders as text below the image via the <figcaption> tag. NEVER include the caption text in the bbox. The caption lives BELOW the bottom edge.
+     - Body paragraphs before or after the figure.
+     - Section headings (like "Pole structure and ordered amplitudes").
+     - Equation blocks (including numbered equations like "(26)").
+     - Page numbers, headers, footers.
+
+   FINDING THE BOTTOM EDGE (this is the #1 failure mode — read carefully):
+     1. Scan down the page from the top of the figure.
+     2. Find the LOWEST drawn line, shape, or inline label that is part of the picture. Include the vertical-dots marker (⋮) if it's part of the diagram.
+     3. Put the BOTTOM edge just a hair below that point (~1% of page height).
+     4. If the next thing you see on the page is "FIG. N:" or a capital-letter caption label, your BOTTOM is ALREADY TOO LOW if the caption is inside it. Back it up.
+     5. Rule of thumb: the bottom of the bbox should be ABOVE the word "FIG." — always.
+
+   FINDING THE TOP EDGE:
+     - Put the TOP edge just above the highest drawn line of the figure. If there are vertical dots (⋮) at the top of the figure, include them.
+     - Do NOT include the body paragraph text above the figure.
+
+   TWO-COLUMN LAYOUTS: most academic papers are two-column. When a figure lives in ONE column, its LEFT and RIGHT must reflect that column's span, NOT the full page. Typical ranges on a two-column page: LEFT≈8% RIGHT≈48% (left column), or LEFT≈52% RIGHT≈92% (right column). Do NOT stretch LEFT/RIGHT across both columns unless the figure is a full-width float that actually spans both.
+
+   PADDING: ~1% on each side of the visible figure content. Tight, not loose. If in doubt, err on the side of TIGHTER — missing a thin outer line is much better than swallowing a caption.
+
+   Example: <figure class="page-figure" data-bbox="10.2,22.8,47.5,44.1"><figcaption>FIG. 1: The kinematic mesh organizes...</figcaption></figure>
+
+   If you genuinely cannot localize the figure, omit data-bbox entirely — the reader falls back to a link to the original page.
 8. Do NOT include page numbers, headers, footers, or arXiv identifiers.
 9. Do NOT add any CSS, JavaScript, or wrapper divs.
 10. Do NOT explain or comment — output ONLY the HTML.
