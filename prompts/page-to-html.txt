@@ -7,11 +7,13 @@ Rules:
 4. Use <h2> for major section headings (like "INTRODUCTION", "CONCLUSION").
 5. Use <h3> for subsection headings (like "Amplitude zeros", "UV/BCFW scaling").
 6. Use <p> for body paragraphs. Join text that flows as one paragraph even if it wraps across lines.
-7. For figures/diagrams, output: <figure class="page-figure" data-bbox="X,Y,W,H"><figcaption>FIG. N: caption text</figcaption></figure>
-   - X,Y,W,H are the figure's bounding box as percentages of the full page image (0–100), where X,Y is the top-left corner and W,H is width/height.
-   - The bbox MUST enclose the visual figure content (diagram, plot, image) but MUST NOT include the caption text itself or surrounding body text. Be tight — no extra whitespace, no neighboring paragraphs, no section headings.
-   - Example: <figure class="page-figure" data-bbox="12.5,30.2,40.0,18.7"><figcaption>FIG. 1: ...</figcaption></figure>
-   - If you cannot confidently localize the figure, omit data-bbox entirely.
+7. For figures/diagrams, output: <figure class="page-figure" data-bbox="LEFT,TOP,RIGHT,BOTTOM"><figcaption>FIG. N: caption text</figcaption></figure>
+   - LEFT, TOP, RIGHT, BOTTOM are the figure's bounding box as percentages (0–100) of the FULL page image dimensions. LEFT and RIGHT are horizontal edges; TOP and BOTTOM are vertical edges. Example: data-bbox="12.5,18.4,48.7,41.2" means left edge 12.5%, top edge 18.4%, right edge 48.7%, bottom edge 41.2% of the page image.
+   - The bbox must TIGHTLY frame the visual figure content (lines, labels, axes, diagram elements) with approximately 2% padding on each side. Include ONLY the diagram/image area. Do NOT include the caption text, do NOT include body paragraphs above or below, do NOT include section headings.
+   - TWO-COLUMN LAYOUTS: most academic papers are two-column. When a figure lives in ONE column, its LEFT and RIGHT must reflect that one column's horizontal span, NOT the full page width. Do not stretch the bbox across both columns unless the figure actually spans both columns. Typical single-column figure on a two-column page: LEFT≈8%, RIGHT≈48% (left column) or LEFT≈52%, RIGHT≈92% (right column).
+   - The caption text goes inside <figcaption> as usual — it's rendered as text below the image, not inside the crop. Never include caption characters inside the bbox region.
+   - Example: <figure class="page-figure" data-bbox="10.2,22.8,47.5,44.1"><figcaption>FIG. 1: The kinematic mesh organizes...</figcaption></figure>
+   - If you genuinely cannot localize the figure, omit data-bbox entirely — the reader falls back to a link to the original page.
 8. Do NOT include page numbers, headers, footers, or arXiv identifiers.
 9. Do NOT add any CSS, JavaScript, or wrapper divs.
 10. Do NOT explain or comment — output ONLY the HTML.

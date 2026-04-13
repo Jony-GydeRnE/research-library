@@ -49,15 +49,23 @@ async function detectAndCropFigures(html, bookId, pageNumber) {
       continue;
     }
 
-    const [xPct, yPct, wPct, hPct] = parts;
+    // Format: LEFT,TOP,RIGHT,BOTTOM as percentages of full page image
+    // (0–100). See prompts/page-to-html.txt rule 7. Swap to this
+    // format aligns with how the vision model is instructed to think
+    // about the crop region (four edges rather than top-left + size).
+    let [leftPct, topPct, rightPct, bottomPct] = parts;
+
+    // Sanity: the model occasionally emits left>right or top>bottom
+    // under cognitive pressure — fix silently instead of rejecting.
+    if (rightPct < leftPct) [leftPct, rightPct] = [rightPct, leftPct];
+    if (bottomPct < topPct) [topPct, bottomPct] = [bottomPct, topPct];
 
     // Small safety pad (1% each side) to avoid clipping thin borders.
-    const padPctX = 1;
-    const padPctY = 1;
-    const left = Math.max(0, Math.round(((xPct - padPctX) / 100) * pngW));
-    const top = Math.max(0, Math.round(((yPct - padPctY) / 100) * pngH));
-    const right = Math.min(pngW, Math.round(((xPct + wPct + padPctX) / 100) * pngW));
-    const bottom = Math.min(pngH, Math.round(((yPct + hPct + padPctY) / 100) * pngH));
+    const padPct = 1;
+    const left = Math.max(0, Math.round(((leftPct - padPct) / 100) * pngW));
+    const top = Math.max(0, Math.round(((topPct - padPct) / 100) * pngH));
+    const right = Math.min(pngW, Math.round(((rightPct + padPct) / 100) * pngW));
+    const bottom = Math.min(pngH, Math.round(((bottomPct + padPct) / 100) * pngH));
     const width = right - left;
     const height = bottom - top;
 
@@ -70,14 +78,19 @@ async function detectAndCropFigures(html, bookId, pageNumber) {
       const figFilename = `page-${pageNumber}-fig-${figIdx}.png`;
       const figPath = path.join(IMAGE_DIR, bookId, figFilename);
 
+      // No trim() — the bbox is already tight by prompt contract,
+      // and sharp's trim could accidentally discard thin axis lines
+      // or light-color figure elements. Prefer honoring the bbox
+      // exactly; if the model pads too much, we tighten the prompt
+      // rather than post-process.
       await sharp(pagePngPath)
         .extract({ left, top, width, height })
-        .trim({ threshold: 15 })
         .toFile(figPath);
 
       const imgTag = `<img src="/images/${bookId}/${figFilename}" alt="Figure ${figIdx} from page ${pageNumber}" loading="lazy">`;
       replacements.push({ original: fullTag, replacement: `<figure class="page-figure">${imgTag}` });
-    } catch {
+    } catch (err) {
+      console.warn(`[figureService] p${pageNumber} fig ${figIdx} crop failed: ${err.message} (bbox=${leftPct},${topPct},${rightPct},${bottomPct} → extract=${left},${top},${width}x${height}, png=${pngW}x${pngH})`);
       replacements.push({ original: fullTag, replacement: `<figure class="page-figure">${fallbackLink}` });
     }
   }
