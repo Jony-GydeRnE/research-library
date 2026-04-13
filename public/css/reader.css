@@ -1825,3 +1825,29 @@ mjx-container {
   color: #7b4fa0;
   border-color: rgba(150, 100, 180, 0.3);
 }
+
+/* ─── Multi-concept decomposition cluster ─────────────────── */
+.cv-sep-cluster {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.15rem 0.4rem;
+  margin-left: 0.4rem;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: rgba(45, 90, 123, 0.035);
+  vertical-align: baseline;
+}
+.cv-sep-cluster .cv-sep {
+  margin-left: 0;
+}
+.cv-sep-label {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.62rem;
+  color: var(--r-text-muted);
+  background: transparent;
+  padding: 0 2px;
+  white-space: nowrap;
+  opacity: 0.75;
+  margin-right: 0.3rem;
+}

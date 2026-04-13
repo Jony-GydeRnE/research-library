@@ -134,10 +134,34 @@
       wrap.appendChild(el('div', { className: 'cv-detail-empty' }, ['(no edges on this span)']));
       return wrap;
     }
+    // Build a /reader URL for an edge that lands in SCROLL
+    // mode with the target chunk's text preview passed as a
+    // ?highlight=... query parameter. The reader's existing
+    // applyHighlightToVisible() machinery picks up the query
+    // parameter, finds the matching text node in the scroll
+    // content, wraps it in a citation-callout-box, and scrolls
+    // it into view. Strips LaTeX delimiters from the preview
+    // so the whitespace/case-normalized matcher can find the
+    // text. URL-length-safe: capped at 200 chars.
+    function readerUrlFor(e) {
+      if (!e.targetBookId || !e.targetPage) return '#';
+      const q = (e.targetPreview || '')
+        .replace(/\\\(|\\\)/g, '')
+        .replace(/\\\[|\\\]/g, '')
+        .replace(/\$/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 200);
+      const params = new URLSearchParams();
+      if (q) params.set('highlight', q);
+      params.set('mode', 'scroll');
+      return `/reader/${e.targetBookId}/page/${e.targetPage}?${params.toString()}`;
+    }
+
     for (const e of edges) {
       const row = el('a', {
         className: 'cv-edge',
-        href: e.targetBookId && e.targetPage ? `/reader/${e.targetBookId}/page/${e.targetPage}` : '#',
+        href: readerUrlFor(e),
         target: '_blank',
         title: `${e.relationship} · conf ${e.confidence} (${confPct(e.confidence)})${e.method ? ' · ' + e.method : ''}`,
       }, [
@@ -236,7 +260,66 @@
     }
   }
 
-  // ─── Render one span row ──────────────────────────────────
+  // ─── Render a GROUP of overlapping spans as one prose row ─
+  //
+  // When multi-concept decomposition gives us N spans covering
+  // the same sentence range, we want ONE prose render followed
+  // by N clickable ;; markers. Each ;; opens its own span's
+  // detail panel. This is the fix for the "same sentence
+  // appears N times" visual bug from the first quality-sweep
+  // run.
+  //
+  // If the group has only one span, behavior matches the old
+  // single-span render (one prose body + one trailing ;;).
+  function renderSpanGroup(chunk, spans, chunkEl) {
+    if (!spans || spans.length === 0) return document.createTextNode('');
+    const first = spans[0];
+    const row = el('div', { className: 'cv-span-row' });
+
+    // Render the prose once, from the first span's text.
+    const prose = el('span', { className: 'cv-span-text' });
+    prose.innerHTML = spanProseHtml(first.renderedText || '');
+    row.appendChild(prose);
+
+    // Cluster of span markers: one ;; per span in the group.
+    // The first is the "primary" and opens on full prose click;
+    // subsequent ones open only their own span.
+    const cluster = el('span', { className: 'cv-sep-cluster' });
+    for (let i = 0; i < spans.length; i++) {
+      const s = spans[i];
+      const firstTag = (s.contextTags || [])[0] || s.role || 'span';
+      const sep = el('span', {
+        className: 'cv-sep',
+        'data-span-id': s.spanId,
+        title: firstTag + ' — click for tags / edges',
+      }, [';;']);
+      sep.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        toggleDetail(chunkEl, chunk, s, sep);
+      });
+      cluster.appendChild(sep);
+      // Tiny visible label under each ;; so the user sees WHICH
+      // concept each marker corresponds to. This is a faint
+      // helper — hover works for the full title.
+      const label = el('span', { className: 'cv-sep-label' }, [firstTag]);
+      cluster.appendChild(label);
+    }
+    row.appendChild(cluster);
+
+    // Clicking the prose itself opens the first span's panel —
+    // keeps the original "click anywhere on the row" affordance.
+    prose.addEventListener('click', (ev) => {
+      const sel = window.getSelection();
+      if (sel && sel.toString().length > 0) return;
+      ev.stopPropagation();
+      const firstSep = cluster.querySelector('.cv-sep');
+      if (firstSep) toggleDetail(chunkEl, chunk, first, firstSep);
+    });
+
+    return row;
+  }
+
+  // ─── Render one span row (legacy, kept for compatibility) ─
   function renderSpanRow(chunk, span, chunkEl) {
     const row = el('div', { className: 'cv-span-row', 'data-span-id': span.spanId });
 
@@ -316,7 +399,12 @@
       chunkEl.appendChild(tagRow);
     }
 
-    // Body: stacked span rows
+    // Body: stacked span rows, grouped by overlapping sentence
+    // range. When multi-concept decomposition produces N spans
+    // that all cover the same sentence(s), we render the text
+    // ONCE as a cv-span-row and attach ALL N spans' clickable
+    // ';;' markers to that row. Otherwise the reader sees the
+    // same sentence repeated N times and thinks it's a bug.
     const body = el('div', { className: 'cv-chunk-body' });
     if (c.spans.length === 0) {
       // No spans — render raw chunk text as read-only prose.
@@ -326,8 +414,19 @@
       row.appendChild(prose);
       body.appendChild(row);
     } else {
+      // Group consecutive spans by sentence range.
+      const groups = [];
       for (const s of c.spans) {
-        body.appendChild(renderSpanRow(c, s, chunkEl));
+        const key = `${s.sentenceStart ?? 0}-${s.sentenceEnd ?? 0}`;
+        const last = groups[groups.length - 1];
+        if (last && last.key === key) {
+          last.spans.push(s);
+        } else {
+          groups.push({ key, spans: [s] });
+        }
+      }
+      for (const g of groups) {
+        body.appendChild(renderSpanGroup(c, g.spans, chunkEl));
       }
     }
     chunkEl.appendChild(body);

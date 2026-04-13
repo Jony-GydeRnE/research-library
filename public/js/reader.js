@@ -16,7 +16,20 @@
   const modeChunksBtn = document.getElementById('modeChunksBtn');
   const chunksContent = document.getElementById('readerChunksContent');
 
-  let mode = localStorage.getItem('gyde-reader-mode') || 'pages';
+  // Initial mode resolution order:
+  //   1. ?mode=<pages|scroll|pdf|chunks> query param (from an
+  //      edge-click in the chunks view so quoted citations
+  //      land in the right layout)
+  //   2. localStorage (user's last-used mode)
+  //   3. 'pages' default
+  function getQueryModeOverride() {
+    try {
+      const m = new URLSearchParams(window.location.search).get('mode');
+      if (m && ['pages', 'scroll', 'pdf', 'chunks'].includes(m)) return m;
+    } catch (_) {}
+    return null;
+  }
+  let mode = getQueryModeOverride() || localStorage.getItem('gyde-reader-mode') || 'pages';
   let scrollLoaded = false;
   let scrollSpyObserver = null;
 
