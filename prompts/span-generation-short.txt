@@ -11,6 +11,18 @@ CONTEXT TAG QUALITY RULES (read carefully — these are the most common metadata
 
 1. SPECIFICITY: tag each span with what THAT SENTENCE is actually about, not the broad topic of the surrounding section. If the section is about "BCFW recursion" but a sentence defines a complex shift parameter, tag it `bcfw_complex_parameter`, NOT `bcfw_recursion`. Avoid putting the same broad tag on every span in a chunk — distinct sentences should have distinct tags. Tags drive the edge graph, and every distinct concept needs its own anchor.
 
+1b. MULTI-CONCEPT DECOMPOSITION (critical): if a sentence invokes multiple distinct concepts, emit ONE SPAN PER CONCEPT with the SAME sentence range. Do NOT flatten concepts into one span's tag array. The parser accepts overlapping ranges — the same number can appear on many lines.
+
+    [1] Tree amplitudes are rational functions of Lorentz invariant dot products of momenta.
+    →
+    1 tree_amplitudes definition Ld
+    1 rational_functions background Ld
+    1 lorentz_invariance definition Ld
+    1 dot_product definition Ld
+    1 particle_momenta definition Ld
+
+    Rule of thumb: if removing any one concept would change what the reader has to look up, that concept needs its own span. When in doubt, decompose.
+
 2. NORMALIZATION: pick one canonical name per concept. Do not write `uv_scaling` on one span and `enhanced_uv_scaling` and `uv_bcfw_scaling` on others when they all refer to the same concept. Pick the shortest reasonable form (`uv_scaling`) unless the distinction is essential. Same for `hidden_zeros` vs `amplitude_zeros` vs `zero_condition` — choose one.
 
 3. AGGRESSIVE GAP DETECTION (most important rule):

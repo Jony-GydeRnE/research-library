@@ -30,10 +30,15 @@ const edgeSchema = new mongoose.Schema({
   relevance: String,    // single letter a-z
   method: {
     type: String,
-    // 'note-citation' = produced by noteIngestionService via
+    // 'note-citation'     = produced by noteIngestionService via
     //   concept-overlap (synonym layer) + embedding cosine ranking.
     //   Always paired with relationshipType='annotates'.
-    enum: ['lexical', 'embedding', 'llm', 'manual', 'note-citation']
+    // 'canonical-lookup'  = produced by canonicalDefinitionService.
+    //   Pure dictionary sweep — every span with contextTag X gets
+    //   a uses_definition edge to the chunk that canonically
+    //   defines X. Zero LLM calls. Confidence always 'z' because
+    //   the lookup is mechanical.
+    enum: ['lexical', 'embedding', 'llm', 'manual', 'note-citation', 'canonical-lookup']
   },
   resolved: { type: Boolean, default: false },
   // Other Span IDs from the SAME source book that also point at

@@ -61,9 +61,18 @@ module.exports = {
   SPAN_RETRY_ON_EMPTY: true,
 
   // ─── CHUNK DERIVATION ────────────────────────────────────────
-  CHUNK_MAX_SPANS: 3,
+  // Bumped from 3 -> 8 (2026-04-12) so multi-concept
+  // decomposition and narrative paragraphs survive as a single
+  // chunk. At 3 spans, even a simple 3-sentence paragraph
+  // fragmented whenever the LLM emitted gap tags (which the
+  // prompt told it to emit on every sentence).
+  CHUNK_MAX_SPANS: 8,
   CHUNK_SPLIT_ON_DECLARATIVE: true,
-  CHUNK_SPLIT_ON_SEARCH_CLASS: true,
+  // DEPRECATED — kept for backwards compat but the chunker no
+  // longer reads this. Gap search classes (L/I/S/B) are triage
+  // signals, not structural boundaries. See
+  // reports/2026-04-12/meta-data-logic.md §3.2.
+  CHUNK_SPLIT_ON_SEARCH_CLASS: false,
 
   // ─── METADATA EXTRACTION ─────────────────────────────────────
   METADATA_MODEL: process.env.NANO_MODEL || 'gpt-4o-mini',

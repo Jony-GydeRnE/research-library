@@ -11,6 +11,32 @@ const pipeline = require('../config/pipeline');
 // Structural types that START a new chunk when they appear
 const BOUNDARY_TYPES = new Set(['theorem', 'definition', 'lemma', 'proposition', 'corollary', 'proof', 'example', 'remark']);
 
+// Demonstrative / anaphoric starters. If the next span's text
+// begins with one of these, it refers to something in the
+// preceding sentences and must NOT be split off into its own
+// chunk — the antecedent would be orphaned and the reader would
+// see "these novel perspectives" with no referent. The merge
+// overrides every break rule except a same-book page change,
+// since a chunk that bridges pages isn't representable in the
+// current schema.
+const PRONOUN_STARTS = new Set([
+  'these', 'this', 'that', 'those', 'it', 'they', 'them',
+  'such', 'these.', 'this.', 'that.', 'those.', 'it.',
+  'hence', 'thus', 'therefore', 'so',
+  'consequently', 'accordingly', 'moreover', 'furthermore',
+]);
+
+function firstWordOf(text) {
+  if (!text || typeof text !== 'string') return '';
+  const m = text.trim().match(/^[\p{L}]+/u);
+  return m ? m[0].toLowerCase() : '';
+}
+
+function startsWithAnaphor(span) {
+  const w = firstWordOf(span && span.spanText);
+  return w && PRONOUN_STARTS.has(w);
+}
+
 /**
  * Determine structural type for a chunk from its spans and page annotations.
  */
@@ -50,10 +76,27 @@ function shouldBreakChunk(currentSpans, nextSpan, pageAnnotations) {
 
   const lastSpan = currentSpans[currentSpans.length - 1];
 
-  // Different page = new chunk
+  // Different page = new chunk (unavoidable — chunks can't
+  // bridge pages in the current schema).
   if (nextSpan.pageNumber !== lastSpan.pageNumber) return true;
 
+  // Overlapping spans from multi-concept decomposition —
+  // multiple concept-specific spans share the same sentence
+  // range. These MUST stay in the same chunk; they're
+  // annotations of one sentence, not separate sentences.
+  if (nextSpan.sentenceStart <= lastSpan.sentenceEnd) return false;
+
+  // Anaphor merge: if the next sentence begins with a pronoun
+  // or demonstrative ("these", "this", "it", "such", "hence",
+  // etc), its antecedent is in the current chunk. Do NOT break,
+  // regardless of any downstream rule. This overrides the span
+  // count cap and the structural-boundary check within the same
+  // page. Orphaned pronouns are worse than oversized chunks.
+  if (startsWithAnaphor(nextSpan)) return false;
+
   // Check if nextSpan starts at a structural boundary
+  // (theorem/definition/lemma/proof/example from the page
+  // regex annotations produced during vision processing).
   if (pageAnnotations) {
     for (const ann of pageAnnotations) {
       if (ann.sentenceRange?.[0] === nextSpan.sentenceStart && BOUNDARY_TYPES.has(ann.kind)) {
@@ -70,14 +113,26 @@ function shouldBreakChunk(currentSpans, nextSpan, pageAnnotations) {
   // Gap of more than 3 sentences = likely new section
   if (nextSpan.sentenceStart - lastSpan.sentenceEnd > 3) return true;
 
-  // Max spans per chunk (from pipeline config)
-  if (currentSpans.length >= (pipeline.CHUNK_MAX_SPANS || 3)) return true;
+  // Max spans per chunk. Bumped to 8 (from the original 3) so
+  // narrative paragraphs stay intact. The prior limit of 3 was
+  // the primary cause of 1-span chunks dominating dense text.
+  if (currentSpans.length >= (pipeline.CHUNK_MAX_SPANS || 8)) return true;
 
-  // Spans with declarative tags start new chunks (if configured)
+  // Declarative tags (p14.3, r7.2 etc.) are strong semantic
+  // markers the LLM emitted as "this sentence proves / assumes
+  // / extends specific other content". They're rare (precision
+  // over recall) so when they fire we respect the split.
   if (pipeline.CHUNK_SPLIT_ON_DECLARATIVE && nextSpan.declarativeTags?.length > 0) return true;
 
-  // Spans with L/S/B search class start new chunks (if configured)
-  if (pipeline.CHUNK_SPLIT_ON_SEARCH_CLASS && nextSpan.searchClass && nextSpan.searchClass !== 'N') return true;
+  // CHUNK_SPLIT_ON_SEARCH_CLASS is DELIBERATELY NOT CHECKED
+  // HERE anymore. Gap search classes (L/I/S/B) are triage
+  // signals the resolver uses to look up fill content —
+  // they are NOT semantic chunk boundaries. The previous
+  // behavior combined with "every chunk should have an L-tag"
+  // in the span prompt produced 1-span chunks for every
+  // gap-tagged sentence. See reports/2026-04-12/meta-data-logic.md.
+  // The config flag is still read elsewhere if anything needs
+  // it, but the chunker is now agnostic to search class.
 
   return false;
 }

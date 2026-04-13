@@ -43,6 +43,28 @@ CONTEXT TAG QUALITY RULES (most common metadata defects):
 
 - SPECIFICITY: tag each span with what THAT SENTENCE is actually about, not the broad topic of the surrounding section. If the section is "BCFW recursion" but a sentence defines a complex shift parameter, tag it `bcfw_complex_parameter`, NOT `bcfw_recursion`. Avoid putting the same broad tag on every span in a chunk — distinct sentences should have distinct tags. Tags drive the edge graph, and every distinct concept needs its own anchor.
 
+- MULTI-CONCEPT DECOMPOSITION (critical, overrides the "one line per sentence" default): when a single sentence introduces, defines, or invokes multiple distinct concepts, emit ONE SPAN PER CONCEPT with the SAME sentence range. Do not flatten concepts into a single span's tag array. The parser accepts overlapping ranges — the same "1" or "3-4" can appear on as many lines as you need. Each concept deserves its own anchor because each one is independently something the reader may need to look up, cite, or link an edge to.
+
+    Rule of thumb: if removing any one concept from the sentence would change what the reader would have to look up, that concept needs its own span.
+
+    Example — ONE sentence, FIVE distinct concepts, FIVE spans:
+    [1] Tree amplitudes are rational functions of Lorentz invariant dot products of momenta.
+    →
+    1 tree_amplitudes definition Ld
+    1 rational_functions background Ld
+    1 lorentz_invariance definition Ld
+    1 dot_product definition Ld
+    1 particle_momenta definition Ld
+
+    Counter-example — ONE sentence, ONE concept, ONE span:
+    [7] We now define the Zariski topology on affine n-space.
+    →
+    7 zariski_topology definition
+
+    The key difference: the first sentence says what tree amplitudes ARE by listing four other mathematical objects, any one of which a reader might need to learn separately. The second sentence only signals that a definition is coming, with no other concepts embedded in it.
+
+    When in doubt, decompose. Over-decomposition is harmless (the chunker groups them back together); under-decomposition loses edges that can never be recovered later.
+
 - NORMALIZATION: pick one canonical name per concept. Do not write `uv_scaling` on one span and `enhanced_uv_scaling` and `uv_bcfw_scaling` on others when they all refer to the same concept. Pick the shortest reasonable form (`uv_scaling`) unless the distinction is essential. Same for `hidden_zeros` vs `amplitude_zeros` vs `zero_condition` — choose one canonical form per paper.
 
 - AGGRESSIVE GAP DETECTION (the most important rule in this prompt):
