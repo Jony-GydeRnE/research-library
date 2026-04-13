@@ -18,6 +18,11 @@
   var iframe = null;
   var divider = null;
   var isOpen = false;
+  // Sidebar state restore-on-close. When open() fires we force-collapse
+  // the outer app sidebar so both readers have equal real estate and no
+  // sidebar bleeds into the middle of the layout. The user's original
+  // collapsed-vs-open preference is captured here and restored on close().
+  var priorSidebarCollapsed = null;
 
   // Fraction of the non-sidebar width occupied by the reader panel.
   // Using a new storage key — the old key stored a right-docked ratio that
@@ -29,6 +34,33 @@
     var sb = document.querySelector('.app-sidebar');
     if (!sb) return 0;
     return sb.getBoundingClientRect().width;
+  }
+
+  // Force both the outer app sidebar AND the split iframe's inner
+  // sidebar closed by default whenever split opens. User rule: "when
+  // split is open I want to see both notes, not sidebars. I can open
+  // sidebars if I want." We do this by (a) adding `.collapsed` to the
+  // outer sidebar and (b) appending sidebar=collapsed to the iframe URL
+  // so reader.ejs inline script picks it up and collapses its own
+  // sidebar before any paint.
+  function forceOuterSidebarCollapsed() {
+    var sb = document.querySelector('.app-sidebar');
+    if (!sb) return;
+    if (priorSidebarCollapsed === null) {
+      priorSidebarCollapsed = sb.classList.contains('collapsed');
+    }
+    sb.classList.add('collapsed');
+  }
+  function restoreOuterSidebar() {
+    var sb = document.querySelector('.app-sidebar');
+    if (!sb) return;
+    if (priorSidebarCollapsed === false) sb.classList.remove('collapsed');
+    priorSidebarCollapsed = null;
+  }
+  function ensureCollapsedQuery(url) {
+    if (!url) return url;
+    if (/[?&]sidebar=/.test(url)) return url;
+    return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'sidebar=collapsed';
   }
 
   function ensureCreated() {
@@ -98,16 +130,17 @@
   function open(url) {
     ensureCreated();
     isOpen = true;
+    forceOuterSidebarCollapsed();
     document.body.classList.add('chat-split-open');
     panel.style.display = 'flex';
     divider.style.display = 'block';
     apply();
-    if (url) iframe.src = url;
+    if (url) iframe.src = ensureCollapsedQuery(url);
   }
 
   function update(url) {
     if (!isOpen) return false;
-    if (url) iframe.src = url;
+    if (url) iframe.src = ensureCollapsedQuery(url);
     return true;
   }
 
@@ -118,6 +151,7 @@
     if (divider) divider.style.display = 'none';
     if (iframe) iframe.src = 'about:blank';
     document.body.style.removeProperty('--chat-split-left');
+    restoreOuterSidebar();
   }
 
   function setupDrag() {

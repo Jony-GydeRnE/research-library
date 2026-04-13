@@ -36,6 +36,14 @@
   // ─── MODE TOGGLE ───────────────────────────────────────────────
 
   function setMode(newMode) {
+    // If we're LEAVING chunks for pages/scroll, carry the currently
+    // focused chunk forward as a citation-callout highlight. This
+    // makes "I'm on chunk 14, I hit Scroll" actually land on page
+    // 14 with chunk 14 highlighted — without it the mode switch
+    // would lose the fine-grained position.
+    if (mode === 'chunks' && (newMode === 'scroll' || newMode === 'pages')) {
+      seedHighlightFromChunksView();
+    }
     mode = newMode;
     localStorage.setItem('gyde-reader-mode', mode);
 
@@ -135,15 +143,33 @@
   // regardless of which mode is active when the event fires.
   if (chunksContent) {
     chunksContent.addEventListener('cv-page-change', function (ev) {
-      const pg = ev && ev.detail && ev.detail.pageNumber;
-      if (!pg) return;
-      R.currentPage = pg;
-      currentPageNum.textContent = pg;
-      pageJump.value = pg;
-      saveBookmark(pg);
-      updateActiveSectionForPage(pg);
+      const d = ev && ev.detail;
+      if (!d || !d.pageNumber) return;
+      R.currentPage = d.pageNumber;
+      currentPageNum.textContent = d.pageNumber;
+      pageJump.value = d.pageNumber;
+      saveBookmark(d.pageNumber);
+      updateActiveSectionForPage(d.pageNumber);
       updateArrowState();
+      // Also live-track the topmost visible chunk so that switching
+      // to scroll or pages mode paints the same chunk in the
+      // dismissable citation callout box. The chunksView emits a
+      // chunkPreview string normalized the same way the reader's
+      // highlight matcher expects.
+      if (d.chunkPreview) pendingHighlight = d.chunkPreview;
     });
+  }
+
+  // Before switching to scroll/pages mode FROM chunks, pull the
+  // current focus from the chunks view as the highlight seed. This
+  // is how "I'm on chunk 14, I hit Scroll" actually delivers the
+  // expected behavior: scroll mode lands on page 14 (via R.currentPage)
+  // AND paints chunk 14 in the callout box.
+  function seedHighlightFromChunksView() {
+    if (!window.GydeChunksView || !window.GydeChunksView.getCurrentFocus) return;
+    const f = window.GydeChunksView.getCurrentFocus();
+    if (f && f.pageNumber) R.currentPage = f.pageNumber;
+    if (f && f.chunkPreview) pendingHighlight = f.chunkPreview;
   }
 
   modePagesBtn.addEventListener('click', () => setMode('pages'));

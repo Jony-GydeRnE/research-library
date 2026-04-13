@@ -372,9 +372,32 @@
     return row;
   }
 
+  // Produce a normalized preview string for a chunk, suitable for the
+  // reader's whitespace/case-insensitive highlight matcher. Strips LaTeX
+  // delimiters and collapses whitespace. Capped at 200 chars to fit in
+  // a URL query. Identical normalization to readerUrlFor() above.
+  function chunkPreview(text) {
+    return (text || '')
+      .replace(/\\\(|\\\)/g, '')
+      .replace(/\\\[|\\\]/g, '')
+      .replace(/\$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 200);
+  }
+
   // ─── Render one chunk card ────────────────────────────────
   function renderChunk(c) {
-    const chunkEl = el('div', { className: 'cv-chunk', 'data-chunk-id': c.chunkId });
+    // Stash a normalized preview on the element so the scroll-spy can
+    // emit it as the "currently visible chunk" when the user scrolls,
+    // and reader.js can seed it as pendingHighlight when the user
+    // switches to pages or scroll mode mid-book.
+    const chunkEl = el('div', {
+      className: 'cv-chunk',
+      'data-chunk-id': c.chunkId,
+      'data-chunk-preview': chunkPreview(c.sourceText || ''),
+      'data-chunk-page': String(c.pageNumber || ''),
+    });
 
     // Header. The PRIMARY label is "chunk #N" because the user's
     // mental model is "chunks" first. Structural type only shows
@@ -584,6 +607,27 @@
   }
 
   let _cvSpy = null;
+  // Current focus within the chunks view. Updated by the scroll-spy;
+  // consumed by reader.js when the user switches view modes so scroll
+  // or pages mode can land at the same page AND highlight the same
+  // chunk in the familiar dismissable callout box.
+  const CURRENT = { pageNumber: null, chunkPreview: null, chunkId: null };
+
+  function pickTopChunkOnPage(section, scrollRoot) {
+    const chunks = section.querySelectorAll('.cv-chunk');
+    if (!chunks.length) return null;
+    const rootRect = scrollRoot ? scrollRoot.getBoundingClientRect() : { top: 0 };
+    // Activation line: upper 30% of the viewport, matching the reader
+    // scroll-spy. Pick the last chunk whose top has crossed that line.
+    const activation = rootRect.top + Math.max(40, (window.innerHeight * 0.3));
+    let chosen = null;
+    chunks.forEach(function (c) {
+      const r = c.getBoundingClientRect();
+      if (r.top <= activation) chosen = c;
+    });
+    return chosen || chunks[0];
+  }
+
   function setupChunkScrollSpy(container) {
     if (_cvSpy) { _cvSpy.disconnect(); _cvSpy = null; }
     const sections = container.querySelectorAll('.cv-page-section');
@@ -593,11 +637,20 @@
       const hits = entries.filter(e => e.isIntersecting);
       if (!hits.length) return;
       hits.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-      const chosen = hits[hits.length - 1].target;
-      const pg = parseInt(chosen.getAttribute('data-page') || '', 10);
+      const chosenSection = hits[hits.length - 1].target;
+      const pg = parseInt(chosenSection.getAttribute('data-page') || '', 10);
       if (!pg) return;
+      const chunkEl = pickTopChunkOnPage(chosenSection, scrollRoot);
+      CURRENT.pageNumber = pg;
+      CURRENT.chunkPreview = chunkEl ? chunkEl.getAttribute('data-chunk-preview') : null;
+      CURRENT.chunkId = chunkEl ? chunkEl.getAttribute('data-chunk-id') : null;
       container.dispatchEvent(new CustomEvent('cv-page-change', {
-        detail: { pageNumber: pg }, bubbles: true,
+        detail: {
+          pageNumber: pg,
+          chunkPreview: CURRENT.chunkPreview,
+          chunkId: CURRENT.chunkId,
+        },
+        bubbles: true,
       }));
     }, {
       root: scrollRoot,
@@ -607,5 +660,9 @@
     sections.forEach(s => _cvSpy.observe(s));
   }
 
-  window.GydeChunksView = { load, jumpTo, STATE };
+  function getCurrentFocus() {
+    return { pageNumber: CURRENT.pageNumber, chunkPreview: CURRENT.chunkPreview, chunkId: CURRENT.chunkId };
+  }
+
+  window.GydeChunksView = { load, jumpTo, STATE, getCurrentFocus };
 })();
