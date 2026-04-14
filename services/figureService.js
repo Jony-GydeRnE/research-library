@@ -2,8 +2,18 @@ const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
 const { groupItemsIntoLines } = require('./pdfService');
+const { judgeCrop } = require('./figureJudge');
 
 const IMAGE_DIR = path.join(__dirname, '..', 'uploads', 'images');
+
+// Judge loop is env-gated so we can A/B against the heuristic-only
+// pipeline. Default OFF during initial rollout; flip to default ON
+// once Rodina validation confirms score≥95 on all figures.
+const JUDGE_ENABLED = process.env.FIGURE_JUDGE === '1';
+const JUDGE_MAX_ATTEMPTS = 3;
+const JUDGE_GOOD_SCORE = 95;
+const JUDGE_FALLBACK_SCORE = 50;
+const JUDGE_DEFAULT_LINE_H_PX = 25;
 
 /**
  * Crop figure regions by combining vision-model bboxes (horizontal
@@ -240,11 +250,38 @@ async function detectAndCropFigures(html, bookId, pageNumber, pageText = null) {
       const figFilename = `page-${pageNumber}-fig-${figIdx}.png`;
       const figPath = path.join(IMAGE_DIR, bookId, figFilename);
 
-      await sharp(pagePngPath)
-        .extract({ left, top, width, height })
-        .toFile(figPath);
+      // Derive the line-height used by the judge's delta math
+      // from the caption line's pdfjs font size when available —
+      // more accurate than a hardcoded constant for papers with
+      // unusual body text sizes.
+      const lineHPx = captionLine && textIndex
+        ? Math.max(12, Math.round(captionLine.h * textIndex.scaleY * 1.2))
+        : JUDGE_DEFAULT_LINE_H_PX;
 
-      console.log(`[figureService] p${pageNumber} fig ${figIdx}: ${width}x${height} vert=${vertSource}`);
+      const initRect = { left, top, right, bottom };
+      const loopResult = await cropWithJudgeLoop({
+        pagePngPath,
+        pngW,
+        pngH,
+        initRect,
+        captionText,
+        lineHPx,
+        tag: `p${pageNumber} fig ${figIdx}`,
+        vertSource,
+      });
+
+      if (loopResult.abandon) {
+        // Final score below the fallback floor — show the view-link
+        // rather than serving a bad crop.
+        console.warn(`[figureService] p${pageNumber} fig ${figIdx} abandoned (best score ${loopResult.bestScore})`);
+        replacements.push({ original: openTag, replacement: `<figure class="page-figure">${fallbackLink}` });
+        continue;
+      }
+
+      await fs.promises.writeFile(figPath, loopResult.buffer);
+
+      const scoreTag = loopResult.bestScore != null ? ` score=${loopResult.bestScore}` : '';
+      console.log(`[figureService] p${pageNumber} fig ${figIdx}: ${loopResult.finalW}x${loopResult.finalH} vert=${vertSource} attempts=${loopResult.attempts}${scoreTag}`);
 
       const imgTag = `<img src="/images/${bookId}/${figFilename}" alt="Figure ${figIdx} from page ${pageNumber}" loading="lazy">`;
       replacements.push({ original: openTag, replacement: `<figure class="page-figure">${imgTag}` });
@@ -410,6 +447,134 @@ function computeVerticalFromAnchors(idx, captionText, { modelTopPx, modelBottomP
 
   if (bottom - top < 30) return null;
   return { top, bottom, source, matchedLine: captionLine };
+}
+
+// ─── Judge loop ───────────────────────────────────────────────────
+//
+// Extract the initial crop, then (if FIGURE_JUDGE=1) iteratively
+// refine the rectangle using structured critique from Sonnet vision.
+// Each iteration:
+//   1. sharp.extract() → buffer
+//   2. judgeCrop(buffer, caption) → {score, extra/clipped deltas}
+//   3. Apply deltas mechanically, clamped to ≤25% of current
+//      crop dimensions per iteration to prevent overshoot from a
+//      judge miscounting "3 extra lines above".
+//   4. Clamp to page bounds.
+//   5. Stop on score ≥ JUDGE_GOOD_SCORE, after JUDGE_MAX_ATTEMPTS,
+//      or when the judge returns null (parse failure).
+//
+// Returns the BEST crop across all attempts (highest score), plus
+// an `abandon` flag when the best score is still below
+// JUDGE_FALLBACK_SCORE — in that case the caller shows the
+// "view original page" link rather than shipping a broken crop.
+async function cropWithJudgeLoop({ pagePngPath, pngW, pngH, initRect, captionText, lineHPx, tag }) {
+  // Start with the initial rect from the heuristic pipeline.
+  let rect = clampRectToPage(initRect, pngW, pngH);
+  let best = null; // { buffer, score, rect }
+  const attemptsLog = [];
+
+  const maxAttempts = JUDGE_ENABLED ? JUDGE_MAX_ATTEMPTS : 1;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const width = rect.right - rect.left;
+    const height = rect.bottom - rect.top;
+    if (width < 30 || height < 30) break;
+
+    const buffer = await sharp(pagePngPath)
+      .extract({ left: rect.left, top: rect.top, width, height })
+      .toBuffer();
+
+    if (!JUDGE_ENABLED) {
+      // Short-circuit: the legacy heuristic-only path. Ship the
+      // single crop we extracted.
+      return {
+        buffer,
+        bestScore: null,
+        attempts: 1,
+        finalW: width,
+        finalH: height,
+        abandon: false,
+      };
+    }
+
+    const verdict = await judgeCrop(buffer, captionText);
+    const score = verdict?.score ?? null;
+    attemptsLog.push({ attempt, score, verdict });
+
+    if (best == null || (score != null && score > (best.score ?? -1))) {
+      best = { buffer, score, rect: { ...rect } };
+    }
+
+    // Stop on good enough or parse failure.
+    if (verdict == null) break;
+    if (score >= JUDGE_GOOD_SCORE) break;
+
+    // Apply deltas for the next attempt.
+    rect = applyVerdictDeltas(rect, verdict, lineHPx, pngW, pngH);
+    console.log(`[figureJudge] ${tag} attempt ${attempt} score=${score} → adjusting (${verdict.notes || ''})`);
+  }
+
+  if (best == null) {
+    // Should only happen if the very first extract call failed.
+    throw new Error('judge loop produced no crop');
+  }
+
+  const abandon = best.score != null && best.score < JUDGE_FALLBACK_SCORE;
+  return {
+    buffer: best.buffer,
+    bestScore: best.score,
+    attempts: attemptsLog.length,
+    finalW: best.rect.right - best.rect.left,
+    finalH: best.rect.bottom - best.rect.top,
+    abandon,
+  };
+}
+
+// Clamp a rectangle to the page bounds and integer-round all fields.
+function clampRectToPage(rect, pngW, pngH) {
+  const left = Math.max(0, Math.round(rect.left));
+  const top = Math.max(0, Math.round(rect.top));
+  const right = Math.min(pngW, Math.round(rect.right));
+  const bottom = Math.min(pngH, Math.round(rect.bottom));
+  return { left, top, right, bottom };
+}
+
+// Apply structured verdict deltas to a rectangle, with a per-
+// iteration max delta of 25% of the current crop dimensions to
+// prevent overshoot. Clamps the result to page bounds.
+function applyVerdictDeltas(rect, verdict, lineHPx, pngW, pngH) {
+  const currentH = rect.bottom - rect.top;
+  const currentW = rect.right - rect.left;
+  const maxDeltaY = currentH * 0.25;
+  const maxDeltaX = currentW * 0.25;
+
+  // Top edge: extra lines → move DOWN (shrink), clipped → move UP (grow)
+  const rawDeltaTop =
+    (verdict.extra_lines_above || 0) * lineHPx -
+    (verdict.clipped_above || 0) * lineHPx;
+  // Bottom edge: extra lines → move UP (shrink), clipped → move DOWN (grow)
+  const rawDeltaBottom =
+    (verdict.extra_lines_below || 0) * lineHPx -
+    (verdict.clipped_below || 0) * lineHPx;
+  const rawDeltaLeft = verdict.extra_px_left || 0;
+  const rawDeltaRight = verdict.extra_px_right || 0;
+
+  const clamp = (v, max) => {
+    if (v > max) return max;
+    if (v < -max) return -max;
+    return v;
+  };
+  const dTop = clamp(rawDeltaTop, maxDeltaY);
+  const dBot = clamp(rawDeltaBottom, maxDeltaY);
+  const dLeft = clamp(rawDeltaLeft, maxDeltaX);
+  const dRight = clamp(rawDeltaRight, maxDeltaX);
+
+  const next = {
+    left: rect.left + dLeft,
+    right: rect.right - dRight,
+    top: rect.top + dTop,
+    bottom: rect.bottom - dBot,
+  };
+  return clampRectToPage(next, pngW, pngH);
 }
 
 module.exports = { detectAndCropFigures };
