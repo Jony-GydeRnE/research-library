@@ -508,9 +508,12 @@ async function cropWithJudgeLoop({ pagePngPath, pngW, pngH, initRect, captionTex
     if (verdict == null) break;
     if (score >= JUDGE_GOOD_SCORE) break;
 
-    // Apply deltas for the next attempt.
-    rect = applyVerdictDeltas(rect, verdict, lineHPx, pngW, pngH);
-    console.log(`[figureJudge] ${tag} attempt ${attempt} score=${score} → adjusting (${verdict.notes || ''})`);
+    // Apply deltas for the next attempt, with a decaying
+    // amplifier: big moves on attempt 1 (aggressive convergence),
+    // fine-tuning on later attempts (avoid oscillation).
+    const amp = JUDGE_AMPLIFY_SCHEDULE[attempt - 1] ?? 1.0;
+    rect = applyVerdictDeltas(rect, verdict, lineHPx, pngW, pngH, amp);
+    console.log(`[figureJudge] ${tag} attempt ${attempt} score=${score} amp=${amp}x → adjusting (${verdict.notes || ''})`);
   }
 
   if (best == null) {
@@ -538,19 +541,30 @@ function clampRectToPage(rect, pngW, pngH) {
   return { left, top, right, bottom };
 }
 
-// Apply structured verdict deltas to a rectangle, with an
-// ASYMMETRIC per-iteration clamp:
-//   - Shrink moves (rectangle gets smaller):  ≤ 25% of current dim.
-//     Protects against judge miscounting "3 extra lines above"
-//     collapsing the crop into nothing.
-//   - Grow moves (rectangle gets bigger):     ≤ 50% of current dim.
-//     Grows can only hit page bounds (clamped separately), so
-//     there's no collapse risk — we can afford to move farther
-//     per iteration. This is the v2 fix for p4/p7 plateaus where
-//     the loop correctly diagnosed "8 lines above" but the old
-//     symmetric 25% clamp only allowed 1-2 lines of correction
-//     per attempt, so the judge ran out of iterations before
-//     converging.
+// v3 delta application — aggressive convergence with safety floor.
+//
+// Observation from v2: plateau cases (p4, p7) show the judge
+// correctly diagnosing "N extra lines of body text above" for 3
+// iterations in a row but the loop running out of attempts before
+// the rectangle is clean. Jony's call: treat the judge as a
+// conservative under-reporter — multiply its line counts by 2.5x
+// so each iteration absorbs MORE of the feedback than the naive
+// reading would suggest.
+//
+// Safety: the 2.5x amplifier is still clamped per-iteration and
+// a post-apply MIN_HEIGHT_PX guard prevents the rectangle from
+// collapsing into nothing even if the judge miscounts wildly.
+//
+//   SHRINK_CAP_FRAC = 0.40  // up from v2's 0.25 — aggressive
+//                            // but not symmetric with grow
+//                            // (collapse risk).
+//   GROW_CAP_FRAC   = 0.50  // v2 value, unchanged.
+//   JUDGE_AMPLIFY   = 2.5   // multiplier on judge's line counts
+//                            // before clamping.
+//   MIN_HEIGHT_PX   = 60    // post-apply floor — if a shrink
+//                            // would take the crop below this
+//                            // height, proportionally scale
+//                            // the deltas back.
 //
 // Sign convention (matches the raw delta expressions below):
 //   dTop   > 0 → top edge moves DOWN   → shrink
@@ -561,22 +575,35 @@ function clampRectToPage(rect, pngW, pngH) {
 //   dLeft  < 0 → left edge moves LEFT  → grow
 //   dRight > 0 → right edge moves LEFT → shrink
 //   dRight < 0 → right edge moves RIGHT→ grow
-function applyVerdictDeltas(rect, verdict, lineHPx, pngW, pngH) {
+// Decaying amplifier by attempt. The first iteration is the
+// "big move" — large shrink cases (8+ lines of body text above)
+// need an aggressive correction to close in one hop. Subsequent
+// iterations are fine-tuning where 1x prevents oscillation
+// between clipping and overshoot.
+const JUDGE_AMPLIFY_SCHEDULE = [2.5, 1.5, 1.0];
+const SHRINK_CAP_FRAC = 0.40;
+const GROW_CAP_FRAC = 0.50;
+const MIN_HEIGHT_PX = 60;
+const MIN_WIDTH_PX = 60;
+
+function applyVerdictDeltas(rect, verdict, lineHPx, pngW, pngH, amplify = 1.0) {
   const currentH = rect.bottom - rect.top;
   const currentW = rect.right - rect.left;
-  const shrinkMaxY = currentH * 0.25;
-  const growMaxY = currentH * 0.50;
-  const shrinkMaxX = currentW * 0.25;
-  const growMaxX = currentW * 0.50;
+  const shrinkMaxY = currentH * SHRINK_CAP_FRAC;
+  const growMaxY = currentH * GROW_CAP_FRAC;
+  const shrinkMaxX = currentW * SHRINK_CAP_FRAC;
+  const growMaxX = currentW * GROW_CAP_FRAC;
 
-  // Top edge: extra lines → move DOWN (shrink), clipped → move UP (grow)
+  // Amplify the judge's line counts by the per-attempt
+  // schedule. Pixel metrics (extra_px_left/right) pass
+  // through at 1x — the judge reports those directly and
+  // doesn't need amplification.
   const rawDeltaTop =
-    (verdict.extra_lines_above || 0) * lineHPx -
-    (verdict.clipped_above || 0) * lineHPx;
-  // Bottom edge: extra lines → move UP (shrink), clipped → move DOWN (grow)
+    ((verdict.extra_lines_above || 0) - (verdict.clipped_above || 0))
+    * lineHPx * amplify;
   const rawDeltaBottom =
-    (verdict.extra_lines_below || 0) * lineHPx -
-    (verdict.clipped_below || 0) * lineHPx;
+    ((verdict.extra_lines_below || 0) - (verdict.clipped_below || 0))
+    * lineHPx * amplify;
   const rawDeltaLeft = verdict.extra_px_left || 0;
   const rawDeltaRight = verdict.extra_px_right || 0;
 
@@ -586,10 +613,35 @@ function applyVerdictDeltas(rect, verdict, lineHPx, pngW, pngH) {
     if (v < -grow) return -grow;
     return v;
   };
-  const dTop = clampAsym(rawDeltaTop, shrinkMaxY, growMaxY);
-  const dBot = clampAsym(rawDeltaBottom, shrinkMaxY, growMaxY);
-  const dLeft = clampAsym(rawDeltaLeft, shrinkMaxX, growMaxX);
-  const dRight = clampAsym(rawDeltaRight, shrinkMaxX, growMaxX);
+  let dTop = clampAsym(rawDeltaTop, shrinkMaxY, growMaxY);
+  let dBot = clampAsym(rawDeltaBottom, shrinkMaxY, growMaxY);
+  let dLeft = clampAsym(rawDeltaLeft, shrinkMaxX, growMaxX);
+  let dRight = clampAsym(rawDeltaRight, shrinkMaxX, growMaxX);
+
+  // Floor guard — if applying these deltas would take the
+  // rectangle below MIN_*_PX, scale the shrink components
+  // back proportionally so the rect stays at or above the
+  // minimum. Only matters for shrink cases (positive deltas).
+  const projectedH = currentH - (Math.max(0, dTop) + Math.max(0, dBot));
+  if (projectedH < MIN_HEIGHT_PX) {
+    const shrinkBudget = Math.max(0, currentH - MIN_HEIGHT_PX);
+    const totalWantedShrink = Math.max(0, dTop) + Math.max(0, dBot);
+    if (totalWantedShrink > 0 && shrinkBudget < totalWantedShrink) {
+      const scale = shrinkBudget / totalWantedShrink;
+      if (dTop > 0) dTop *= scale;
+      if (dBot > 0) dBot *= scale;
+    }
+  }
+  const projectedW = currentW - (Math.max(0, dLeft) + Math.max(0, dRight));
+  if (projectedW < MIN_WIDTH_PX) {
+    const shrinkBudget = Math.max(0, currentW - MIN_WIDTH_PX);
+    const totalWantedShrink = Math.max(0, dLeft) + Math.max(0, dRight);
+    if (totalWantedShrink > 0 && shrinkBudget < totalWantedShrink) {
+      const scale = shrinkBudget / totalWantedShrink;
+      if (dLeft > 0) dLeft *= scale;
+      if (dRight > 0) dRight *= scale;
+    }
+  }
 
   const next = {
     left: rect.left + dLeft,
