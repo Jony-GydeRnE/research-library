@@ -332,41 +332,61 @@ function findCaptionLine(lines, captionText) {
 //   TOP:    snap to just below the last body-text line above the
 //           figure in the same column.
 //
-// Body-text filter: only lines with at least MIN_BODYTEXT_LEN
-// characters qualify as body-text anchors — this excludes short
-// glyph labels like "c_41", "X_52", "51 42 51 42" that pdfjs
-// picks up from inside figure artwork (Rodina p2 kinematic mesh
-// is the canonical case). Without this filter the top anchor
-// snaps to a label line and crops the figure in half.
+// Body-text filter has TWO criteria, both required:
+//   (a) length ≥ MIN_BODYTEXT_LEN — bumped to 45 chars. Real body
+//       text in academic papers wraps at 60-120 chars per line;
+//       the worst-case pdfjs label concatenations on figure-
+//       internal vertex labels ("3 1 6 3 6 3 2 6 3 6 3 6", "P L
+//       P A P R P L P B P R") top out around 30-40 chars. 45
+//       cleanly excludes the labels while keeping real body text.
+//   (b) physically ABOVE the model's TOP% estimate (with a small
+//       slack). Without this constraint, the top-anchor search
+//       could match a label line that happens to pass the length
+//       filter and is BELOW the model's claimed top — i.e.,
+//       inside the figure. The model's TOP% is rough but it's
+//       reliably above the figure's midpoint, so it makes a sound
+//       ceiling for the search. This is the FIG. 4 / S₁S₂ fix:
+//       previously the top anchor was matching label lines inside
+//       those figures and cropping them in half.
 //
 // Returns {top, bottom, source, matchedLine} or null if no
 // caption could be matched. If the top anchor is missing, falls
 // back to modelTopPx for the top edge.
-const MIN_BODYTEXT_LEN = 25;
+const MIN_BODYTEXT_LEN = 45;
 function computeVerticalFromAnchors(idx, captionText, { modelTopPx, modelBottomPx }) {
   const { lines, pdfH, scaleY } = idx;
   const captionLine = findCaptionLine(lines, captionText);
   if (!captionLine) return null;
 
   const pdfY_to_pngY = (pdfY) => (pdfH - pdfY) * scaleY;
+  const pngY_to_pdfY = (pngY) => pdfH - (pngY / scaleY);
   const padPx = 8;
 
   // BOTTOM: just above the caption line.
   const captionTopPng = pdfY_to_pngY(captionLine.y + captionLine.h * 0.85);
   const bottom = captionTopPng - padPx;
 
-  // TOP: find the closest body-text line ABOVE the caption
-  // (strictly above by caption.h + safety margin so caption
-  // wrap-around lines aren't accidentally picked). Walk the
-  // column's lines, keep the one with smallest y that still has
-  // y > captionLine.y + margin AND qualifies as body text.
+  // TOP: find the closest body-text line ABOVE the figure region
+  // (above the model's TOP%) in the same column.
+  //
+  // PDF y is bottom-up, so "physically above" = larger y. The
+  // search bounds are:
+  //   - Strictly above the caption (y > captionLine.y + margin)
+  //   - At or above the model's top estimate, with 10pt slack
+  //     to account for the model under-estimating. Lines INSIDE
+  //     the figure are typically below modelTopPdfY and get
+  //     filtered out here.
+  //   - Body-text length (≥ MIN_BODYTEXT_LEN chars).
+  // Among survivors we pick the line with the SMALLEST y — the
+  // body line CLOSEST to the figure from above.
   const topSearchFloor = captionLine.y + captionLine.h + 4;
+  const modelTopPdfY = pngY_to_pdfY(modelTopPx);
+  const topCeilingSlack = 10; // pt — allow lines slightly below model top
   let topAnchor = null;
   for (const line of lines) {
     if (line.y <= topSearchFloor) continue;
+    if (line.y < modelTopPdfY - topCeilingSlack) continue;
     if (line.text.length < MIN_BODYTEXT_LEN) continue;
-    // Looking for the line with SMALLEST y that still qualifies —
-    // i.e., the body-text line closest to the caption from above.
     if (topAnchor == null || line.y < topAnchor.y) topAnchor = line;
   }
 

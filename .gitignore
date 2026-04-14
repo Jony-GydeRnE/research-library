@@ -7,3 +7,16 @@ uploads/
 *.jpg
 *.jpeg
 .tmp.driveupload/
+
+# Debug screenshots — explicitly allowed so other LLMs working
+# in this repo can see UI state across sessions. The bulky
+# archive subfolder stays ignored.
+!reports/debug-pix/
+!reports/debug-pix/*.png
+!reports/debug-pix/*.jpg
+!reports/debug-pix/*.jpeg
+reports/debug-pix/older pics/
+reports/debug-pix/34902/
+reports/debug-pix/34904/
+reports/debug-pix/34906/
+reports/debug-pix/34908/
