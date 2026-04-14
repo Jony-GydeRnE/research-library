@@ -33,9 +33,29 @@ const Chunk = require('../models/Chunk');
 const Span = require('../models/Span');
 const Edge = require('../models/Edge');
 const CanonicalDefinition = require('../models/CanonicalDefinition');
+const taxonomy = require('./taxonomyService');
 
 // Preference tiers — lower number = stronger signal.
 const TIER = { structural: 0, role: 1, tag: 2 };
+
+// ─── Concept normalization ────────────────────────────────
+// Every surface tag is first passed through taxonomy.getCanonicals()
+// so that `bcfw_shifts` / `bcfw_shift` / `bcfw_recursion` all
+// map to the SAME canonical concept name (whichever one the
+// CONCEPTS table assigns). The CanonicalDefinition collection
+// is keyed by canonical name, not raw tag, so a span whose
+// surface form differs from the definition's surface form
+// still finds the definition via the lookup.
+//
+// getCanonicals(tag) returns an array because a tag can belong
+// to multiple concepts. In practice 95% of tags map to exactly
+// one canonical concept, and the tail (multi-concept) does the
+// right thing by emitting multiple candidates / multiple lookups.
+function canonicalsFor(tag) {
+  if (!tag || typeof tag !== 'string') return [];
+  const c = taxonomy.getCanonicals(tag);
+  return Array.isArray(c) ? c.filter(x => typeof x === 'string' && x.length >= 2) : [];
+}
 
 // ─── Anti-orphan text guard ────────────────────────────────
 // If a chunk's text starts with a pronoun or demonstrative,
@@ -85,22 +105,31 @@ function extractCandidatesFromChunk(chunk, spans) {
   const defSpans = spans.filter(s => s.role === 'definition');
   const hasStructural = chunk.structuralType === 'definition';
 
+  // Helper: emit one candidate per canonical concept for each
+  // surface tag. A surface tag like `bcfw_shift` may canonicalize
+  // to `bcfw_shifts` (or whatever the CONCEPTS table declares),
+  // so downstream lookup on either surface form finds the row.
+  const pushCanonical = (surfaceTag, tier, spanId) => {
+    const cans = canonicalsFor(surfaceTag);
+    for (const c of cans) {
+      out.push({ concept: c, tier, spanId, surfaceTag });
+    }
+  };
+
   // Tier 0: structural AND role agree.
   if (hasStructural && defSpans.length > 0) {
     // Use the first def-span as the anchor — it's the actual
     // sentence doing the defining.
     const anchor = defSpans[0];
     for (const tag of (anchor.contextTags || [])) {
-      if (isConceptTagLike(tag)) {
-        out.push({ concept: tag, tier: 0, spanId: anchor._id });
-      }
+      if (isConceptTagLike(tag)) pushCanonical(tag, 0, anchor._id);
     }
     // Also attribute any chunk-level tags the anchor didn't
     // carry (definition chunks sometimes have umbrella tags).
     for (const tag of chunkTags) {
       if (!isConceptTagLike(tag)) continue;
       if ((anchor.contextTags || []).includes(tag)) continue;
-      out.push({ concept: tag, tier: 0, spanId: anchor._id });
+      pushCanonical(tag, 0, anchor._id);
     }
   }
 
@@ -110,7 +139,7 @@ function extractCandidatesFromChunk(chunk, spans) {
     for (const span of defSpans) {
       for (const tag of (span.contextTags || [])) {
         if (!isConceptTagLike(tag)) continue;
-        out.push({ concept: tag, tier: 1, spanId: span._id });
+        pushCanonical(tag, 1, span._id);
       }
     }
   }
@@ -123,7 +152,27 @@ function extractCandidatesFromChunk(chunk, spans) {
       if (!tag.endsWith('_definition')) continue;
       const concept = tag.slice(0, -'_definition'.length);
       if (!isConceptTagLike(concept)) continue;
-      out.push({ concept, tier: 2, spanId: span._id });
+      pushCanonical(concept, 2, span._id);
+    }
+  }
+
+  // Tier 2b: `:=` in the span text. A handwritten or
+  // published definition of the form "BCFW shift := p_i + zq"
+  // is unambiguous and should be picked up as tier-1 strength
+  // (role-level signal) even if the span's role wasn't set to
+  // 'definition' by the first pass. We identify the LHS of the
+  // `:=` by looking at the chunk's dominant contextTag on the
+  // same span and canonicalizing it. This is a safety net for
+  // notes that went through ingestion before the `:=` prompt
+  // rule was added.
+  for (const span of spans) {
+    const txt = span.spanText || '';
+    if (!/:=|\\mathrel\{\\mathop:\}=|\\equiv/.test(txt)) continue;
+    for (const tag of (span.contextTags || [])) {
+      if (!isConceptTagLike(tag)) continue;
+      // Tier 1 strength — the `:=` signal is as strong as a
+      // role=definition assignment.
+      pushCanonical(tag, 1, span._id);
     }
   }
 
@@ -279,33 +328,62 @@ async function linkSpansToCanonicalDefinitions(opts = {}) {
   for (const span of spans) {
     const tags = (span.contextTags || []).filter(isConceptTagLike);
     if (tags.length === 0) continue;
-    for (const tag of tags) {
-      const def = defByConcept.get(tag);
-      if (!def) continue;
-      // Skip self-edges: the span IS inside the definition chunk.
-      if (String(span.chunkId || '') === String(def.definitionChunkId)) {
-        selfEdges++;
-        continue;
-      }
-      const key = `${String(span._id)}:${String(def.definitionChunkId)}`;
-      if (existingSet.has(key)) { skipped++; continue; }
 
-      await Edge.create({
-        fromSpanId: span._id,
-        fromChunkId: span.chunkId || null,
-        fromBookId: span.bookId,
-        toChunkId: def.definitionChunkId,
-        toSpanId: def.definitionSpanId || null,
-        toBookId: def.definitionBookId,
-        relationshipType: 'uses_definition',
-        confidence: def.confidence || 'z',
-        relevance: 'z',
-        method: 'canonical-lookup',
-        resolved: true,
-        createdAt: new Date(),
-      });
-      existingSet.add(key);
-      created++;
+    // For each span tag, expand to its canonical concept names
+    // via the taxonomy layer, then look up each canonical in
+    // the dictionary. This is the synonym-aware lookup: a span
+    // tagged `bcfw_shift` finds a canonical definition stored
+    // under `bcfw_shifts` (or whatever the taxonomy declared
+    // as the canonical form for that concept family).
+    //
+    // Per-span dedup: track which canonical chunks we've
+    // already emitted an edge to for this span so we don't
+    // double-count when two surface tags on the same span
+    // resolve to the same canonical definition.
+    const emittedTargets = new Set();
+
+    for (const tag of tags) {
+      const canonicalNames = canonicalsFor(tag);
+      if (canonicalNames.length === 0) continue;
+
+      for (const canonicalName of canonicalNames) {
+        const def = defByConcept.get(canonicalName);
+        if (!def) continue;
+
+        // Skip self-edges: the span IS inside the definition chunk.
+        if (String(span.chunkId || '') === String(def.definitionChunkId)) {
+          selfEdges++;
+          continue;
+        }
+
+        // Per-span target dedup.
+        if (emittedTargets.has(String(def.definitionChunkId))) continue;
+
+        const key = `${String(span._id)}:${String(def.definitionChunkId)}`;
+        if (existingSet.has(key)) {
+          emittedTargets.add(String(def.definitionChunkId));
+          skipped++;
+          continue;
+        }
+
+        await Edge.create({
+          fromSpanId: span._id,
+          fromChunkId: span.chunkId || null,
+          fromBookId: span.bookId,
+          toChunkId: def.definitionChunkId,
+          toSpanId: def.definitionSpanId || null,
+          toBookId: def.definitionBookId,
+          relationshipType: 'uses_definition',
+          confidence: def.confidence || 'z',
+          relevance: 'z',
+          method: 'canonical-lookup',
+          resolved: true,
+          createdAt: new Date(),
+        });
+        existingSet.add(key);
+        emittedTargets.add(String(def.definitionChunkId));
+        created++;
+      }
     }
   }
 

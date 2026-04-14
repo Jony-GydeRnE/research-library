@@ -845,8 +845,15 @@ async function repairPattern3(chunk, statsAccumulator, log) {
 
 async function linkNewSpansToCanonicals(spans, chunk) {
   // For each span in `spans`, look up each of its contextTags
-  // in the CanonicalDefinition collection. Hit → emit a
-  // uses_definition edge. Miss → add to missingConcepts.
+  // in the CanonicalDefinition collection — with SYNONYM
+  // EXPANSION via the taxonomy layer. A span tagged
+  // `bcfw_shift` will find a canonical definition stored
+  // under the canonical concept name for that family, regardless
+  // of which surface form the definition chunk used.
+  // Hit → emit a uses_definition edge. Miss → add to
+  // missingConcepts for the crawler target queue.
+  const taxonomy = require('./taxonomyService');
+
   let created = 0;
   let hits = 0;
   let misses = 0;
@@ -854,46 +861,64 @@ async function linkNewSpansToCanonicals(spans, chunk) {
 
   for (const span of spans) {
     const tags = (span.contextTags || []);
-    for (const tag of tags) {
-      const canonical = await CanonicalDefinition.findOne({ concept: tag }).lean();
-      if (!canonical) {
-        // Only count as a "miss" if the span had an Ld marker —
-        // otherwise it's not being claimed as a missing
-        // definition in the first place.
-        if (span.gapType === 'definition' || span.searchClass === 'L') {
-          misses++;
-          missingConcepts.push(tag);
-        }
-        continue;
-      }
-      // Skip self-edge: span is inside its own canonical chunk
-      if (String(span.chunkId || chunk._id) === String(canonical.definitionChunkId)) {
-        continue;
-      }
-      // Dedup: do we already have this edge?
-      const exists = await Edge.findOne({
-        fromSpanId: span._id,
-        toChunkId: canonical.definitionChunkId,
-        method: 'canonical-lookup',
-      }).lean();
-      if (exists) { hits++; continue; }
+    // Per-span dedup across canonical expansions: if two surface
+    // tags on the same span resolve to the same canonical
+    // definition, emit only one edge.
+    const emittedTargets = new Set();
 
-      await Edge.create({
-        fromSpanId: span._id,
-        fromChunkId: span.chunkId || chunk._id,
-        fromBookId: span.bookId || chunk.bookId,
-        toChunkId: canonical.definitionChunkId,
-        toSpanId: canonical.definitionSpanId || null,
-        toBookId: canonical.definitionBookId,
-        relationshipType: 'uses_definition',
-        confidence: canonical.confidence || 'z',
-        relevance: 'z',
-        method: 'canonical-lookup',
-        resolved: true,
-        createdAt: new Date(),
-      });
-      created++;
-      hits++;
+    for (const tag of tags) {
+      const canonicalNames = taxonomy.getCanonicals(tag);
+      if (!canonicalNames || canonicalNames.length === 0) continue;
+
+      let matchedAny = false;
+      for (const canonicalName of canonicalNames) {
+        const canonical = await CanonicalDefinition.findOne({ concept: canonicalName }).lean();
+        if (!canonical) continue;
+        matchedAny = true;
+
+        // Skip self-edge: span is inside its own canonical chunk
+        if (String(span.chunkId || chunk._id) === String(canonical.definitionChunkId)) continue;
+
+        // Per-span target dedup
+        if (emittedTargets.has(String(canonical.definitionChunkId))) continue;
+
+        // DB dedup
+        const exists = await Edge.findOne({
+          fromSpanId: span._id,
+          toChunkId: canonical.definitionChunkId,
+          method: 'canonical-lookup',
+        }).lean();
+        if (exists) {
+          emittedTargets.add(String(canonical.definitionChunkId));
+          hits++;
+          continue;
+        }
+
+        await Edge.create({
+          fromSpanId: span._id,
+          fromChunkId: span.chunkId || chunk._id,
+          fromBookId: span.bookId || chunk.bookId,
+          toChunkId: canonical.definitionChunkId,
+          toSpanId: canonical.definitionSpanId || null,
+          toBookId: canonical.definitionBookId,
+          relationshipType: 'uses_definition',
+          confidence: canonical.confidence || 'z',
+          relevance: 'z',
+          method: 'canonical-lookup',
+          resolved: true,
+          createdAt: new Date(),
+        });
+        emittedTargets.add(String(canonical.definitionChunkId));
+        created++;
+        hits++;
+      }
+
+      // Count as a miss only if NO canonical name for this tag
+      // matched AND the span flagged it as a definition gap.
+      if (!matchedAny && (span.gapType === 'definition' || span.searchClass === 'L')) {
+        misses++;
+        missingConcepts.push(tag);
+      }
     }
   }
 
