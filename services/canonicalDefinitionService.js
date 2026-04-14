@@ -449,108 +449,392 @@ function tokenizeText(text) {
     .filter(t => t.length >= 2);
 }
 
+// Trivial query tokens that should not anchor a substring
+// match by themselves. "shifts" / "theory" / etc. are common
+// trailing words that otherwise cause spurious matches (e.g.
+// "Britto-Cachazo-Feng-Witten shifts" falsely matching
+// `non_adjacent_shifts` on "shifts"). If the only matching
+// token is in this set, the candidate is skipped.
+const WEAK_TOKENS = new Set([
+  'shift', 'shifts', 'theory', 'equation', 'invariant', 'invariants',
+  'amplitude', 'amplitudes', 'result', 'results', 'proof', 'proofs',
+  'lemma', 'function', 'functions', 'variable', 'variables',
+  'constant', 'constants', 'parameter', 'parameters',
+  'operator', 'operators', 'vector', 'vectors', 'term', 'terms',
+  'formula', 'formulas', 'expression', 'expressions',
+  'condition', 'conditions', 'method', 'methods',
+]);
+
+/**
+ * Multi-candidate resolver. Given a highlighted string, return
+ * a RANKED list of definition candidates — not just the first
+ * winner.
+ *
+ * Why multi-candidate: the user may highlight "BCFW shift" and
+ * the library may have a definition for it in BOTH the source
+ * paper (Rodina eq 12) AND in Jony's notes (p39 expository
+ * form). The user wants to see BOTH, ranked by which one would
+ * best teach the concept to someone who doesn't know it yet.
+ *
+ * Ranking pipeline:
+ *
+ * Step 1: Gather candidates.
+ *   - Start from the CanonicalDefinition winners for every
+ *     canonical concept name the taxonomy maps the query to.
+ *   - Also gather EVERY span across the library with
+ *     role='definition' whose contextTags canonicalize to any
+ *     of those concepts. This is the pool of alternatives.
+ *   - Also try substring / fuzzy fallback for the concept
+ *     name itself when direct lookup misses.
+ *
+ * Step 2: Heuristic scoring.
+ *   - Notes-book preference: a span in a notes-kind book gets
+ *     a bonus (Jony's explicit instruction — notes tend to be
+ *     more expository and pedagogical).
+ *   - Content richness: longer preview with both prose and
+ *     at least one `\(` inline math / `\[` display math is
+ *     better than a bare section heading.
+ *   - Structural evidence: chunk.structuralType === 'definition'
+ *     with span role='definition' is better than tag-only.
+ *   - Page earliness: lower page number wins in a tie.
+ *
+ * Step 3: Optional LLM judge pass.
+ *   - For the top 3 heuristic candidates, call Claude Sonnet
+ *     with their preview texts and ask which one teaches the
+ *     concept best to a reader who's never seen it. Judge
+ *     returns ranked list with one-line reasoning.
+ *   - Disabled via opts.judge=false.
+ *
+ * Returns { query, canonicalConcept, synonymFamily, spanCount,
+ *   candidates: [ {chunkId, bookId, bookTitle, bookKind,
+ *     pageNumber, structuralType, preview, heuristicScore,
+ *     judgeRank, judgeReason, tier, conceptName} ...] }
+ * or null if no candidates.
+ */
 async function resolveFromText(rawText, opts = {}) {
   const Chunk = require('../models/Chunk');
   const Book = require('../models/Book');
+  const Span = require('../models/Span');
 
   if (!rawText || typeof rawText !== 'string') return null;
   const text = rawText.trim();
   if (text.length === 0) return null;
+  const useLLMJudge = opts.judge !== false;
+  const maxCandidates = opts.maxCandidates || 5;
 
-  // ─── Strategy 1: direct canonical lookup ─────────────
+  // ─── Step 1a: identify candidate canonical concept names ─
+  const conceptNames = new Set();
+
   const snake = normalizeTextToSnakeCase(text);
-  const candidateNames = new Set();
-  // Try the snake-cased whole phrase
-  for (const c of canonicalsFor(snake)) candidateNames.add(c);
-  // Also try the individual word tokens in case the taxonomy
-  // markers are single-word ("bcfw", "hidden_zero")
+  for (const c of canonicalsFor(snake)) conceptNames.add(c);
   for (const tok of tokenizeText(text)) {
-    for (const c of canonicalsFor(tok)) candidateNames.add(c);
+    if (tok.length < 2) continue;
+    if (WEAK_TOKENS.has(tok)) continue;
+    for (const c of canonicalsFor(tok)) conceptNames.add(c);
   }
 
-  let def = null;
-  let matchedVia = 'direct';
-  for (const name of candidateNames) {
-    const found = await CanonicalDefinition.findOne({ concept: name }).lean();
-    if (found) { def = found; break; }
-  }
-
-  // ─── Strategy 2: substring scan over dictionary ──────
-  if (!def) {
-    matchedVia = 'substring';
-    const tokens = tokenizeText(text);
-    if (tokens.length > 0) {
-      const all = await CanonicalDefinition.find({}).select('concept').lean();
-      for (const row of all) {
-        for (const tok of tokens) {
-          if (row.concept.includes(tok) && tok.length >= 3) {
-            def = await CanonicalDefinition.findOne({ concept: row.concept }).lean();
-            break;
-          }
+  // Substring scan if we found no direct canonicals
+  if (conceptNames.size === 0) {
+    const all = await CanonicalDefinition.find({}).select('concept').lean();
+    const tokens = tokenizeText(text).filter(t => t.length >= 3 && !WEAK_TOKENS.has(t));
+    for (const row of all) {
+      for (const tok of tokens) {
+        if (row.concept.includes(tok)) {
+          conceptNames.add(row.concept);
+          break;
         }
-        if (def) break;
       }
     }
   }
 
-  // ─── Strategy 3: fuzzy whole-word overlap ────────────
-  if (!def) {
-    matchedVia = 'fuzzy';
-    const tokens = new Set(tokenizeText(text).filter(t => t.length >= 3));
+  // Fuzzy whole-word overlap as last resort
+  if (conceptNames.size === 0) {
+    const tokens = new Set(tokenizeText(text).filter(t => t.length >= 3 && !WEAK_TOKENS.has(t)));
     if (tokens.size >= 2) {
       const all = await CanonicalDefinition.find({}).select('concept').lean();
-      let best = null;
-      let bestOverlap = 0;
       for (const row of all) {
-        const conceptTokens = new Set(
-          row.concept.split('_').filter(t => t.length >= 3)
-        );
+        const conceptTokens = new Set(row.concept.split('_').filter(t => t.length >= 3));
         let overlap = 0;
         for (const t of tokens) if (conceptTokens.has(t)) overlap++;
-        if (overlap >= 2 && overlap > bestOverlap) {
-          bestOverlap = overlap;
-          best = row;
-        }
+        if (overlap >= 2) conceptNames.add(row.concept);
       }
-      if (best) def = await CanonicalDefinition.findOne({ concept: best.concept }).lean();
     }
   }
 
-  if (!def) return null;
+  if (conceptNames.size === 0) return null;
 
-  // Assemble the return shape. Fetch the definition chunk's
-  // book + page + preview text. Fetch edge counts. The
-  // metadata panel renders all of this.
-  const Span = require('../models/Span');
-  const chunk = await Chunk.findById(def.definitionChunkId)
-    .select('_id bookId pageNumber sourceText rawText structuralType').lean();
-  const book = chunk ? await Book.findById(chunk.bookId).select('_id title author kind').lean() : null;
+  // ─── Step 1b: gather candidate chunks ────────────────
+  // For each canonical concept name, collect every span
+  // library-wide whose contextTag canonicalizes to it AND
+  // whose role or context indicates a definition. Include
+  // the registered CanonicalDefinition as a guaranteed
+  // candidate, then expand via span lookup for alternatives.
 
-  // Count how many spans library-wide carry this canonical
-  // concept (via any surface tag that canonicalizes to it).
-  // This is the "span count" the UI shows as a badge.
-  const spanCount = await Span.countDocuments({
-    contextTags: { $regex: new RegExp(`^${def.concept}|${def.concept}$`, 'i') },
-  });
+  const candidatesByChunk = new Map(); // chunkId -> candidate
 
-  return {
-    query: text,
-    matchedVia,
-    canonicalConcept: def.concept,
-    synonymFamily: Array.isArray(taxonomy.CONCEPTS?.[def.concept])
-      ? taxonomy.CONCEPTS[def.concept]
-      : [],
-    spanCount,
-    definition: chunk ? {
+  const addCandidate = async (chunk, span, tier, conceptName) => {
+    if (!chunk) return;
+    const key = String(chunk._id);
+    if (candidatesByChunk.has(key)) {
+      // Keep the best tier if duplicate
+      const existing = candidatesByChunk.get(key);
+      if (tier < existing.tier) existing.tier = tier;
+      return;
+    }
+    const book = await Book.findById(chunk.bookId).select('_id title author kind').lean();
+    candidatesByChunk.set(key, {
       chunkId: String(chunk._id),
       bookId: String(chunk.bookId),
       bookTitle: book?.title || null,
       bookKind: book?.kind || null,
       pageNumber: chunk.pageNumber,
       structuralType: chunk.structuralType || null,
-      preview: (chunk.sourceText || chunk.rawText || '').slice(0, 400),
+      preview: (chunk.sourceText || chunk.rawText || '').slice(0, 600),
+      tier,
+      conceptName,
+      spanId: span ? String(span._id) : null,
+      spanRole: span?.role || null,
+      spanText: span?.spanText || null,
+    });
+  };
+
+  // 1b.1: Registered CanonicalDefinition winners
+  for (const conceptName of conceptNames) {
+    const def = await CanonicalDefinition.findOne({ concept: conceptName }).lean();
+    if (!def) continue;
+    const chunk = await Chunk.findById(def.definitionChunkId)
+      .select('_id bookId pageNumber sourceText rawText structuralType').lean();
+    const tier = def.source === 'structural' ? 0 : def.source === 'role' ? 1 : 2;
+    await addCandidate(chunk, null, tier, conceptName);
+  }
+
+  // 1b.2: Alternative definition spans across the library
+  // Look for any span whose contextTag canonicalizes to any
+  // of our concept names AND has role='definition'.
+  for (const conceptName of conceptNames) {
+    // Find spans whose tags contain a variant that canonicalizes
+    // to this concept. We use a regex against the canonical
+    // name plus known markers.
+    const markers = (taxonomy.CONCEPTS?.[conceptName] || [conceptName])
+      .filter(m => typeof m === 'string' && m.length >= 2);
+    if (markers.length === 0) continue;
+
+    const rx = new RegExp(markers.map(m => m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'i');
+    const altSpans = await Span.find({
+      role: 'definition',
+      contextTags: { $regex: rx },
+    })
+      .select('_id bookId chunkId contextTags role spanText sentenceStart sentenceEnd')
+      .limit(20)
+      .lean();
+
+    for (const s of altSpans) {
+      const chunk = await Chunk.findById(s.chunkId)
+        .select('_id bookId pageNumber sourceText rawText structuralType').lean();
+      if (!chunk) continue;
+      // Tier 1 for role=definition; promoted to 0 if chunk
+      // structuralType also says definition.
+      const tier = chunk.structuralType === 'definition' ? 0 : 1;
+      await addCandidate(chunk, s, tier, conceptName);
+    }
+  }
+
+  // 1b.3: `:=` operator spans for any canonical concept name
+  for (const conceptName of conceptNames) {
+    const markers = (taxonomy.CONCEPTS?.[conceptName] || [conceptName])
+      .filter(m => typeof m === 'string' && m.length >= 2);
+    if (markers.length === 0) continue;
+    const rx = new RegExp(markers.map(m => m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'i');
+    const operatorSpans = await Span.find({
+      contextTags: { $regex: rx },
+      spanText: { $regex: /:=|\\mathrel\{\\mathop:\}=|\\equiv/ },
+    })
+      .select('_id bookId chunkId contextTags role spanText')
+      .limit(10)
+      .lean();
+
+    for (const s of operatorSpans) {
+      const chunk = await Chunk.findById(s.chunkId)
+        .select('_id bookId pageNumber sourceText rawText structuralType').lean();
+      if (!chunk) continue;
+      await addCandidate(chunk, s, 1, conceptName); // := gets role-tier strength
+    }
+  }
+
+  if (candidatesByChunk.size === 0) return null;
+
+  // ─── Step 2: heuristic scoring ───────────────────────
+  // Filter out candidates with empty or near-empty previews —
+  // chunks whose sourceText wasn't properly extracted (common
+  // on the first few sentences of handwritten notes pages).
+  // A candidate with <25 chars of preview cannot teach
+  // anything, regardless of how well it scores on the
+  // structural heuristics.
+  const candidates = [...candidatesByChunk.values()]
+    .filter(c => {
+      const p = (c.preview || '').trim();
+      // Also require that the preview contains at least one
+      // real word (>= 3 letter run) — a chunk whose preview is
+      // just "\[...\]" or an equation label fails this and
+      // isn't useful for teaching even if it's valid.
+      return p.length >= 25 && /[a-zA-Z]{3,}/.test(p);
+    });
+
+  if (candidates.length === 0) return null;
+  for (const c of candidates) {
+    let score = 0;
+    // Notes-book preference (Jony's explicit instruction)
+    if (c.bookKind === 'notes') score += 30;
+    // Tier quality: lower tier number is better
+    score += (2 - c.tier) * 10;
+    // Content richness heuristics
+    const previewLen = (c.preview || '').length;
+    if (previewLen >= 300) score += 8;
+    else if (previewLen >= 150) score += 4;
+    else if (previewLen < 50) score -= 5; // bare section heading penalty
+    const hasInlineMath = /\\\(/.test(c.preview || '');
+    const hasDisplayMath = /\\\[/.test(c.preview || '');
+    if (hasInlineMath) score += 3;
+    if (hasDisplayMath) score += 5;
+    // `:=` operator bonus
+    if (/:=|\\equiv/.test(c.spanText || c.preview || '')) score += 6;
+    // Structural type bonus
+    if (c.structuralType === 'definition') score += 5;
+    else if (c.structuralType === 'theorem') score += 3;
+    // Page earliness (smaller tiebreaker)
+    score -= (c.pageNumber || 0) * 0.05;
+
+    c.heuristicScore = Math.round(score * 100) / 100;
+  }
+  candidates.sort((a, b) => b.heuristicScore - a.heuristicScore);
+
+  // Cap to top N
+  const ranked = candidates.slice(0, maxCandidates);
+
+  // ─── Step 3: LLM judge pass ──────────────────────────
+  if (useLLMJudge && ranked.length >= 2) {
+    try {
+      await judgeCandidates(text, ranked.slice(0, Math.min(3, ranked.length)));
+    } catch (err) {
+      console.warn('[resolveFromText] judge failed:', err.message);
+    }
+  }
+
+  // ─── Build the return envelope ───────────────────────
+  const primaryConcept = ranked[0]?.conceptName || [...conceptNames][0];
+  const spanCount = await Span.countDocuments({
+    contextTags: { $regex: new RegExp(`${primaryConcept}`, 'i') },
+  });
+
+  return {
+    query: text,
+    canonicalConcept: primaryConcept,
+    alternativeConcepts: [...conceptNames].filter(c => c !== primaryConcept),
+    synonymFamily: Array.isArray(taxonomy.CONCEPTS?.[primaryConcept])
+      ? taxonomy.CONCEPTS[primaryConcept]
+      : [],
+    spanCount,
+    candidateCount: ranked.length,
+    candidates: ranked,
+    // Legacy compat: single-definition shape that older clients
+    // (the current metadata-panel.js fallback block) still read.
+    matchedVia: ranked[0] ? 'ranked' : null,
+    definition: ranked[0] ? {
+      chunkId: ranked[0].chunkId,
+      bookId: ranked[0].bookId,
+      bookTitle: ranked[0].bookTitle,
+      bookKind: ranked[0].bookKind,
+      pageNumber: ranked[0].pageNumber,
+      structuralType: ranked[0].structuralType,
+      preview: ranked[0].preview?.slice(0, 400),
     } : null,
   };
+}
+
+// ─── Step 3 helper: LLM judge for top candidates ───────
+//
+// Calls Claude Sonnet with the top 2-3 heuristic winners and
+// asks which one best teaches the concept to a reader who
+// doesn't know it yet. Mutates each candidate in place:
+//   c.judgeRank      — 1-indexed rank from the judge
+//   c.judgeReason    — one-line reasoning (why this rank)
+//
+// Sorts the candidates array by judgeRank after judging.
+// Silently no-ops if ANTHROPIC_API_KEY is missing — heuristic
+// ordering is preserved in that case.
+async function judgeCandidates(query, candidates) {
+  if (!candidates || candidates.length < 2) return;
+  if (!process.env.ANTHROPIC_API_KEY) return;
+
+  const Anthropic = require('@anthropic-ai/sdk');
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  const payload = candidates.map((c, i) => ({
+    id: i + 1,
+    source: c.bookKind === 'notes' ? 'personal notes' : 'published paper',
+    bookTitle: (c.bookTitle || '').slice(0, 60),
+    page: c.pageNumber,
+    structuralType: c.structuralType || 'narrative',
+    preview: (c.preview || '').slice(0, 500),
+  }));
+
+  const system = `You are a pedagogy judge. You will be given a concept the user wants explained, and 2-3 candidate definition passages drawn from their research library. One or more may be from the user's own notes (expository, informal, example-heavy) and one or more may be from a published paper (formal, terse, often just the defining equation).
+
+Your job is to rank the candidates by how well each would TEACH this concept to a reader who does not yet know what it is. Consider:
+- Does the passage define the concept or just invoke it?
+- Does it include concrete examples, derivations, or intuition-building context?
+- Does it rely on other undefined concepts, and if so are those accessible?
+- Would a new grad student understand the concept from this passage alone?
+
+Return ONLY a JSON array of the form:
+[
+  {"id": <candidate id>, "rank": 1, "reason": "<one sentence>"},
+  {"id": <candidate id>, "rank": 2, "reason": "<one sentence>"},
+  ...
+]
+Best candidate gets rank 1. No prose outside the JSON.`;
+
+  const userMsg = `Concept: ${query}
+
+Candidates:
+
+${payload.map(p => `[${p.id}] (${p.source}, ${p.bookTitle}, p.${p.page}, ${p.structuralType})
+${p.preview}
+`).join('\n')}
+
+Rank by teaching quality. Return JSON only.`;
+
+  const resp = await client.messages.create({
+    model: 'claude-sonnet-4-5-20250929',
+    max_tokens: 500,
+    system,
+    messages: [{ role: 'user', content: userMsg }],
+  });
+
+  const text = (resp.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+  // Extract JSON array from the response
+  const match = text.match(/\[[\s\S]*\]/);
+  if (!match) return;
+  let verdict;
+  try { verdict = JSON.parse(match[0]); } catch (_) { return; }
+  if (!Array.isArray(verdict)) return;
+
+  // Apply the verdict to the candidates (1-indexed id → array index)
+  for (const v of verdict) {
+    const idx = (v.id || 0) - 1;
+    if (idx >= 0 && idx < candidates.length) {
+      candidates[idx].judgeRank = v.rank;
+      candidates[idx].judgeReason = v.reason || null;
+    }
+  }
+
+  // Resort by judgeRank (ascending), fall back to heuristicScore
+  candidates.sort((a, b) => {
+    const ar = a.judgeRank ?? 99;
+    const br = b.judgeRank ?? 99;
+    if (ar !== br) return ar - br;
+    return (b.heuristicScore || 0) - (a.heuristicScore || 0);
+  });
 }
 
 async function rebuildCanonicalForBook(bookId) {

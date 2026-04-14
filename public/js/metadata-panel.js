@@ -252,54 +252,82 @@
     return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  // ─── Resolved-concept rendering (synonym-aware fallback) ──
+  // ─── Resolved-concept rendering (ranked multi-candidate) ──
+  //
   // When the offset-based span lookup returns nothing, the
   // panel falls back to /api/metadata/resolve which uses
-  // taxonomyService to find the canonical concept and its
-  // definition chunk. This renders that payload.
+  // taxonomyService to find the canonical concept and returns
+  // a RANKED LIST of candidate definitions — from notes AND
+  // from source papers — with LLM judge scores and reasoning.
+  //
+  // The rendering surfaces:
+  //   - The canonical concept name
+  //   - Optional synonym family
+  //   - Library-wide span count
+  //   - A stack of candidate cards, ordered by judge rank
+  //     (falls back to heuristicScore when no judge result)
+  //   - Each card shows: rank badge, source type (notes/paper),
+  //     book title, page, structural type, judge reasoning
+  //     (if present), and a preview of the definition text.
+  //   - Click a card → opens that book's page in the reader
+  //     via __openSplitReader (which replaces the current
+  //     split's right pane rather than nesting).
   function renderResolvedConcept(resolved, highlightText) {
     if (!resolved) return '<div class="metadata-empty"><p>No metadata.</p></div>';
-    const def = resolved.definition;
+
     const quote = escapeHtml(highlightText || '');
-    let html = '<div class="metadata-span-card metadata-resolved-card">';
-    html += `<div class="span-header">Concept: <strong>${escapeHtml(resolved.canonicalConcept || '')}</strong>`;
-    if (resolved.matchedVia) {
-      html += ` <span class="span-role-badge">${resolved.matchedVia} match</span>`;
-    }
-    html += '</div>';
+    const candidates = Array.isArray(resolved.candidates) ? resolved.candidates : [];
 
+    let html = '<div class="metadata-resolved">';
+
+    // Header: concept name + synonym family + span count
+    html += `<div class="metadata-resolved-header">`;
+    html += `<div class="span-header">Concept: <strong>${escapeHtml(resolved.canonicalConcept || '')}</strong></div>`;
     if (quote) {
-      html += `<div class="span-text" style="font-style:italic;opacity:0.85;">"${quote}"</div>`;
+      html += `<div class="span-text" style="font-style:italic;opacity:0.85;font-size:0.8rem;margin-top:0.25rem;">"${quote}"</div>`;
     }
-
     if (Array.isArray(resolved.synonymFamily) && resolved.synonymFamily.length > 0) {
-      html += '<div class="span-tags">';
-      for (const s of resolved.synonymFamily.slice(0, 8)) {
+      html += '<div class="span-tags" style="margin-top:0.4rem;">';
+      for (const s of resolved.synonymFamily.slice(0, 6)) {
         html += `<span class="tag-pill">${escapeHtml(s.replace(/_/g, ' '))}</span>`;
       }
       html += '</div>';
     }
-
     if (typeof resolved.spanCount === 'number') {
-      html += `<div class="span-search-badge" style="border-color:var(--r-link);color:var(--r-link)">`;
-      html += `${resolved.spanCount} span${resolved.spanCount !== 1 ? 's' : ''} across library carry this concept`;
+      html += `<div style="font-size:0.7rem;color:var(--r-text-muted);margin-top:0.35rem;">`;
+      html += `${resolved.spanCount} span${resolved.spanCount !== 1 ? 's' : ''} across library · ${candidates.length} definition candidate${candidates.length !== 1 ? 's' : ''}`;
       html += '</div>';
     }
+    html += '</div>';
 
-    if (def) {
-      const bookLabel = escapeHtml((def.bookTitle || '(unknown book)').slice(0, 80));
-      html += '<div class="span-edges">';
-      html += `<a class="edge-link" data-book="${def.bookId || ''}" data-page="${def.pageNumber || ''}">`;
-      html += `Canonical definition → ${bookLabel}, p.${def.pageNumber || '?'}`;
-      if (def.structuralType) html += ` <em style="opacity:0.7">(${escapeHtml(def.structuralType)})</em>`;
-      html += '</a>';
-      html += '</div>';
-
-      if (def.preview) {
-        html += `<div class="span-text" style="margin-top:0.4rem;padding:0.5rem;border-left:2px solid var(--r-link);background:rgba(45,90,123,0.05);font-size:0.85rem;line-height:1.5;">${escapeHtml(def.preview)}</div>`;
-      }
+    // Candidate stack
+    if (candidates.length === 0) {
+      html += '<div class="metadata-empty"><p>Concept recognized but no definition chunks found.</p></div>';
     } else {
-      html += '<div class="metadata-empty" style="margin-top:0.5rem;"><p>Concept recognized but no canonical definition chunk is registered.</p></div>';
+      html += '<div class="metadata-candidate-stack">';
+      for (let i = 0; i < candidates.length; i++) {
+        const c = candidates[i];
+        const rank = c.judgeRank || (i + 1);
+        const kindLabel = c.bookKind === 'notes' ? 'notes' : 'paper';
+        const kindClass = c.bookKind === 'notes' ? 'cand-kind-notes' : 'cand-kind-paper';
+
+        html += `<a class="metadata-candidate-card ${kindClass}" data-book="${c.bookId || ''}" data-page="${c.pageNumber || ''}">`;
+        html += '<div class="cand-header">';
+        html += `<span class="cand-rank">#${rank}</span>`;
+        html += `<span class="cand-kind">${kindLabel}</span>`;
+        html += `<span class="cand-book">${escapeHtml((c.bookTitle || '').slice(0, 44))}</span>`;
+        html += `<span class="cand-page">p.${c.pageNumber || '?'}</span>`;
+        if (c.structuralType && c.structuralType !== 'narrative') {
+          html += `<span class="cand-type">${escapeHtml(c.structuralType)}</span>`;
+        }
+        html += '</div>';
+        if (c.judgeReason) {
+          html += `<div class="cand-judge">⚖ ${escapeHtml(c.judgeReason)}</div>`;
+        }
+        html += `<div class="cand-preview">${escapeHtml((c.preview || '').slice(0, 320))}</div>`;
+        html += '</a>';
+      }
+      html += '</div>';
     }
 
     html += '</div>';
@@ -307,13 +335,18 @@
   }
 
   function wireResolvedLinks(container) {
-    container.querySelectorAll('.edge-link[data-book]').forEach(link => {
-      link.addEventListener('click', () => {
+    const clickable = container.querySelectorAll('.metadata-candidate-card[data-book], .edge-link[data-book]');
+    clickable.forEach(link => {
+      link.addEventListener('click', (ev) => {
+        ev.preventDefault();
         const bk = link.dataset.book;
         const pg = link.dataset.page;
         if (!bk || !pg) return;
-        // Prefer split-reader if available, otherwise open a
-        // new tab. Keeps the metadata panel context intact.
+        // Prefer split-reader (replaces the right pane with
+        // the target book rather than nesting splits). Note
+        // the UI to-do logs a follow-up that the right pane
+        // should MORPH into the book with a visual transition
+        // and always force-close the app sidebar on transition.
         const url = `/reader/${bk}/page/${pg}`;
         if (typeof window.__openSplitReader === 'function') {
           if (window.__isSplitReaderOpen && window.__isSplitReaderOpen()) {

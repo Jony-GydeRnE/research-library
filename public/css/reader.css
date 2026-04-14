@@ -1872,3 +1872,129 @@ mjx-container {
   opacity: 0.75;
   margin-right: 0.3rem;
 }
+
+/* ─── Metadata ranked-candidate cards ─────────────────────── */
+.metadata-resolved {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--r-text);
+}
+.metadata-resolved-header {
+  padding-bottom: 0.55rem;
+  border-bottom: 1px solid var(--r-border);
+  margin-bottom: 0.75rem;
+}
+.metadata-candidate-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.metadata-candidate-card {
+  display: block;
+  text-decoration: none;
+  color: var(--r-text);
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--r-border);
+  border-left: 3px solid var(--r-border);
+  border-radius: 6px;
+  background: var(--r-surface);
+  transition: background 120ms ease, border-left-color 120ms ease;
+  cursor: pointer;
+}
+.metadata-candidate-card:hover {
+  background: var(--r-nav-btn-hover);
+  border-left-color: var(--r-link);
+}
+.metadata-candidate-card.cand-kind-notes {
+  border-left-color: #3fb86c;
+}
+.metadata-candidate-card.cand-kind-notes:hover {
+  border-left-color: #2a7a4b;
+}
+.cand-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.5rem;
+  font-size: 0.72rem;
+  margin-bottom: 0.3rem;
+}
+.cand-rank {
+  font-family: ui-monospace, Menlo, monospace;
+  font-weight: 700;
+  color: var(--r-link);
+  background: rgba(45, 90, 123, 0.1);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+.metadata-candidate-card.cand-kind-notes .cand-rank {
+  color: #2a7a4b;
+  background: rgba(63, 184, 108, 0.12);
+}
+.cand-kind {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.62rem;
+  color: var(--r-text-muted);
+}
+.cand-book {
+  font-weight: 500;
+  color: var(--r-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 18em;
+}
+.cand-page {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.68rem;
+  color: var(--r-text-muted);
+}
+.cand-type {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.62rem;
+  color: var(--r-text-muted);
+  background: var(--r-code-bg);
+  padding: 1px 6px;
+  border-radius: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.cand-judge {
+  font-size: 0.75rem;
+  color: var(--r-text);
+  opacity: 0.9;
+  padding: 0.25rem 0.4rem;
+  margin-bottom: 0.3rem;
+  background: rgba(214, 160, 64, 0.08);
+  border-left: 2px solid rgba(214, 160, 64, 0.5);
+  border-radius: 0 3px 3px 0;
+  font-style: italic;
+}
+.cand-preview {
+  font-family: Georgia, serif;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--r-text);
+  opacity: 0.88;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 7em;
+  overflow: hidden;
+  position: relative;
+}
+.cand-preview::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1.5em;
+  background: linear-gradient(transparent, var(--r-surface));
+  pointer-events: none;
+}
+.metadata-candidate-card:hover .cand-preview::after {
+  background: linear-gradient(transparent, var(--r-nav-btn-hover));
+}

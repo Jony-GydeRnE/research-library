@@ -10,9 +10,10 @@ Two decisions, locked. Everything else (prompt caching, fine-tuning, specialist 
 
 **Decision 1 — DIRECTION REVERSAL (notes→paper is primary).** Paper→notes is open-world search (needle in a haystack of fuzzy handwriting). Notes→paper is closed-world: every notes chunk is GUARANTEED to be explaining *something* in the paper, so the question becomes "which of ~80 paper chunks?" — small clean target space. Architecture:
 - **Primary pass:** for every notes chunk, funnel against the source paper's chunks. Always produces an edge.
-- **Secondary pass:** for paper L-tagged chunks left UNCOVERED by the primary pass, run paper→notes funnel to try to fill them.
+- **Secondary pass:** for paper L-tagged chunks left UNCOVERED by the primary pass, run paper→notes funnel to try to fill them. **JONY EDIT: note that in the notes themselves, chunks of derivations should be tagged (group level/not span level) as a 'derivation', then mapping paper L-tagged chunks to notes has a target.**
 - **Bonus output:** the list of paper chunks that NO note covers = "gaps in your understanding" = crawler targets.
-- Cost: ~$0.10 per notes upload (down from $0.13 bidirectional).
+- **JONY MUST READ EDIT:** every citation in any book must automatically get a span or chunk with edges at the span or chunk or (likely) both level(s).  Citations must be taken as "something is missing here that needs to be read to get better understanding here, so lets go find that thing cause that is our job".  The edge must point to something, so if we don't have the book, let it point to an empty/null node that only has basic metadata needed to uniquely specify the book, and even more if possible (maybe the bibliography says page 143-- that would be GOLD for us cause we'd know exactly where to go to build this bridge.
+- Cost: ~$0.10 per notes upload (down from $0.13 bidirectional). Costs never include JONY EDITS whether they effect cost or not.
 - File: `services/noteIngestionService.js matchNotesToSourceBooks`.
 
 **Decision 2 — EXAMPLE LIBRARY (Phase 1: hardcoded few-shots only).** Don't build the retrieval system yet. Pick 8-10 representative examples from `notes-paper-rodina-example.md` and HARDCODE them into the span generation prompts as few-shot examples. Full retrieval system (`services/exampleLibrary.js` with embedding lookup) is Phase 4, only built once we prove the hardcoded version moves L-tag count from 38 → 70+.
@@ -40,6 +41,18 @@ Two decisions, locked. Everything else (prompt caching, fine-tuning, specialist 
 - [ ] 🟡 **Metadata panel size regressed (Jony 2026-04-13).** The current metadata side panel is ~2x wider than it used to be. User reports it was smaller before. Either (a) revert the CSS width change that made it wider, or (b) obsolete the panel entirely in favor of the "Metadata context menu → chunks view in split screen" flow above. If (b), archive the current metadata-panel.js once the highlight-context-menu → chunks-jump flow works. File: `public/css/reader.css` metadata-panel selectors.
 
 - [ ] 🟡 **Sidebar collapsed state doesn't show section numbers (Jony 2026-04-13).** When the reader sidebar is collapsed, the section list loses its numbering (chapter/section numbers from `Page.chapterTitle` / `Page.sectionTitle`). Collapsed mode should show at minimum the number + first 2-3 characters of the title as an icon so the user can still navigate. Files: `views/partials/sidebar.ejs`, `public/css/reader.css`.
+
+- [ ] 🟡 **Metadata button is single-use then dies (Jony 2026-04-13 screenshots).** User highlights text → context menu shows "Metadata" button → clicks → panel opens and works. User dismisses the highlight and re-highlights something → context menu shows "Metadata" button → clicks → nothing happens. Button renders but the click handler has detached or the panel open-state guard short-circuits. Likely in `public/js/highlights.js` (context menu wiring) and/or `public/js/metadata-panel.js` (open-once state flag). Repro: highlight, open metadata, close, re-highlight, click metadata → silent no-op.
+
+- [ ] 🟡 **Weak-highlight dismiss button (Jony 2026-04-13).** The current highlight triggered by selecting text for the metadata panel is ephemeral — it disappears on page refresh and isn't a "saved" highlight. But while it's visible there's no way to dismiss it short of clicking elsewhere. Add a tiny `×` button at the top-right corner of any active weak-highlight that closes it. Should NOT be on saved highlights (those have their own delete flow). Files: `public/js/highlights.js`, `public/css/reader.css`.
+
+- [ ] 🟡 **Edge-click: right panel morphs into target book, sidebar always closes (Jony 2026-04-13).** When the user clicks an edge row in the metadata panel, the expected behavior is: the RIGHT half of the split screen (currently showing metadata) REPLACES itself with the actual target book content, opened to the exact page, with a weak-highlight callout box around the quoted chunk. Current behavior (per screenshots 32-35): going into a double split, so the user sees 3 panes squeezed. Logic rules:
+  - If split-screen is already open with metadata on the right: replace the right pane contents with the target book reader (don't open a new split level).
+  - If split-screen is not open: open a new split, with the current reader on the left and the target book on the right.
+  - In EITHER case, force-close the app sidebar / hamburger immediately on transition. Even if it was open before. The user must explicitly re-open it. Same rule applies every time we transition into any split-screen state.
+  - The right-pane-morph should visually transition (fade/morph/slide) rather than hard-swap — makes it feel like the metadata "window" is turning INTO the cited content, which is conceptually true: the metadata preview WAS a window into that book, the click opens the full window.
+  - Aspiration log: future version should make the morph feel magical — the preview text within the metadata card is already the chunk text, and clicking it should feel like the card expands out to fill the pane as the full book view.
+  Files: `public/js/metadata-panel.js` `wireResolvedLinks()` (currently calls `window.__openSplitReader` unconditionally), `public/js/chat-split-reader.js` (split controller), `views/reader.ejs` (sidebar force-close hook).
 
 
 
