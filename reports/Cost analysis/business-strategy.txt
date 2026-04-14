@@ -1,0 +1,96 @@
+me
+
+Business strategy hat on, monetization.
+
+Search repository to see latest vision and records and commits and updates and any part of code you wanna see.
+
+How 2 mke $?
+
+People pay to have LLM explore knowledge graph with their query in mind and the metadata and edges outputted.
+
+Moat as Gyde makes money, it acquires data to enhance overall knowledge graph and make future searches cheaper by increasingly avoiding LLM verbose explanations in lieu of moonwalking and deterministic publishable info.
+
+Publishing companies? Say crawler decides best 20 things to scrape for ur collection but 10 behind pay walls. Maybe, publishers allow Gyde $$ by ads. Link to purchase content @@at discounted price@@.  We bring publishers clients in bulk -> automatic discount and of revenue generated we get a cut.
+
+A kind of affiliate marketing. Most companies have budget for ads that lead to sells so likely YES response with minimal output.
+
+Over time, we gain leverage if lots of sells come through us and restructuring our relationship can be mutually beneficial and lead to us getting full on demand access with pay per view model that reduces cost of targeted content (Gyde knows exactly what content to show) dramatically.  User doesnt need to read or buy entire book.  User needs these few pages surrounding a quote in that book or paper. Something like that.
+
+Only one idea there. Maybe two. But way more possibilities.
+
+claude
+
+Okay, I have full context. Let me read the Vision document to get the big picture before we talk business strategy.
+
+Good  I now have full context: the Vision, the Update log, the benchmark state, where the code is. Let me think carefully about monetization.
+
+Here's a sharp, layered answer on how Gyde makes money  grounded in what you're actually building, not generic SaaS advice.
+
+---
+
+## How Gyde Makes Money
+
+### Layer 1  The Core: Graph Query Subscriptions
+
+Your framing is exactly right. The product is **LLM traversal of a typed edge graph**, not content storage. So the revenue model mirrors that:
+
+**Usage-based pricing for graph queries.** Every time a user asks a question, the system: retrieves relevant spans  traverses edges  routes to LLM for recognition/synthesis. That's a compute event with a real cost. Charge for it.
+
+- **Free tier**: N queries/month, personal library only, limited edge depth
+- **Pro tier** (~$20-40/mo): unlimited queries, multi-book graph traversal, notes ingestion (your moat  this is the expensive one to run), arXiv crawling credits
+- **Institutional tier**: university or lab license, shared graph across a research group, admin controls, API access
+
+The key insight is that **notes ingestion is the price floor**. You already know vision processing + span generation costs roughly $0.02-0.03/page. A 100-page notes upload costs maybe $2-3 to run. That's the cost floor the subscription must clear. But the *value* delivered  auto-generated citations linking those notes to every passage in a corpus  is worth 100 that to a grad student who just saved 40 hours.
+
+---
+
+### Layer 2  Publisher Affiliate Play (Your Idea, Formalized)
+
+This is genuinely viable and you don't even need to wait until you have scale. Here's the mechanism:
+
+1. Your crawler surfaces paywalled content that's relevant to a user's collection
+2. You surface a card: *"This passage from [Textbook X] likely resolves the gap on Rodina p.4  see 3.2"* (you can infer this from bib data + embeddings without seeing the content)
+3. The card has a **buy/access** CTA  affiliate link or direct deal
+4. Publisher gets a sale they wouldn't have gotten otherwise; you get a cut (typically 5-15% for academic publishers, potentially higher if you negotiate direct)
+
+The asymmetry in your favor: **Gyde knows exactly which 3 pages the user needs.** Publishers normally have to sell the whole book. You can offer a "precision access" product that the publisher couldn't sell alone  specific chapter or section, not the whole volume. That's a new revenue line for them.
+
+Early publishers to target: Springer, Wiley, and specifically **arXiv-adjacent open-access journals** where the barrier is lower. Many JHEP/MDPI papers are already open  but their *cited reference chains* often hit paywalled Springer or Cambridge textbooks.
+
+---
+
+### Layer 3  The Data Moat Flywheel
+
+This is where it compounds, and it's the real answer to "moat":
+
+**More user notes  richer L-tag resolution  cheaper future queries  more accurate graph  higher query value  more subscriptions  more notes uploaded.**
+
+Specifically: right now, every B-tagged span costs ~$0.001 to classify (Nano sweep + potential Opus escalation). As the graph grows, a fraction of those B-spans will already have resolved edges from prior users' notes. Resolution becomes partially free  you already have the edge. You pass that cost saving on (or pocket it as margin expansion).
+
+At scale, the graph becomes a **moat against OpenAI/Anthropic** building a competitor: they'd have to reconstruct millions of typed edges derived from user-uploaded private notes. They can't. That data is yours.
+
+---
+
+### Layer 4  "Gyding" as a Marketplace (Vision Doc Territory)
+
+Your Vision doc mentions the NPO/professor dividend structure. There's a marketplace angle here that complements monetization:
+
+**Professors can sell structured notes as products.** A professor who has 30 years of handwritten margin notes on Griffiths' QFT, digitized and connected to the text via Gyde's pipeline, has a product worth real money to grad students. Gyde takes a platform cut (20-30%, industry standard for knowledge marketplaces).
+
+This is basically **Patreon  Obsidian  arXiv**  but with AI-generated provenance showing exactly *which* notes resolve *which* gaps in *which* papers. The citations are the proof of value.
+
+---
+
+### Near-term priority (what actually makes money first)
+
+You're pre-revenue and pre-scale. The honest near-term answer:
+
+1. **Get 10-20 paid beta users**  serious physics/math PhD students who will pay $15-25/mo if the notes ingestion works reliably. That's your existence proof.
+2. **Publisher conversation**: one email to a Springer or Cambridge contact about "precision chapter access via affiliate"  zero engineering required to test interest.
+3. **Institutional pilot**: one physics department, one semester, $500-1000 flat fee. You learn what professors actually need.
+
+The affiliate publisher play is smart but it's Layer 2  you need Layer 1 (subscription) working first, because publishers won't negotiate with you until you can show them traffic volume.
+
+---
+
+One thing your moat framing might be underweighting: **the edge graph is also a B2B data asset.** Down the line, a company building an AI tutor or academic search engine would pay to license your edge graph (not your users' notes  just the typed connection structure between published works). That's a different revenue line entirely, and it doesn't require user scale  just graph density.

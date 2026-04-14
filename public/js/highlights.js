@@ -117,7 +117,7 @@
     pendingInfo = info;
     popup.__hlInfo = info;   // survives async clears of pendingInfo
     popup.style.display = 'flex';
-    popup.style.left = Math.min(x, window.innerWidth - 260) + 'px';
+    popup.style.left = Math.max(8, Math.min(x, window.innerWidth - 268)) + 'px';
     popup.style.top = Math.max(10, y - 50) + 'px';
   }
 
@@ -230,6 +230,22 @@
 
   function onMouseUp(e) { onSelectionEvent(e, false); }
 
+  // Touch selection (Android/Z Fold 7): after the user releases a text
+  // selection drag, mouseup may not fire reliably. Delay a bit longer
+  // than mouseup so the native selection has a chance to settle before
+  // we measure the range, then reuse the same show-popup path.
+  function onTouchEnd(e) {
+    setTimeout(() => {
+      const container = getActiveContentEl();
+      const info = getSelectionInfo(container);
+      if (!info) return;
+      const rect = info.range.getBoundingClientRect();
+      const x = rect.left + rect.width / 2 - 120;
+      const y = rect.top + window.scrollY;
+      showPopup(x, y, info);
+    }, 180);
+  }
+
   function onContextMenu(e) {
     const container = getActiveContentEl();
     const sel = window.getSelection();
@@ -241,9 +257,11 @@
 
   pagesContent.addEventListener('mouseup', onMouseUp);
   pagesContent.addEventListener('contextmenu', onContextMenu);
+  pagesContent.addEventListener('touchend', onTouchEnd);
   if (scrollContent) {
     scrollContent.addEventListener('mouseup', onMouseUp);
     scrollContent.addEventListener('contextmenu', onContextMenu);
+    scrollContent.addEventListener('touchend', onTouchEnd);
   }
 
   // ─── MATHJAX EQUATION CLICK ────────────────────────────────────

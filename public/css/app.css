@@ -1061,8 +1061,28 @@
     z-index: 50;
     box-shadow: 4px 0 20px rgba(0,0,0,0.3);
   }
-  .app-sidebar.collapsed { width: 0; min-width: 0; }
-  .app-sidebar.collapsed * { visibility: hidden; }
+  /* Collapsed on mobile: sidebar slides off, but the hamburger must
+     survive as a fixed floating button so the user can reopen it from
+     reader mode or home. Keep the sidebar-top visible and pin it to
+     the viewport; hide everything else inside the sidebar. */
+  .app-sidebar.collapsed {
+    width: 0;
+    min-width: 0;
+    overflow: visible;
+  }
+  .app-sidebar.collapsed > *:not(.sidebar-top) { visibility: hidden; }
+  .app-sidebar.collapsed .sidebar-top {
+    position: fixed;
+    top: 6px;
+    left: 6px;
+    z-index: 60;
+    padding: 2px;
+    background: var(--app-surface);
+    border: 1px solid var(--app-border);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }
+  .app-sidebar.collapsed .sidebar-top .sidebar-mode-btn { display: none; }
   .collection-topbar { flex-wrap: wrap; }
 }
 

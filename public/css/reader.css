@@ -1337,9 +1337,37 @@ mjx-container {
     padding: 1rem 1.25rem 2rem;
   }
 
-  .reader-book-title {
-    max-width: 160px;
+  /* Narrow screens: the absolutely-centered mode toggle was floating
+     over the left/right button groups and stealing taps. Let the header
+     reflow, hide the book title, and shrink button padding so prev/next,
+     split toggle and mode buttons all remain tappable. */
+  .reader-header {
+    padding: 0 0.4rem;
+    gap: 0.25rem;
+    height: auto;
+    min-height: 48px;
   }
+  .reader-header-center {
+    position: static;
+    left: auto;
+    transform: none;
+    flex: 1 1 auto;
+    display: flex;
+    justify-content: center;
+    min-width: 0;
+  }
+  .reader-header-left,
+  .reader-header-right {
+    gap: 0.15rem;
+    flex-shrink: 0;
+  }
+  .reader-book-title { display: none; }
+  .reader-page-indicator { font-size: 0.72rem; }
+  .reader-mode-toggle .mode-btn {
+    padding: 0.25rem 0.45rem;
+    font-size: 0.7rem;
+  }
+  .reader-btn { width: 38px; height: 38px; }
 
   .page-content {
     font-size: 1.05rem;

@@ -1,0 +1,176 @@
+\documentclass[12pt]{article}
+\usepackage[margin=1.5cm, paperwidth=8.5in, paperheight=13in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usepackage[most]{tcolorbox}
+
+\usetikzlibrary{calc,decorations.pathmorphing}
+
+\definecolor{orange1}{RGB}{230,130,20}
+
+\pagestyle{empty}
+
+% Handwritten-style font (we'll use italic serif to approximate)
+\newcommand{\hw}[1]{\textit{#1}}
+
+\begin{document}
+
+\vspace{0.3cm}
+
+% ============================================================
+% TITLE: boxed "1-zero and BCFW shift"
+% ============================================================
+\noindent
+\fbox{\;\large\textbf{1-zero \quad and \quad BCFW \quad shift}\;}
+
+\vspace{0.6cm}
+
+% ============================================================
+% Line 1: up to cyclic permutations...
+% ============================================================
+\noindent
+\hw{up to cyclic permutations a 1-zero is the imposition of the $\,n-3\,$ constraints}
+
+\vspace{0.3cm}
+
+\noindent
+$C_{13} = C_{14} = \cdots = C_{1,n-1} = 0$ \qquad \hw{on the kinematic data.}
+
+\vspace{0.5cm}
+
+% ============================================================
+% Since C_{ij} = ...
+% ============================================================
+\noindent
+\hw{Since} \qquad $C_{ij} = X_{ij} + X_{i\!+\!1,\,j\!+\!1} - X_{i,\,j\!+\!1} - X_{i\!+\!1,\,j}$
+
+\vspace{0.5cm}
+
+% ============================================================
+% the constraints can be equivalently written as
+% ============================================================
+\noindent
+\hw{the constraints can be equivalently be written as}
+
+\vspace{0.4cm}
+
+% ============================================================
+% LEFT SYSTEM: constraints with circled zero terms
+% ============================================================
+\noindent
+\hspace{0.5cm}
+$\left\{\begin{array}{l}
+X_{13} + X_{24} \;-\; X_{14} \;-\; \tikz[baseline=(X.base)]{\node[draw=orange1, thick, circle, inner sep=1pt] (X) {$X_{23}$};\node[orange1, font=\scriptsize, below right=-2pt and -4pt of X] {$=0$};} = 0 \\[12pt]
+X_{14} + X_{25} \;-\; X_{15} \;-\; X_{24} \;= 0 \\[12pt]
+\;\;\vdots \\[8pt]
+X_{1,n\text{-}1} + X_{2n} \;-\; \tikz[baseline=(Y.base)]{\node[draw=orange1, thick, circle, inner sep=1pt] (Y) {$X_{1n}$};\node[orange1, font=\scriptsize, below=2pt of Y] {$=0$};} \;-\; X_{2,n\text{-}1} \;= 0
+\end{array}\right.$
+%
+\hspace{1.0cm}
+$\Longleftrightarrow$
+%
+\hspace{1.0cm}
+$\left\{\begin{array}{l}
+X_{24} = X_{14} - X_{13} \\[10pt]
+X_{25} = X_{15} - X_{13} \\[10pt]
+\;\;\vdots \\[8pt]
+X_{2n} = X_{1n} - X_{13} = -X_{13}
+\end{array}\right.$
+
+\vspace{0.6cm}
+
+% ============================================================
+% "so the 1-zero fully fixes X_{2j}..."
+% ============================================================
+\noindent
+\hw{so the 1-zero fully fixes $X_{2j}$ once $X_{1\delta}$ is specified, and does not}
+
+\smallskip
+\noindent
+\hw{affect\; $X_{i\delta}$\; if\; $i, \delta \notin \{1, 2\}$.}
+
+\vspace{0.5cm}
+
+\noindent\rule{4cm}{0.6pt}
+
+\vspace{0.5cm}
+
+% ============================================================
+% The corresponding BCFW shift
+% ============================================================
+\noindent
+\hw{the corresponding BCFW shift is the change}
+\hfill
+$\left\{\begin{array}{l}
+P_2 \;\to\; P_2 + zq \\[6pt]
+P_n \;\to\; P_n - zq
+\end{array}\right.$
+
+\vspace{0.5cm}
+
+\noindent
+\hw{where $z$ is a complex parameter} \qquad \hw{and} \qquad $q$ \;\hw{satisfies}
+\hfill
+$\left\{\begin{array}{l}
+q^2 = 0 \\[4pt]
+q \cdot P_2 = q \cdot P_n = 0
+\end{array}\right.$
+
+\vspace{0.2cm}
+
+% ============================================================
+% Right-side annotation in orange: "so that (P_2 + zq)^2 = 0, (P_n - zq)^2 = 0"
+% ============================================================
+\hfill
+{\color{orange1}\small $\searrow$ \;\hw{so that}}
+
+\hfill
+{\color{orange1}\small $(P_2 + zq)^2 = 0$}
+
+\hfill
+{\color{orange1}\small $(P_n - zq)^2 = 0$}
+
+\vspace{0.4cm}
+
+% ============================================================
+% Let X_{ij}(z) be the z-dependent planar invariant
+% ============================================================
+\noindent
+\hw{Let $X_{ij}(z)$ be the $z$-dependent planar invariant.}
+
+\vspace{0.4cm}
+
+\noindent
+$X_{ij}(z)$ \;\hw{depends on $z$ only if it includes exactly} \underline{\hw{one}} \hw{of $P_2, P_n$ in}
+
+\smallskip
+\noindent
+\hw{the sum, otherwise either there is no $z$ or they cancel out.}
+
+\vspace{0.4cm}
+
+\noindent
+$\to$ \;\hw{the only $z$-dependent ones are} \quad $X_{1j}(z)$ \quad $j = 3, \ldots, n\!-\!1$
+
+\smallskip
+\noindent
+\hspace{1cm}\hw{and} \quad $X_{2j}(z)$ \quad $j = 4, \ldots, n\,.$
+
+\vspace{0.5cm}
+
+\noindent\rule{2cm}{1pt}
+
+\vspace{0.4cm}
+
+% ============================================================
+% Let X^{\infty}_{ij} denote the coefficient...
+% ============================================================
+\noindent
+\hw{Let $X^{\infty}_{ij}$ denote the coefficient of the largest power of $z$ appearing}
+
+\smallskip
+\noindent
+\hw{in\; $X_{ij}(z)$.}
+
+\end{document}
