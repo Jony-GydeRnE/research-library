@@ -669,10 +669,20 @@ mjx-container *::selection {
 }
 
 .page-figure img {
-  max-width: 100%;
+  /* Centering: display:block + margin:auto centers the image
+     regardless of uneven whitespace baked into the crop PNG.
+     text-align:center on the parent alone doesn't reliably center
+     block-level images. */
+  display: block;
+  margin: 0 auto 0.5rem;
+  /* Sizing: cap at min(85% of container, 700px absolute) so
+     single-column figure crops don't stretch to fill the full
+     reader content width on wide screens. Different figures
+     render at sizes proportional to their native crop, which
+     looks natural. */
+  max-width: min(85%, 700px);
   height: auto;
   border-radius: 4px;
-  margin-bottom: 0.5rem;
 }
 
 .view-figure-link {

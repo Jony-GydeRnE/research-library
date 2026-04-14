@@ -374,8 +374,14 @@ function computeVerticalFromAnchors(idx, captionText, { modelTopPx, modelBottomP
   let source;
   if (topAnchor) {
     // Figure top is just below the bottom of the topAnchor line.
-    const anchorBottomPng = pdfY_to_pngY(topAnchor.y - topAnchor.h * 0.15);
-    top = anchorBottomPng + padPx;
+    // Use the FULL line height below the baseline (topAnchor.h)
+    // rather than the previous 0.15 * h — the old factor didn't
+    // reliably clear descenders on "g", "y", "p", so fragments of
+    // body text leaked into the top of figure crops. 12px extra
+    // pad on top of that, so the crop starts cleanly below the
+    // last line of text.
+    const anchorBottomPng = pdfY_to_pngY(topAnchor.y - topAnchor.h);
+    top = anchorBottomPng + 12;
     source = 'caption+top-anchor';
   } else {
     top = modelTopPx;
