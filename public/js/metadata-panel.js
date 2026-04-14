@@ -130,6 +130,28 @@
       const spans = await res.json();
 
       if (!spans || spans.length === 0) {
+        // Fallback: try the synonym-aware concept resolver.
+        // The offset-based spans/intersecting lookup is page-
+        // scoped and fails when the highlighted phrase is a
+        // concept whose canonical definition lives elsewhere
+        // (another page, another book, or a different tag
+        // surface form). The /api/metadata/resolve endpoint
+        // normalizes the highlighted text via taxonomyService
+        // and returns the canonical concept + definition chunk.
+        //
+        // This is the path that makes "highlight BCFW shift
+        // in Rodina abstract → see BCFW's definition" work.
+        if (highlightText && highlightText.trim()) {
+          try {
+            const rRes = await fetch(`/api/metadata/resolve?text=${encodeURIComponent(highlightText.trim())}`);
+            if (rRes.ok) {
+              const resolved = await rRes.json();
+              contentEl.innerHTML = renderResolvedConcept(resolved, highlightText);
+              wireResolvedLinks(contentEl);
+              return;
+            }
+          } catch (_) { /* fall through to empty state */ }
+        }
         contentEl.innerHTML = `
           <div class="metadata-empty">
             <p>No metadata generated for this passage yet.</p>
@@ -228,6 +250,82 @@
 
   function escapeHtml(s) {
     return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // ─── Resolved-concept rendering (synonym-aware fallback) ──
+  // When the offset-based span lookup returns nothing, the
+  // panel falls back to /api/metadata/resolve which uses
+  // taxonomyService to find the canonical concept and its
+  // definition chunk. This renders that payload.
+  function renderResolvedConcept(resolved, highlightText) {
+    if (!resolved) return '<div class="metadata-empty"><p>No metadata.</p></div>';
+    const def = resolved.definition;
+    const quote = escapeHtml(highlightText || '');
+    let html = '<div class="metadata-span-card metadata-resolved-card">';
+    html += `<div class="span-header">Concept: <strong>${escapeHtml(resolved.canonicalConcept || '')}</strong>`;
+    if (resolved.matchedVia) {
+      html += ` <span class="span-role-badge">${resolved.matchedVia} match</span>`;
+    }
+    html += '</div>';
+
+    if (quote) {
+      html += `<div class="span-text" style="font-style:italic;opacity:0.85;">"${quote}"</div>`;
+    }
+
+    if (Array.isArray(resolved.synonymFamily) && resolved.synonymFamily.length > 0) {
+      html += '<div class="span-tags">';
+      for (const s of resolved.synonymFamily.slice(0, 8)) {
+        html += `<span class="tag-pill">${escapeHtml(s.replace(/_/g, ' '))}</span>`;
+      }
+      html += '</div>';
+    }
+
+    if (typeof resolved.spanCount === 'number') {
+      html += `<div class="span-search-badge" style="border-color:var(--r-link);color:var(--r-link)">`;
+      html += `${resolved.spanCount} span${resolved.spanCount !== 1 ? 's' : ''} across library carry this concept`;
+      html += '</div>';
+    }
+
+    if (def) {
+      const bookLabel = escapeHtml((def.bookTitle || '(unknown book)').slice(0, 80));
+      html += '<div class="span-edges">';
+      html += `<a class="edge-link" data-book="${def.bookId || ''}" data-page="${def.pageNumber || ''}">`;
+      html += `Canonical definition → ${bookLabel}, p.${def.pageNumber || '?'}`;
+      if (def.structuralType) html += ` <em style="opacity:0.7">(${escapeHtml(def.structuralType)})</em>`;
+      html += '</a>';
+      html += '</div>';
+
+      if (def.preview) {
+        html += `<div class="span-text" style="margin-top:0.4rem;padding:0.5rem;border-left:2px solid var(--r-link);background:rgba(45,90,123,0.05);font-size:0.85rem;line-height:1.5;">${escapeHtml(def.preview)}</div>`;
+      }
+    } else {
+      html += '<div class="metadata-empty" style="margin-top:0.5rem;"><p>Concept recognized but no canonical definition chunk is registered.</p></div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function wireResolvedLinks(container) {
+    container.querySelectorAll('.edge-link[data-book]').forEach(link => {
+      link.addEventListener('click', () => {
+        const bk = link.dataset.book;
+        const pg = link.dataset.page;
+        if (!bk || !pg) return;
+        // Prefer split-reader if available, otherwise open a
+        // new tab. Keeps the metadata panel context intact.
+        const url = `/reader/${bk}/page/${pg}`;
+        if (typeof window.__openSplitReader === 'function') {
+          if (window.__isSplitReaderOpen && window.__isSplitReaderOpen()) {
+            window.__updateSplitReader(url);
+          } else {
+            window.__openSplitReader(url);
+          }
+        } else {
+          window.open(url, '_blank');
+        }
+      });
+    });
   }
 
   // ─── VISUAL SPAN MARKS IN READER ──────────────────────────────
