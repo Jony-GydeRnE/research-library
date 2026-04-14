@@ -428,9 +428,19 @@ async function linkSpansToCanonicalDefinitions(opts = {}) {
 //
 // Returns null if no canonical matches.
 
+// Unicode hyphen variants: ASCII hyphen, U+2010 hyphen,
+// U+2011 non-breaking hyphen, U+2012 figure dash, U+2013 en-dash,
+// U+2014 em-dash, U+2212 minus sign. Mobile selection sometimes
+// returns these, OCR/PDF text often uses non-ASCII variants for
+// hyphenated author names. Strip them all to ASCII before
+// normalization.
+function asciifyHyphens(text) {
+  return (text || '').replace(/[\u2010\u2011\u2012\u2013\u2014\u2212]/g, '-');
+}
+
 function normalizeTextToSnakeCase(text) {
   if (!text || typeof text !== 'string') return '';
-  return text
+  return asciifyHyphens(text)
     .toLowerCase()
     .replace(/[-]+/g, ' ')      // hyphens → spaces → underscores
     .replace(/[^a-z0-9\s]/g, ' ')
@@ -439,9 +449,23 @@ function normalizeTextToSnakeCase(text) {
     .replace(/\s/g, '_');
 }
 
+// Hyphen-preserving form for layer-1 SYNONYMS lookup. Some
+// taxonomy synonyms are stored with hyphens (e.g.
+// 'britto-cachazo-feng-witten') so we need a normalized form
+// that keeps them intact while still lowercasing and
+// trimming everything else.
+function normalizeTextToHyphenForm(text) {
+  if (!text || typeof text !== 'string') return '';
+  return asciifyHyphens(text)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s\-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function tokenizeText(text) {
   if (!text || typeof text !== 'string') return [];
-  return text
+  return asciifyHyphens(text)
     .toLowerCase()
     .replace(/[-]+/g, ' ')
     .replace(/[^a-z0-9\s]/g, ' ')
@@ -525,12 +549,54 @@ async function resolveFromText(rawText, opts = {}) {
   // ─── Step 1a: identify candidate canonical concept names ─
   const conceptNames = new Set();
 
+  // Try the snake-cased whole phrase against the markers table.
   const snake = normalizeTextToSnakeCase(text);
   for (const c of canonicalsFor(snake)) conceptNames.add(c);
+
+  // Try the hyphen-preserving form too — taxonomy.SYNONYMS
+  // stores some entries with hyphens (e.g.
+  // 'britto-cachazo-feng-witten' → 'bcfw recursion').
+  // Pass through the legacy normalize() layer first to fold
+  // synonyms into a canonical form, THEN through getCanonicals()
+  // to land on a CONCEPTS entry. Without this bridge step,
+  // queries using author surnames in their full hyphenated
+  // form never resolve.
+  const hyphen = normalizeTextToHyphenForm(text);
+  if (hyphen) {
+    const synonymized = taxonomy.normalize(hyphen);
+    for (const c of canonicalsFor(synonymized)) conceptNames.add(c);
+    // Also try the raw hyphen form against the markers table
+    // directly (markers can include hyphenated entries now).
+    for (const c of canonicalsFor(hyphen)) conceptNames.add(c);
+  }
+
+  // Per-token tokens, each through the synonym layer.
   for (const tok of tokenizeText(text)) {
     if (tok.length < 2) continue;
     if (WEAK_TOKENS.has(tok)) continue;
+    // Direct token lookup
     for (const c of canonicalsFor(tok)) conceptNames.add(c);
+    // Synonym-layer hop in case the token itself is a known
+    // alias (e.g. 'mnlsm' → 'nlsm').
+    const syn = taxonomy.normalize(tok);
+    if (syn !== tok) {
+      for (const c of canonicalsFor(syn)) conceptNames.add(c);
+    }
+  }
+
+  // Filter out conceptNames that resolved to a single weak
+  // token (something like 'shifts' returning itself as a
+  // canonical because no marker matched). These pollute the
+  // candidate pool.
+  for (const name of [...conceptNames]) {
+    if (WEAK_TOKENS.has(name)) conceptNames.delete(name);
+    // Also drop anything that's a single author-surname token
+    // by itself — only valid as part of the bcfw expansion,
+    // not as a standalone concept.
+    if (['britto', 'cachazo', 'feng', 'witten'].includes(name)) {
+      conceptNames.delete(name);
+      conceptNames.add('bcfw'); // shortcut: any author surname → bcfw
+    }
   }
 
   // Substring scan if we found no direct canonicals

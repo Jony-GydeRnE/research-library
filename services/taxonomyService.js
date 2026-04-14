@@ -172,6 +172,16 @@ const CONCEPTS = {
   ],
   bcfw: [
     'bcfw',
+    // Spelled-out author form. Required so highlights that
+    // capture the full citation form (which is how Rodina's
+    // abstract introduces the concept — "non-adjacent
+    // Britto-Cachazo-Feng-Witten (BCFW) shifts") map to the
+    // same canonical as the acronym. The four surnames are
+    // included as individual markers so any single-author
+    // mention also resolves.
+    'britto', 'cachazo', 'feng', 'witten',
+    'britto_cachazo_feng_witten',
+    'britto-cachazo-feng-witten',
   ],
   adler_zero: [
     'adler_zero', 'adler_limit',
