@@ -80,18 +80,33 @@
       }
       askAI(pendingInfo);
     });
-    popup.querySelector('.hl-metadata').addEventListener('click', () => {
-      if (!pendingInfo) return;
-      if (pendingInfo._existingHlId) {
-        var text = pendingInfo.text;
+    popup.querySelector('.hl-metadata').addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      console.debug('[hl-metadata] click', {
+        hasPendingInfo: !!pendingInfo,
+        hasPopupInfo: !!popup.__hlInfo,
+        panelExists: typeof window.__openMetadataPanel === 'function',
+      });
+      // Snapshot the info at click time. Fall back to the
+      // popup's own __hlInfo property if the outer
+      // pendingInfo variable was cleared out from under us.
+      let info = pendingInfo;
+      if (!info && popup.__hlInfo) info = popup.__hlInfo;
+      if (!info) {
+        console.warn('[hl-metadata] click but no info — second-click state bug, UI todo logged');
+        return;
+      }
+      if (info._existingHlId) {
+        var text = info.text;
         hidePopup();
         if (window.__openMetadataPanel) {
-          window.__openMetadataPanel(text, R.bookId, R.currentPage, pendingInfo._existingHlId, pendingInfo.startOffset, pendingInfo.endOffset);
+          window.__openMetadataPanel(text, R.bookId, R.currentPage, info._existingHlId, info.startOffset, info.endOffset);
         }
         return;
       }
       // New highlight: persist first, then open metadata
-      openMetadata(pendingInfo);
+      openMetadata(info);
     });
 
     return popup;
@@ -100,13 +115,17 @@
   function showPopup(x, y, info) {
     createPopup();
     pendingInfo = info;
+    popup.__hlInfo = info;   // survives async clears of pendingInfo
     popup.style.display = 'flex';
     popup.style.left = Math.min(x, window.innerWidth - 260) + 'px';
     popup.style.top = Math.max(10, y - 50) + 'px';
   }
 
   function hidePopup() {
-    if (popup) popup.style.display = 'none';
+    if (popup) {
+      popup.style.display = 'none';
+      popup.__hlInfo = null;
+    }
     // Clear temporary selection — don't persist
     window.getSelection().removeAllRanges();
     pendingInfo = null;

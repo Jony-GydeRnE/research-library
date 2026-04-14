@@ -55,6 +55,7 @@
   // ─── OPEN / CLOSE ─────────────────────────────────────────────
 
   function openMetadataPanel(highlightText, bookId, pageNumber, hlId, startOffset, endOffset) {
+    console.debug('[metadata-panel] open', { highlightText: (highlightText||'').slice(0,40), bookId, pageNumber, hlId });
     const quoteEl = panel.querySelector('.metadata-quote');
     const quoteText = document.getElementById('metadataQuoteText');
     const contentEl = document.getElementById('metadataContent');

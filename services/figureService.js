@@ -538,14 +538,36 @@ function clampRectToPage(rect, pngW, pngH) {
   return { left, top, right, bottom };
 }
 
-// Apply structured verdict deltas to a rectangle, with a per-
-// iteration max delta of 25% of the current crop dimensions to
-// prevent overshoot. Clamps the result to page bounds.
+// Apply structured verdict deltas to a rectangle, with an
+// ASYMMETRIC per-iteration clamp:
+//   - Shrink moves (rectangle gets smaller):  ≤ 25% of current dim.
+//     Protects against judge miscounting "3 extra lines above"
+//     collapsing the crop into nothing.
+//   - Grow moves (rectangle gets bigger):     ≤ 50% of current dim.
+//     Grows can only hit page bounds (clamped separately), so
+//     there's no collapse risk — we can afford to move farther
+//     per iteration. This is the v2 fix for p4/p7 plateaus where
+//     the loop correctly diagnosed "8 lines above" but the old
+//     symmetric 25% clamp only allowed 1-2 lines of correction
+//     per attempt, so the judge ran out of iterations before
+//     converging.
+//
+// Sign convention (matches the raw delta expressions below):
+//   dTop   > 0 → top edge moves DOWN   → shrink
+//   dTop   < 0 → top edge moves UP     → grow
+//   dBot   > 0 → bottom edge moves UP  → shrink
+//   dBot   < 0 → bottom edge moves DOWN→ grow
+//   dLeft  > 0 → left edge moves RIGHT → shrink
+//   dLeft  < 0 → left edge moves LEFT  → grow
+//   dRight > 0 → right edge moves LEFT → shrink
+//   dRight < 0 → right edge moves RIGHT→ grow
 function applyVerdictDeltas(rect, verdict, lineHPx, pngW, pngH) {
   const currentH = rect.bottom - rect.top;
   const currentW = rect.right - rect.left;
-  const maxDeltaY = currentH * 0.25;
-  const maxDeltaX = currentW * 0.25;
+  const shrinkMaxY = currentH * 0.25;
+  const growMaxY = currentH * 0.50;
+  const shrinkMaxX = currentW * 0.25;
+  const growMaxX = currentW * 0.50;
 
   // Top edge: extra lines → move DOWN (shrink), clipped → move UP (grow)
   const rawDeltaTop =
@@ -558,15 +580,16 @@ function applyVerdictDeltas(rect, verdict, lineHPx, pngW, pngH) {
   const rawDeltaLeft = verdict.extra_px_left || 0;
   const rawDeltaRight = verdict.extra_px_right || 0;
 
-  const clamp = (v, max) => {
-    if (v > max) return max;
-    if (v < -max) return -max;
+  // Positive = shrink, negative = grow.
+  const clampAsym = (v, shrink, grow) => {
+    if (v > shrink) return shrink;
+    if (v < -grow) return -grow;
     return v;
   };
-  const dTop = clamp(rawDeltaTop, maxDeltaY);
-  const dBot = clamp(rawDeltaBottom, maxDeltaY);
-  const dLeft = clamp(rawDeltaLeft, maxDeltaX);
-  const dRight = clamp(rawDeltaRight, maxDeltaX);
+  const dTop = clampAsym(rawDeltaTop, shrinkMaxY, growMaxY);
+  const dBot = clampAsym(rawDeltaBottom, shrinkMaxY, growMaxY);
+  const dLeft = clampAsym(rawDeltaLeft, shrinkMaxX, growMaxX);
+  const dRight = clampAsym(rawDeltaRight, shrinkMaxX, growMaxX);
 
   const next = {
     left: rect.left + dLeft,
