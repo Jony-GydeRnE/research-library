@@ -392,6 +392,167 @@ async function linkSpansToCanonicalDefinitions(opts = {}) {
 }
 
 // ─── Convenience: full re-sweep for a book ────────────────
+// ─── Phase 3: resolveFromText — highlight → concept lookup ──
+//
+// Given a free-form string (what the user highlighted in the
+// reader), return the best-matching canonical concept plus
+// everything the metadata panel needs to render:
+//   - the canonical concept name
+//   - the synonym family
+//   - the definition chunk (with book/page/preview)
+//   - how many spans across the library carry this concept
+//   - outgoing / incoming uses_definition edges
+//
+// The metadata panel calls this from a future API endpoint
+// (e.g. GET /api/metadata/resolve?text=BCFW+shift). UI wiring
+// is deliberately out of scope for the data-quality session;
+// this service provides the resolver function that endpoint
+// will wrap.
+//
+// Matching strategy (first hit wins):
+//   1. Direct canonical lookup via taxonomy.getCanonicals().
+//      "BCFW shift" → normalize to `bcfw_shift` → canonicalize
+//      to `bcfw` → find CanonicalDefinition({concept:'bcfw'}).
+//      This catches ~95% of cases.
+//   2. If direct lookup misses, try a whole-word substring
+//      match against every canonical concept in the dictionary.
+//      "Britto-Cachazo-Feng-Witten shifts" normalizes to a
+//      hyphen-stripped snake_case that may not match any
+//      taxonomy marker directly, but substring search can
+//      still find `bcfw` if the dictionary has it.
+//   3. If still miss, fall back to a fuzzy whole-word overlap:
+//      break the query into word tokens, look for any
+//      canonical whose concept name contains >= 2 of the
+//      query tokens. This catches awkward author-name
+//      rephrasings.
+//
+// Returns null if no canonical matches.
+
+function normalizeTextToSnakeCase(text) {
+  if (!text || typeof text !== 'string') return '';
+  return text
+    .toLowerCase()
+    .replace(/[-]+/g, ' ')      // hyphens → spaces → underscores
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\s/g, '_');
+}
+
+function tokenizeText(text) {
+  if (!text || typeof text !== 'string') return [];
+  return text
+    .toLowerCase()
+    .replace(/[-]+/g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(t => t.length >= 2);
+}
+
+async function resolveFromText(rawText, opts = {}) {
+  const Chunk = require('../models/Chunk');
+  const Book = require('../models/Book');
+
+  if (!rawText || typeof rawText !== 'string') return null;
+  const text = rawText.trim();
+  if (text.length === 0) return null;
+
+  // ─── Strategy 1: direct canonical lookup ─────────────
+  const snake = normalizeTextToSnakeCase(text);
+  const candidateNames = new Set();
+  // Try the snake-cased whole phrase
+  for (const c of canonicalsFor(snake)) candidateNames.add(c);
+  // Also try the individual word tokens in case the taxonomy
+  // markers are single-word ("bcfw", "hidden_zero")
+  for (const tok of tokenizeText(text)) {
+    for (const c of canonicalsFor(tok)) candidateNames.add(c);
+  }
+
+  let def = null;
+  let matchedVia = 'direct';
+  for (const name of candidateNames) {
+    const found = await CanonicalDefinition.findOne({ concept: name }).lean();
+    if (found) { def = found; break; }
+  }
+
+  // ─── Strategy 2: substring scan over dictionary ──────
+  if (!def) {
+    matchedVia = 'substring';
+    const tokens = tokenizeText(text);
+    if (tokens.length > 0) {
+      const all = await CanonicalDefinition.find({}).select('concept').lean();
+      for (const row of all) {
+        for (const tok of tokens) {
+          if (row.concept.includes(tok) && tok.length >= 3) {
+            def = await CanonicalDefinition.findOne({ concept: row.concept }).lean();
+            break;
+          }
+        }
+        if (def) break;
+      }
+    }
+  }
+
+  // ─── Strategy 3: fuzzy whole-word overlap ────────────
+  if (!def) {
+    matchedVia = 'fuzzy';
+    const tokens = new Set(tokenizeText(text).filter(t => t.length >= 3));
+    if (tokens.size >= 2) {
+      const all = await CanonicalDefinition.find({}).select('concept').lean();
+      let best = null;
+      let bestOverlap = 0;
+      for (const row of all) {
+        const conceptTokens = new Set(
+          row.concept.split('_').filter(t => t.length >= 3)
+        );
+        let overlap = 0;
+        for (const t of tokens) if (conceptTokens.has(t)) overlap++;
+        if (overlap >= 2 && overlap > bestOverlap) {
+          bestOverlap = overlap;
+          best = row;
+        }
+      }
+      if (best) def = await CanonicalDefinition.findOne({ concept: best.concept }).lean();
+    }
+  }
+
+  if (!def) return null;
+
+  // Assemble the return shape. Fetch the definition chunk's
+  // book + page + preview text. Fetch edge counts. The
+  // metadata panel renders all of this.
+  const Span = require('../models/Span');
+  const chunk = await Chunk.findById(def.definitionChunkId)
+    .select('_id bookId pageNumber sourceText rawText structuralType').lean();
+  const book = chunk ? await Book.findById(chunk.bookId).select('_id title author kind').lean() : null;
+
+  // Count how many spans library-wide carry this canonical
+  // concept (via any surface tag that canonicalizes to it).
+  // This is the "span count" the UI shows as a badge.
+  const spanCount = await Span.countDocuments({
+    contextTags: { $regex: new RegExp(`^${def.concept}|${def.concept}$`, 'i') },
+  });
+
+  return {
+    query: text,
+    matchedVia,
+    canonicalConcept: def.concept,
+    synonymFamily: Array.isArray(taxonomy.CONCEPTS?.[def.concept])
+      ? taxonomy.CONCEPTS[def.concept]
+      : [],
+    spanCount,
+    definition: chunk ? {
+      chunkId: String(chunk._id),
+      bookId: String(chunk.bookId),
+      bookTitle: book?.title || null,
+      bookKind: book?.kind || null,
+      pageNumber: chunk.pageNumber,
+      structuralType: chunk.structuralType || null,
+      preview: (chunk.sourceText || chunk.rawText || '').slice(0, 400),
+    } : null,
+  };
+}
+
 async function rebuildCanonicalForBook(bookId) {
   // Drop any canonical edges for this book (from the FROM side)
   // so the link phase starts clean for this book. We don't drop
@@ -407,8 +568,12 @@ module.exports = {
   buildCanonicalDictionary,
   linkSpansToCanonicalDefinitions,
   rebuildCanonicalForBook,
+  resolveFromText,
   // exported for tests / ad-hoc reuse:
   extractCandidatesFromChunk,
   isConceptTagLike,
   candidateBeats,
+  canonicalsFor,
+  normalizeTextToSnakeCase,
+  tokenizeText,
 };

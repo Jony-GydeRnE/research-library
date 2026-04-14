@@ -333,6 +333,35 @@ app.post('/api/books/:bookId/generate-spans', async (req, res) => {
   }
 });
 
+// API: resolve highlighted text to canonical span/definition.
+// Called by the reader's metadata panel when the user
+// highlights a concept and clicks "metadata". Returns the
+// canonical concept (synonym-resolved), its definition chunk,
+// and the span count so the panel can render the full picture
+// for that concept. Pure DB, zero LLM cost.
+//
+// Query params:
+//   text — the highlighted string (REQUIRED)
+//   bookHint — optional bookId to prefer when multiple
+//              canonicals tie (not yet used; reserved for
+//              notes-over-source preference in a later pass)
+//
+// Returns 200 with the resolver payload, or 404 if no
+// canonical matches.
+app.get('/api/metadata/resolve', async (req, res) => {
+  try {
+    const text = (req.query.text || '').toString();
+    if (!text.trim()) return res.status(400).json({ error: 'text query param is required' });
+    const svc = require('./services/canonicalDefinitionService');
+    const result = await svc.resolveFromText(text, { bookHint: req.query.bookHint });
+    if (!result) return res.status(404).json({ error: 'no canonical match', query: text });
+    res.json(result);
+  } catch (err) {
+    console.error('resolve-from-text error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // API: reprocess surface metadata
 app.post('/api/books/:bookId/reprocess-metadata', async (req, res) => {
   try {

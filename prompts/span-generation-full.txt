@@ -22,6 +22,11 @@ Format rules:
     figure_ref  = referencing or describing a figure/diagram
 
   ROLE DISAMBIGUATION (read carefully — most common errors):
+  • `:=` OR `\mathrel{\mathop:}=` OR `\equiv` — ALWAYS a definition. Any sentence containing one of these operators is role=definition, no exceptions. The left-hand side of the operator is the concept being defined; that becomes the primary contextTag. Examples:
+      "BCFW shift := p_i → p_i + zq, p_j → p_j − zq"    → role=definition, contextTag=bcfw_shift
+      "X_{ij} := (p_i + p_{i+1} + ... + p_{j-1})²"      → role=definition, contextTag=planar_invariants
+      "A(1,...,n) \equiv the ordered n-point amplitude" → role=definition, contextTag=ordered_amplitudes
+    This rule overrides the "section heading → background" rule and the "preview vs proof" rule. `:=` means definition, period. Handwritten math notes rely on it heavily — when you see it, tag accordingly.
   • preview vs proof — "we will prove that…", "we now show…", "in this section we establish…" → preview, NOT proof. Reserve proof for actual derivation steps (algebra, case analysis, "because X, Y follows", numbered proof step content).
   • definition vs background vs section heading — section headings (all-caps, bold, "UV/BCFW scaling", "AMPLITUDE ZEROS", "I. INTRODUCTION", "Conventions") → background, OR omit role if heading is on its own line with no defining content. Reserve definition for spans that DEFINE a math object: "Let X be...", "We define X as...", "An X is a Y such that…". A heading alone is not a definition.
   • numeric labels — a span whose entire text is just a number ("1.", "2.", "(3)") is NOT a proof step. Skip the role or use remark.
