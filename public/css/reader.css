@@ -185,12 +185,13 @@
 .reader-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   height: 48px;
   padding: 0 0.75rem;
-  /* Reserve enough right-padding for the absolutely-positioned
-     reader-header-right cluster so flowed left content never
-     collides with it. Bumped on narrow viewports via media query. */
+  /* Reserve enough right-padding for the FIXED right cluster that
+     floats over the top-right of the viewport. This keeps flowed
+     left content from visually sliding under the button. Bumped
+     further on narrow viewports via media query. */
   padding-right: 110px;
   background: var(--r-header-bg);
   border-bottom: 1px solid var(--r-header-border);
@@ -198,7 +199,7 @@
   position: relative;
   gap: 0.5rem;
   min-width: 0;
-  overflow: hidden;   /* clip left overflow rather than let it push right controls off-screen */
+  overflow: hidden;
 }
 
 .reader-header-left {
@@ -210,21 +211,48 @@
   overflow: hidden;
 }
 
-/* Pin the right cluster to the right edge of the header absolutely.
-   This decouples its position from the flex flow of the left cluster
-   so the view-settings button is guaranteed visible regardless of
-   how long the book title is, how wide the sidebar is, or how the
-   browser interprets the viewport. The reader-header's padding-right
-   reserves the flow space. */
+/* Nuclear fix: the right cluster is position:FIXED to the viewport's
+   top-right so NO ancestor's overflow, transform, or layout quirk
+   can clip or push it off-screen. This is the third iteration —
+   absolute-inside-header kept vanishing on Z Fold post-load for
+   reasons I couldn't reproduce on desktop. Fixed positioning is
+   computed relative to the viewport, which is the only thing we
+   can trust on a mobile browser.
+
+   Accepts that the button will float over the reader content on
+   very narrow viewports. That's fine — the button is ~80px wide,
+   the content has its own padding, and visibility matters more
+   than strict non-overlap. */
 .reader-header-right {
-  position: absolute;
-  right: 0.75rem;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  z-index: 25;
+  position: fixed !important;
+  top: 6px !important;
+  right: 0.75rem !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.5rem !important;
+  z-index: 1000 !important;
+  visibility: visible !important;
+  /* Subtle pill-shaped background so the cluster stays legible when
+     floating over light-colored figure crops or PDF pages. */
+  background: var(--r-header-bg, rgba(20, 20, 20, 0.85));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 10px;
+  padding: 2px 4px;
+  border: 1px solid var(--r-header-border, rgba(255, 255, 255, 0.06));
+}
+
+/* Guarantee the button itself can't be display:none'd or
+   visibility:hidden'd by any downstream rule or inline style. */
+.view-settings-wrap,
+.view-settings-btn,
+#viewSettingsBtn {
+  display: inline-flex !important;
+  visibility: visible !important;
+}
+.reader-header-right .page-turn-btn {
+  display: flex !important;
+  visibility: visible !important;
 }
 
 .reader-header-center {
