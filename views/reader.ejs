@@ -95,18 +95,47 @@
         </span>
         <span class="reader-book-title"><%= book.title || 'Untitled' %></span>
       </div>
-      <div class="reader-header-center">
-        <div class="reader-mode-toggle" id="modeToggle">
-          <button class="mode-btn active" id="modePagesBtn" data-mode="pages">Pages</button>
-          <button class="mode-btn" id="modeScrollBtn" data-mode="scroll">Scroll</button>
-          <button class="mode-btn" id="modePdfBtn" data-mode="pdf">PDF</button>
-          <button class="mode-btn" id="modeChunksBtn" data-mode="chunks" title="Show chunks, spans, tags and edges — the metadata-forward view of this page">Chunks</button>
-        </div>
-      </div>
+      <div class="reader-header-center"></div>
       <div class="reader-header-right">
-        <button class="reader-btn" id="splitToggleBtn" title="Toggle chat panel">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
-        </button>
+        <!-- View settings menu (Format × Layout × Ask AI) — replaces
+             the old Pages/Scroll/PDF/Chunks row and the old
+             toggle-chat-panel button. Apple-Preview-style dropdown. -->
+        <div class="view-settings-wrap">
+          <button class="reader-btn view-settings-btn" id="viewSettingsBtn" title="View settings" aria-haspopup="true" aria-expanded="false">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:3px;"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="view-settings-menu" id="viewSettingsMenu" style="display:none;" role="menu">
+            <div class="vsm-section">
+              <div class="vsm-label">Format</div>
+              <div class="vsm-options" data-axis="format">
+                <button type="button" class="vsm-btn" data-value="html">HTML</button>
+                <button type="button" class="vsm-btn" data-value="pdf">PDF</button>
+                <button type="button" class="vsm-btn" data-value="metadata" title="Metadata layer — chunks, spans, tags, edges">Metadata</button>
+              </div>
+            </div>
+            <div class="vsm-divider"></div>
+            <div class="vsm-section">
+              <div class="vsm-label">Layout</div>
+              <div class="vsm-options" data-axis="layout">
+                <button type="button" class="vsm-btn" data-value="pages">Pages</button>
+                <button type="button" class="vsm-btn" data-value="scroll">Scroll</button>
+              </div>
+            </div>
+            <div class="vsm-divider"></div>
+            <div class="vsm-section">
+              <div class="vsm-label">Ask AI</div>
+              <div class="vsm-options" data-axis="askai">
+                <button type="button" class="vsm-btn" data-value="off">Off</button>
+                <button type="button" class="vsm-btn" data-value="on">On</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- Legacy splitToggleBtn kept hidden so split-chat.js still
+             wires without errors. Toggled programmatically by the
+             Ask AI section of the view settings menu. -->
+        <button class="reader-btn" id="splitToggleBtn" title="Toggle chat panel" style="display:none;" aria-hidden="true"></button>
         <button class="reader-btn page-turn-btn" id="headerNextBtn" title="Next page">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
         </button>
@@ -147,13 +176,19 @@
       <!-- Scroll mode -->
       <div class="reader-scroll-content" id="readerScrollContent" style="display:none;"></div>
 
-      <!-- PDF mode (original page image) -->
+      <!-- PDF + Pages (single page image) -->
       <div class="reader-original" id="readerOriginal" style="display:none;">
         <img id="originalPageImg" src="/images/<%= book._id %>/page-<%= pageNumber %>.png" alt="Page original">
       </div>
 
-      <!-- Chunks mode (metadata-forward view) -->
+      <!-- PDF + Scroll (stacked page images, lazy-loaded) -->
+      <div class="reader-pdf-scroll" id="readerPdfScroll" style="display:none;"></div>
+
+      <!-- Metadata + Scroll (chunks-view for all pages) -->
       <div class="reader-chunks-content" id="readerChunksContent" style="display:none;"></div>
+
+      <!-- Metadata + Pages (chunks-view for current page only) -->
+      <div class="reader-chunks-single" id="readerChunksSingle" style="display:none;"></div>
 
       <!-- Page jump (hidden, used by keyboard nav) -->
       <input type="hidden" id="pageJump" value="<%= pageNumber %>">

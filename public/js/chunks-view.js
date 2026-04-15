@@ -606,6 +606,60 @@
     if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  // Render ONE page's chunks into the given container. Used by
+  // Metadata + Pages mode where the user expects next/prev to
+  // navigate pages one at a time (like HTML + Pages) while still
+  // viewing the chunks-forward metadata layer.
+  async function loadSinglePage(bookId, pageNumber, container) {
+    if (!container) return;
+    container.innerHTML = '<div class="cv-loading">Loading chunks for page ' + pageNumber + '…</div>';
+    try {
+      const res = await fetch(`/reader/${bookId}/api/page/${pageNumber}/chunks`);
+      if (!res.ok) {
+        container.innerHTML = '<div class="cv-error">Failed: HTTP ' + res.status + '</div>';
+        return;
+      }
+      const pv = await res.json();
+      container.innerHTML = '';
+
+      container.appendChild(el('div', { className: 'cv-summary' }, [
+        `Page ${pageNumber} · ${pv.chunkCount || 0} chunk${(pv.chunkCount || 0) !== 1 ? 's' : ''}`,
+      ]));
+
+      const section = el('section', {
+        className: 'cv-page-section cv-page-section-single',
+        'data-page': String(pageNumber),
+        id: `cv-page-${pageNumber}`,
+      });
+      if (pv.error) {
+        section.appendChild(el('div', { className: 'cv-error' }, ['Failed: ' + pv.error]));
+      } else if ((pv.chunkCount || 0) === 0) {
+        section.appendChild(el('div', { className: 'cv-empty' }, [
+          '(no chunks — vision/span processing incomplete, or nothing on this page)',
+        ]));
+      } else {
+        for (const c of pv.chunks) section.appendChild(renderChunk(c));
+      }
+      container.appendChild(section);
+
+      if (window.MathJax && MathJax.typesetPromise) {
+        MathJax.typesetPromise([container]).catch(() => {});
+      }
+
+      // Track as the CURRENT focus so a mode switch back to
+      // reading modes can carry the highlight.
+      CURRENT.pageNumber = pageNumber;
+      const firstChunk = section.querySelector('.cv-chunk');
+      if (firstChunk) {
+        CURRENT.chunkPreview = firstChunk.getAttribute('data-chunk-preview');
+        CURRENT.chunkId = firstChunk.getAttribute('data-chunk-id');
+      }
+    } catch (err) {
+      console.error('chunks-view loadSinglePage failed:', err);
+      container.innerHTML = '<div class="cv-error">Failed to load chunks: ' + (err.message || err) + '</div>';
+    }
+  }
+
   let _cvSpy = null;
   // Current focus within the chunks view. Updated by the scroll-spy;
   // consumed by reader.js when the user switches view modes so scroll
@@ -664,5 +718,5 @@
     return { pageNumber: CURRENT.pageNumber, chunkPreview: CURRENT.chunkPreview, chunkId: CURRENT.chunkId };
   }
 
-  window.GydeChunksView = { load, jumpTo, STATE, getCurrentFocus };
+  window.GydeChunksView = { load, loadSinglePage, jumpTo, STATE, getCurrentFocus };
 })();

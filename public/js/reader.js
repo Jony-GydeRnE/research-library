@@ -4,82 +4,125 @@
   const scrollContent = document.getElementById('readerScrollContent');
   const originalView = document.getElementById('readerOriginal');
   const originalImg = document.getElementById('originalPageImg');
+  const pdfScrollContent = document.getElementById('readerPdfScroll');
+  const chunksSingleContent = document.getElementById('readerChunksSingle');
   const currentPageNum = document.getElementById('currentPageNum');
   const pageIndicator = document.getElementById('pageIndicator');
   const headerPrevBtn = document.getElementById('headerPrevBtn');
   const headerNextBtn = document.getElementById('headerNextBtn');
   const pageJump = document.getElementById('pageJump');
   const readerMain = document.getElementById('readerMain');
+  // Legacy button refs — kept for back-compat; the buttons no longer
+  // exist in the header but other code paths (keyboard shortcuts,
+  // third-party scripts) may still reference them. Guard all uses.
   const modePagesBtn = document.getElementById('modePagesBtn');
   const modeScrollBtn = document.getElementById('modeScrollBtn');
   const modePdfBtn = document.getElementById('modePdfBtn');
   const modeChunksBtn = document.getElementById('modeChunksBtn');
   const chunksContent = document.getElementById('readerChunksContent');
 
-  // Initial mode resolution order:
-  //   1. ?mode=<pages|scroll|pdf|chunks> query param (from an
-  //      edge-click in the chunks view so quoted citations
-  //      land in the right layout)
-  //   2. localStorage (user's last-used mode)
-  //   3. 'pages' default
-  function getQueryModeOverride() {
-    try {
-      const m = new URLSearchParams(window.location.search).get('mode');
-      if (m && ['pages', 'scroll', 'pdf', 'chunks'].includes(m)) return m;
-    } catch (_) {}
-    return null;
+  // ─── MODE STATE ────────────────────────────────────────────────
+  //
+  // Reader view is parameterized by two independent axes:
+  //   FORMAT: html | pdf | metadata
+  //   LAYOUT: pages | scroll
+  //
+  // Their cross-product is mapped to an internal "combined mode"
+  // string so the existing setMode() handlers keep working. Two new
+  // combinations introduced in this redesign:
+  //   pdf + scroll  → 'pdf-scroll' (NEW)
+  //   metadata + pages → 'metadata-pages' (NEW)
+  // The other four use the legacy string values:
+  //   html + pages  → 'pages'
+  //   html + scroll → 'scroll'
+  //   pdf + pages   → 'pdf'
+  //   metadata + scroll → 'chunks'
+  const FORMAT_VALUES = ['html', 'pdf', 'metadata'];
+  const LAYOUT_VALUES = ['pages', 'scroll'];
+
+  function combinedMode(fmt, lay) {
+    if (fmt === 'html' && lay === 'pages') return 'pages';
+    if (fmt === 'html' && lay === 'scroll') return 'scroll';
+    if (fmt === 'pdf' && lay === 'pages') return 'pdf';
+    if (fmt === 'pdf' && lay === 'scroll') return 'pdf-scroll';
+    if (fmt === 'metadata' && lay === 'pages') return 'metadata-pages';
+    if (fmt === 'metadata' && lay === 'scroll') return 'chunks';
+    return 'pages';
   }
-  let mode = getQueryModeOverride() || localStorage.getItem('gyde-reader-mode') || 'pages';
+
+  function decomposeMode(combined) {
+    switch (combined) {
+      case 'pages':          return { format: 'html', layout: 'pages' };
+      case 'scroll':         return { format: 'html', layout: 'scroll' };
+      case 'pdf':            return { format: 'pdf', layout: 'pages' };
+      case 'pdf-scroll':     return { format: 'pdf', layout: 'scroll' };
+      case 'metadata-pages': return { format: 'metadata', layout: 'pages' };
+      case 'chunks':         return { format: 'metadata', layout: 'scroll' };
+      default:               return { format: 'html', layout: 'pages' };
+    }
+  }
+
+  // Initial mode resolution order:
+  //   1. ?mode=<combined> query param
+  //   2. ?format=... &layout=... query params
+  //   3. localStorage (user's last-used mode)
+  //   4. 'pages' default
+  function getInitialMode() {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const m = p.get('mode');
+      if (m && ['pages', 'scroll', 'pdf', 'pdf-scroll', 'metadata-pages', 'chunks'].includes(m)) return m;
+      const f = p.get('format');
+      const l = p.get('layout');
+      if (FORMAT_VALUES.includes(f) && LAYOUT_VALUES.includes(l)) return combinedMode(f, l);
+    } catch (_) {}
+    return localStorage.getItem('gyde-reader-mode') || 'pages';
+  }
+  let mode = getInitialMode();
+  let { format, layout } = decomposeMode(mode);
   let scrollLoaded = false;
+  let pdfScrollLoaded = false;
   let scrollSpyObserver = null;
 
   // ─── MODE TOGGLE ───────────────────────────────────────────────
 
   function setMode(newMode) {
-    // If we're LEAVING chunks for pages/scroll, carry the currently
-    // focused chunk forward as a citation-callout highlight. This
-    // makes "I'm on chunk 14, I hit Scroll" actually land on page
-    // 14 with chunk 14 highlighted — without it the mode switch
-    // would lose the fine-grained position.
-    if (mode === 'chunks' && (newMode === 'scroll' || newMode === 'pages')) {
+    // If we're LEAVING a metadata mode for a reading mode, carry
+    // the currently focused chunk forward as a citation-callout
+    // highlight. This makes "I'm on chunk 14, I hit HTML" actually
+    // land on page 14 with chunk 14 highlighted.
+    const leavingMetadata = (mode === 'chunks' || mode === 'metadata-pages');
+    const enteringReading = (newMode === 'scroll' || newMode === 'pages' || newMode === 'pdf' || newMode === 'pdf-scroll');
+    if (leavingMetadata && enteringReading) {
       seedHighlightFromChunksView();
     }
     mode = newMode;
+    ({ format, layout } = decomposeMode(mode));
     localStorage.setItem('gyde-reader-mode', mode);
+    syncViewSettingsMenu();
 
-    [modePagesBtn, modeScrollBtn, modePdfBtn, modeChunksBtn].forEach(b => b && b.classList.remove('active'));
+    // Hide all view containers; the active handler below shows its own.
     content.style.display = 'none';
     scrollContent.style.display = 'none';
     originalView.style.display = 'none';
+    if (pdfScrollContent) pdfScrollContent.style.display = 'none';
     if (chunksContent) chunksContent.style.display = 'none';
+    if (chunksSingleContent) chunksSingleContent.style.display = 'none';
 
     if (mode === 'pages') {
-      modePagesBtn.classList.add('active');
       content.style.display = '';
       pageIndicator.style.display = '';
       headerPrevBtn.style.display = '';
       headerNextBtn.style.display = '';
-      // Reset main scroll so Pages view always lands at top of
-      // the current page (otherwise coming from a scrolled
-      // Chunks / Scroll position leaves Pages at the wrong
-      // offset and looks like "I went back to the start").
       if (readerMain) readerMain.scrollTop = 0;
-      // If the currently-mounted content is for a different
-      // page than R.currentPage (e.g. the user scrolled through
-      // chunks/scroll and landed on a new page, then switched
-      // to pages), pull in the right page. Without this the
-      // mode switch silently shows whatever page was last
-      // explicitly loaded via goToPage, usually page 1.
       if (content.getAttribute('data-page') !== String(R.currentPage)) {
         goToPage(R.currentPage);
       }
-      // When returning to pages mode, re-apply the citation highlight if any.
       applyHighlightToVisible();
       updateActiveSectionForPage(R.currentPage);
       currentPageNum.textContent = R.currentPage;
       pageJump.value = R.currentPage;
     } else if (mode === 'scroll') {
-      modeScrollBtn.classList.add('active');
       scrollContent.style.display = '';
       pageIndicator.style.display = 'none';
       headerPrevBtn.style.display = 'none';
@@ -88,15 +131,11 @@
         loadAllPages();
       } else {
         applyHighlightToVisible();
-        // Rebuild scroll-spy in case the sidebar was regenerated.
         setupScrollSpy();
-        // Preserve reading position when re-entering scroll
-        // mode: scroll the current page's section into view.
         const target = document.getElementById(`scroll-page-${R.currentPage}`);
         if (target) target.scrollIntoView({ behavior: 'auto', block: 'start' });
       }
     } else if (mode === 'pdf') {
-      modePdfBtn.classList.add('active');
       originalView.style.display = '';
       originalImg.src = `/images/${R.bookId}/page-${R.currentPage}.png`;
       pageIndicator.style.display = '';
@@ -104,18 +143,32 @@
       headerNextBtn.style.display = '';
       currentPageNum.textContent = R.currentPage;
       pageJump.value = R.currentPage;
+    } else if (mode === 'pdf-scroll') {
+      pdfScrollContent.style.display = '';
+      pageIndicator.style.display = 'none';
+      headerPrevBtn.style.display = 'none';
+      headerNextBtn.style.display = 'none';
+      if (!pdfScrollLoaded) {
+        loadPdfScroll();
+      } else {
+        const target = document.getElementById(`pdf-scroll-page-${R.currentPage}`);
+        if (target) target.scrollIntoView({ behavior: 'auto', block: 'start' });
+      }
+    } else if (mode === 'metadata-pages') {
+      chunksSingleContent.style.display = '';
+      pageIndicator.style.display = '';
+      headerPrevBtn.style.display = '';
+      headerNextBtn.style.display = '';
+      currentPageNum.textContent = R.currentPage;
+      pageJump.value = R.currentPage;
+      if (window.GydeChunksView && window.GydeChunksView.loadSinglePage) {
+        window.GydeChunksView.loadSinglePage(R.bookId, R.currentPage, chunksSingleContent);
+      }
     } else if (mode === 'chunks') {
-      modeChunksBtn && modeChunksBtn.classList.add('active');
       if (chunksContent) chunksContent.style.display = '';
       pageIndicator.style.display = '';
       headerPrevBtn.style.display = '';
       headerNextBtn.style.display = '';
-      // Only (re)load the full chunks scroll the FIRST time
-      // the user enters chunks mode. Subsequent mode switches
-      // should leave the chunks DOM mounted and just scroll to
-      // the current page — this keeps mode switches feeling
-      // instant and preserves any state the user has set up
-      // (popovers, scroll position within a chunk, etc).
       if (window.GydeChunksView) {
         if (!chunksContent || chunksContent.childElementCount === 0) {
           window.GydeChunksView.load(R.bookId, R.currentPage, chunksContent);
@@ -126,6 +179,58 @@
     }
 
     updateArrowState();
+  }
+
+  // ─── PDF Scroll loader ────────────────────────────────────────
+
+  function loadPdfScroll() {
+    pdfScrollLoaded = true;
+    pdfScrollContent.innerHTML = '';
+    for (let i = 1; i <= R.totalPages; i++) {
+      const section = document.createElement('div');
+      section.className = 'pdf-scroll-page';
+      section.id = `pdf-scroll-page-${i}`;
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.src = `/images/${R.bookId}/page-${i}.png`;
+      img.alt = `Page ${i}`;
+      const label = document.createElement('div');
+      label.className = 'pdf-scroll-page-label';
+      label.textContent = `Page ${i}`;
+      section.appendChild(img);
+      section.appendChild(label);
+      pdfScrollContent.appendChild(section);
+    }
+    // Land on current page after layout settles.
+    requestAnimationFrame(() => {
+      const target = document.getElementById(`pdf-scroll-page-${R.currentPage}`);
+      if (target) target.scrollIntoView({ behavior: 'auto', block: 'start' });
+    });
+    setupPdfScrollSpy();
+  }
+
+  function setupPdfScrollSpy() {
+    if (!('IntersectionObserver' in window)) return;
+    const sections = pdfScrollContent.querySelectorAll('.pdf-scroll-page');
+    if (!sections.length) return;
+    const spy = new IntersectionObserver(function (entries) {
+      const hits = entries.filter(e => e.isIntersecting);
+      if (!hits.length) return;
+      hits.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+      const chosen = hits[hits.length - 1].target;
+      const pg = parseInt((chosen.id || '').replace('pdf-scroll-page-', ''), 10);
+      if (!pg || pg === R.currentPage) return;
+      R.currentPage = pg;
+      currentPageNum.textContent = pg;
+      pageJump.value = pg;
+      saveBookmark(pg);
+      updateActiveSectionForPage(pg);
+    }, {
+      root: readerMain,
+      rootMargin: '0px 0px -70% 0px',
+      threshold: 0,
+    });
+    sections.forEach(s => spy.observe(s));
   }
 
   function updateArrowState() {
@@ -160,6 +265,89 @@
     });
   }
 
+  // ─── View settings menu (Format × Layout × Ask AI) ───────────
+
+  const viewSettingsBtn = document.getElementById('viewSettingsBtn');
+  const viewSettingsMenu = document.getElementById('viewSettingsMenu');
+
+  function syncViewSettingsMenu() {
+    if (!viewSettingsMenu) return;
+    const fmtBtns = viewSettingsMenu.querySelectorAll('[data-axis="format"] .vsm-btn');
+    const layBtns = viewSettingsMenu.querySelectorAll('[data-axis="layout"] .vsm-btn');
+    fmtBtns.forEach(b => b.classList.toggle('active', b.dataset.value === format));
+    layBtns.forEach(b => b.classList.toggle('active', b.dataset.value === layout));
+    // Ask AI state is read at open time since split-chat is an
+    // independent module — see openViewSettingsMenu.
+  }
+
+  function openViewSettingsMenu() {
+    if (!viewSettingsMenu) return;
+    viewSettingsMenu.style.display = 'block';
+    viewSettingsBtn.setAttribute('aria-expanded', 'true');
+    syncViewSettingsMenu();
+    // Reflect current Ask AI state by checking whether split-chat
+    // is open. split-chat.js doesn't expose a query function today
+    // so we fall back to inspecting the panel's visibility.
+    const askAiBtns = viewSettingsMenu.querySelectorAll('[data-axis="askai"] .vsm-btn');
+    const chatPanel = document.getElementById('splitChatPanel');
+    const askAiOn = chatPanel && chatPanel.style.display && chatPanel.style.display !== 'none';
+    askAiBtns.forEach(b => b.classList.toggle('active', b.dataset.value === (askAiOn ? 'on' : 'off')));
+  }
+
+  function closeViewSettingsMenu() {
+    if (!viewSettingsMenu) return;
+    viewSettingsMenu.style.display = 'none';
+    viewSettingsBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  if (viewSettingsBtn && viewSettingsMenu) {
+    viewSettingsBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (viewSettingsMenu.style.display === 'none' || !viewSettingsMenu.style.display) {
+        openViewSettingsMenu();
+      } else {
+        closeViewSettingsMenu();
+      }
+    });
+
+    // Click-outside-to-close.
+    document.addEventListener('click', function (e) {
+      if (viewSettingsMenu.style.display === 'none') return;
+      if (viewSettingsMenu.contains(e.target) || viewSettingsBtn.contains(e.target)) return;
+      closeViewSettingsMenu();
+    });
+
+    // Delegate clicks on the three axes.
+    viewSettingsMenu.addEventListener('click', function (e) {
+      const btn = e.target.closest('.vsm-btn');
+      if (!btn) return;
+      const axis = btn.parentElement.dataset.axis;
+      const value = btn.dataset.value;
+      if (axis === 'format') {
+        format = value;
+        setMode(combinedMode(format, layout));
+      } else if (axis === 'layout') {
+        layout = value;
+        setMode(combinedMode(format, layout));
+      } else if (axis === 'askai') {
+        // Toggle the split-chat panel via its legacy hidden button.
+        // split-chat.js wires a click handler on #splitToggleBtn
+        // that flips isOpen, so we synthesize a click only when the
+        // current state doesn't match the requested state.
+        const chatPanel = document.getElementById('splitChatPanel');
+        const isOpen = chatPanel && chatPanel.style.display && chatPanel.style.display !== 'none';
+        const shouldBeOpen = value === 'on';
+        if (isOpen !== shouldBeOpen) {
+          const toggle = document.getElementById('splitToggleBtn');
+          if (toggle) toggle.click();
+        }
+        // Update active state immediately.
+        viewSettingsMenu.querySelectorAll('[data-axis="askai"] .vsm-btn')
+          .forEach(b => b.classList.toggle('active', b.dataset.value === value));
+      }
+    });
+  }
+
   // Before switching to scroll/pages mode FROM chunks, pull the
   // current focus from the chunks view as the highlight seed. This
   // is how "I'm on chunk 14, I hit Scroll" actually delivers the
@@ -172,9 +360,12 @@
     if (f && f.chunkPreview) pendingHighlight = f.chunkPreview;
   }
 
-  modePagesBtn.addEventListener('click', () => setMode('pages'));
-  modeScrollBtn.addEventListener('click', () => setMode('scroll'));
-  modePdfBtn.addEventListener('click', () => setMode('pdf'));
+  // Legacy mode buttons are gone from the DOM — the view-settings
+  // menu replaces them. Keep these guards so third-party scripts
+  // that touch the old IDs don't crash.
+  if (modePagesBtn) modePagesBtn.addEventListener('click', () => setMode('pages'));
+  if (modeScrollBtn) modeScrollBtn.addEventListener('click', () => setMode('scroll'));
+  if (modePdfBtn) modePdfBtn.addEventListener('click', () => setMode('pdf'));
   if (modeChunksBtn) modeChunksBtn.addEventListener('click', () => setMode('chunks'));
   // Expose setMode for chunks-view so page-nav from within the
   // chunks panel can refresh after a page change.
@@ -239,7 +430,7 @@
 
   async function goToPage(num) {
     num = Math.max(1, Math.min(num, R.totalPages));
-    if (num === R.currentPage && mode !== 'scroll') return;
+    if (num === R.currentPage && mode !== 'scroll' && mode !== 'pdf-scroll') return;
 
     if (mode === 'scroll') {
       const el = document.getElementById(`scroll-page-${num}`);
@@ -248,14 +439,42 @@
       return;
     }
 
-    // Chunks mode already has all pages rendered; just scroll.
-    // Skip the /api/page/:num fetch since we don't need the HTML.
+    if (mode === 'pdf-scroll') {
+      const el = document.getElementById(`pdf-scroll-page-${num}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth' });
+      R.currentPage = num;
+      currentPageNum.textContent = num;
+      pageJump.value = num;
+      updateArrowState();
+      saveBookmark(num);
+      return;
+    }
+
+    // Chunks (metadata+scroll) mode already has all pages rendered;
+    // just scroll. Skip the /api/page/:num fetch.
     if (mode === 'chunks') {
       R.currentPage = num;
       currentPageNum.textContent = num;
       pageJump.value = num;
       updateArrowState();
       if (window.GydeChunksView) window.GydeChunksView.jumpTo(num);
+      updateActiveSectionForPage(num);
+      saveBookmark(num);
+      history.replaceState(null, '', `/reader/${R.bookId}/page/${num}`);
+      return;
+    }
+
+    // Metadata + Pages: reload the single-page chunks view for the
+    // new page. No HTML fetch needed — chunks come from a separate
+    // endpoint that loadSinglePage calls.
+    if (mode === 'metadata-pages') {
+      R.currentPage = num;
+      currentPageNum.textContent = num;
+      pageJump.value = num;
+      updateArrowState();
+      if (window.GydeChunksView && window.GydeChunksView.loadSinglePage) {
+        window.GydeChunksView.loadSinglePage(R.bookId, num, chunksSingleContent);
+      }
       updateActiveSectionForPage(num);
       saveBookmark(num);
       history.replaceState(null, '', `/reader/${R.bookId}/page/${num}`);

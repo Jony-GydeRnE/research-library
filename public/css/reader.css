@@ -74,8 +74,11 @@
   overflow: hidden;
 }
 
-/* Mode toggle (Pages | Scroll | PDF) */
-.reader-mode-toggle {
+/* Legacy mode toggle (Pages|Scroll|PDF|Chunks) — removed from
+   the header markup. Any residual DOM renders hidden so stale
+   templates don't double-up the controls. */
+.reader-mode-toggle { display: none !important; }
+.reader-mode-toggle--legacy-unused {
   display: inline-flex;
   background: var(--r-nav-btn-bg);
   border-radius: 8px;
@@ -2025,4 +2028,142 @@ mjx-container {
 }
 .metadata-candidate-card:hover .cand-preview::after {
   background: linear-gradient(transparent, var(--r-nav-btn-hover));
+}
+
+/* ─── VIEW SETTINGS MENU (Format × Layout × Ask AI) ──────
+   Apple-Preview-style dropdown. Replaces the old 4-button
+   Pages/Scroll/PDF/Chunks row AND the old toggle-chat-panel
+   button. Anchored under the view-settings button in the
+   reader header's right cluster. */
+
+.view-settings-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.view-settings-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.view-settings-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 200px;
+  background: var(--r-surface, #1e1e1e);
+  border: 1px solid var(--r-border, #333);
+  border-radius: 10px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.35);
+  padding: 6px;
+  z-index: 200;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  user-select: none;
+}
+
+.vsm-section {
+  padding: 4px 4px 6px;
+}
+
+.vsm-label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--r-text-muted, #888);
+  padding: 2px 6px 4px;
+}
+
+.vsm-options {
+  display: flex;
+  gap: 4px;
+  background: var(--r-nav-btn-bg, rgba(255, 255, 255, 0.04));
+  border-radius: 7px;
+  padding: 3px;
+}
+
+.vsm-btn {
+  flex: 1;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--r-text-muted, #aaa);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.12s ease;
+  text-align: center;
+  min-width: 0;
+}
+
+.vsm-btn:hover:not(.active) {
+  color: var(--r-text, #e6e6e6);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.vsm-btn.active {
+  background: var(--r-surface, #2a2a2a);
+  color: var(--r-text, #ffffff);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.vsm-divider {
+  height: 1px;
+  background: var(--r-border, #2b2b2b);
+  margin: 3px 4px;
+}
+
+/* ─── PDF + Scroll mode (stacked page images) ───────────── */
+
+.reader-pdf-scroll {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 16px 80px;
+  gap: 20px;
+}
+.reader-pdf-scroll .pdf-scroll-page {
+  width: 100%;
+  max-width: 900px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.reader-pdf-scroll .pdf-scroll-page img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 4px;
+  background: #ffffff;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+}
+.reader-pdf-scroll .pdf-scroll-page-label {
+  margin-top: 8px;
+  font-size: 0.7rem;
+  color: var(--r-text-muted, #777);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* ─── Metadata + Pages mode (single-page chunks) ────────── */
+
+.reader-chunks-single {
+  padding: 20px 16px 80px;
+}
+
+/* ─── Responsive: Z Fold 7 and narrow phone screens ────── */
+
+@media (max-width: 700px) {
+  .view-settings-menu {
+    min-width: 180px;
+  }
+  .vsm-btn {
+    padding: 0.45rem 0.4rem;
+    font-size: 0.72rem;
+  }
+  .reader-book-title { display: none; }
+  .reader-header-center { display: none; }
 }
