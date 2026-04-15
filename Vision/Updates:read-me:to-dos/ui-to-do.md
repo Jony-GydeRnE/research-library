@@ -9,6 +9,9 @@ Add new items at the bottom of their priority bucket. Cross out and move to "Rec
 
 ## 🖼 Reader / split-screen / metadata UI (the 2026-04-13 bucket)
 
+- [ ] 🟡 **Mobile single-screen mode (new 2026-04-14).** On regular handheld phones (viewport ≲ 500px), split-screen shouldn't open at all — instead, clicking an edge should REPLACE the current reader pane with the target book (single-pane toggle). The back/forward buttons then step through the navigation stack. Z Fold 7 and larger devices keep the current two-pane split behavior. Fold the stack per-tab so the user can always get back to where they came from. Detection: use `window.matchMedia('(max-width: 520px)')` or similar. Files: `public/js/chat-split-reader.js` (add mobile detection in `open()` → navigate instead of iframe), `public/js/reader.js` (maintain a nav stack in localStorage keyed by tab), `public/css/reader.css` (hide the split-panel divider on narrow).
+
+
 - [ ] 🟡 **Reader view-mode axis redesign (Jony 2026-04-13).** Current mode toggle is Pages / Scroll / PDF / Chunks — four buttons on one axis. Conflates two independent concerns: FORMAT (HTML vs PDF) and LAYOUT (pages vs scroll). Also Chunks is really "view the metadata layer", not a third format. Proposed redesign:
   - Two axes. **Format**: HTML or PDF. **Layout**: Pages or Scroll. Default layout = Scroll for both formats. Currently Scroll is only implemented for HTML, "and that's racist" — PDF should also support Scroll mode (stitched vertical PDF page images).
   - Rename "Chunks" → "Metadata". It IS the metadata layer, not a separate format.

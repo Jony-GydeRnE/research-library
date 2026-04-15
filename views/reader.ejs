@@ -16,7 +16,7 @@
       <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" title="Toggle sidebar">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
-      <button class="sidebar-mode-btn" id="sidebarModeBtn">Collections</button>
+      <button class="sidebar-mode-btn" id="sidebarModeBtn">Projects</button>
     </div>
 
     <!-- Tab panel: Contents (TOC) -->
@@ -66,13 +66,30 @@
       </nav>
       <div class="sidebar-divider"></div>
       <div class="sidebar-context" style="padding:0 0.4rem;">
-        <div class="sidebar-section-label"><span class="nav-label">Collections</span></div>
+        <div class="sidebar-section-label"><span class="nav-label">Projects</span></div>
         <% (collections || []).filter(function(c) { return c.title !== 'All Books'; }).forEach(function(col) { %>
           <a href="/collection/<%= col._id %>" class="sidebar-context-item">
             <span class="col-dot" style="background:<%= col.color %>"></span>
             <span class="nav-label"><%= col.title %></span>
           </a>
         <% }); %>
+        <button class="sidebar-new-btn" id="sidebarNewCollectionBtn" type="button">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <span class="nav-label">New Project</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- New Project modal (mirrors the one in views/partials/sidebar.ejs) -->
+    <div class="modal-overlay" id="newCollectionModal" style="display:none;">
+      <div class="modal">
+        <h2>New Project</h2>
+        <input type="text" id="newCollectionTitle" class="modal-input" placeholder="Project name" maxlength="120" />
+        <textarea id="newCollectionInstructions" class="modal-input" placeholder="AI instructions (optional)" rows="3"></textarea>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="newCollectionCancelBtn" type="button">Cancel</button>
+          <button class="btn btn-primary" id="newCollectionCreateBtn" type="button">Create</button>
+        </div>
       </div>
     </div>
 
@@ -289,7 +306,7 @@
       localStorage.setItem(key, sidebar.classList.contains('collapsed') ? 'collapsed' : 'open');
     });
 
-    // Mode toggle: Contents / Collections
+    // Mode toggle: Contents / Projects
     var modeBtn = document.getElementById('sidebarModeBtn');
     var panelContents = document.getElementById('panelContents');
     var panelNav = document.getElementById('panelNav');
@@ -305,8 +322,56 @@
         sidebarMode = 'contents';
         panelContents.style.display = '';
         panelNav.style.display = 'none';
-        modeBtn.textContent = 'Collections';
+        modeBtn.textContent = 'Projects';
       }
+    });
+  })();
+  </script>
+
+  <!-- New Project modal wiring (same endpoint as the main sidebar partial) -->
+  <script>
+  (function() {
+    var btn = document.getElementById('sidebarNewCollectionBtn');
+    var modal = document.getElementById('newCollectionModal');
+    if (!btn || !modal) return;
+    var titleInput = document.getElementById('newCollectionTitle');
+    var instrInput = document.getElementById('newCollectionInstructions');
+    var cancelBtn = document.getElementById('newCollectionCancelBtn');
+    var createBtn = document.getElementById('newCollectionCreateBtn');
+    function open() {
+      titleInput.value = '';
+      instrInput.value = '';
+      modal.style.display = '';
+      setTimeout(function() { titleInput.focus(); }, 10);
+    }
+    function close() { modal.style.display = 'none'; }
+    btn.addEventListener('click', function(e) { e.preventDefault(); open(); });
+    cancelBtn.addEventListener('click', close);
+    modal.addEventListener('click', function(e) { if (e.target === modal) close(); });
+    function submit() {
+      var title = (titleInput.value || '').trim();
+      if (!title) { titleInput.focus(); return; }
+      createBtn.disabled = true;
+      fetch('/collections/api', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title, instructions: instrInput.value || '' }),
+      }).then(function(r) { return r.json(); }).then(function(col) {
+        createBtn.disabled = false;
+        if (col && col._id) {
+          window.location.href = '/collection/' + col._id;
+        } else {
+          alert('Failed to create project');
+        }
+      }).catch(function() {
+        createBtn.disabled = false;
+        alert('Network error creating project');
+      });
+    }
+    createBtn.addEventListener('click', submit);
+    titleInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); submit(); }
+      if (e.key === 'Escape') close();
     });
   })();
   </script>

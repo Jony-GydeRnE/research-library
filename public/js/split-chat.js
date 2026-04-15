@@ -26,6 +26,18 @@
   // ─── OPEN / CLOSE ─────────────────────────────────────────────
 
   function openPanel(highlight, onChatCreated) {
+    // HARD RULE: never more than 2 panes on screen. Close any other
+    // split / side panel before opening the chat panel.
+    if (typeof window.__closeSplitReader === 'function' && window.__isSplitReaderOpen && window.__isSplitReaderOpen()) {
+      window.__closeSplitReader();
+    }
+    // Also collapse the outer app sidebar so the layout has room
+    // for the two real panes (reader + chat).
+    var appSidebar = document.querySelector('.app-sidebar');
+    if (appSidebar && !appSidebar.classList.contains('collapsed')) {
+      appSidebar.classList.add('collapsed');
+    }
+
     highlightContext = highlight || null;
     onChatCreatedCallback = onChatCreated || null;
     chatId = null;

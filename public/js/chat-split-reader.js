@@ -151,6 +151,23 @@
 
   function open(url) {
     ensureCreated();
+
+    // HARD RULE: never more than 2 panes on screen. Before we open
+    // this split, close every other side-panel / split-panel that
+    // might already be visible. That includes:
+    //   - The in-reader split-chat panel (public/js/split-chat.js)
+    //   - The metadata side panel (public/js/metadata-panel.js)
+    //   - The notes side panel (public/js/notes-panel.js)
+    // Each exposes its own close hook; we call whichever is present.
+    closeOtherPanels();
+
+    // If already open, just update the target URL in-place — don't
+    // re-trigger the layout dance, don't spawn a second level.
+    if (isOpen) {
+      if (url) iframe.src = ensureCollapsedQuery(url);
+      return;
+    }
+
     isOpen = true;
     // Auto-detect dock mode: if the calling page has .reader-wrapper
     // (the reader view), dock the split panel to the RIGHT so the
@@ -158,16 +175,37 @@
     // (chat / files-notebook) stay with the legacy middle dock.
     dockMode = document.querySelector('.reader-wrapper') ? 'right' : 'middle';
     document.body.classList.toggle('chat-split-dock-right', dockMode === 'right');
-    // In middle-dock (chat) mode we force the outer sidebar collapsed
-    // so the layout stays clean. In right-dock (reader) mode we leave
-    // the outer sidebar alone — the new panel is on the opposite side
-    // so it never bleeds across the sidebar-to-content axis.
-    if (dockMode === 'middle') forceOuterSidebarCollapsed();
+    // Any time a split opens: the outer sidebar collapses by default.
+    // Applies to BOTH dock modes — the hard rule is "never more than
+    // 2 panes, and no side panels bleeding into the layout when we
+    // transition into split".
+    forceOuterSidebarCollapsed();
     document.body.classList.add('chat-split-open');
     panel.style.display = 'flex';
     divider.style.display = 'block';
     apply();
     if (url) iframe.src = ensureCollapsedQuery(url);
+  }
+
+  // Close any other side panels / splits that might be visible.
+  // Called at the top of open() to enforce the "max 2 panes" rule.
+  function closeOtherPanels() {
+    // In-reader split-chat (split-chat.js)
+    var chatPanel = document.getElementById('splitChatPanel');
+    if (chatPanel && chatPanel.style.display && chatPanel.style.display !== 'none') {
+      var chatToggle = document.getElementById('splitToggleBtn');
+      if (chatToggle) chatToggle.click(); // split-chat.js listens and closes
+    }
+    // Metadata side panel (metadata-panel.js)
+    var metaPanel = document.querySelector('.split-chat-panel.metadata-panel');
+    if (metaPanel && metaPanel.style.display !== 'none') {
+      metaPanel.style.display = 'none';
+    }
+    // Notes side panel (notes-panel.js)
+    var notesPanel = document.querySelector('.split-chat-panel.notes-panel');
+    if (notesPanel && notesPanel.style.display !== 'none') {
+      notesPanel.style.display = 'none';
+    }
   }
 
   function update(url) {

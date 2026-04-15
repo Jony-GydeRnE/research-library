@@ -19,7 +19,7 @@
   <div class="sidebar-divider"></div>
 
   <div class="sidebar-context" id="sidebarContext">
-    <div class="sidebar-section-label"><span class="nav-label">Collections</span></div>
+    <div class="sidebar-section-label"><span class="nav-label">Projects</span></div>
 
     <% if (typeof collections !== 'undefined') { %>
       <% (collections || []).filter(function(c) { return c.title !== 'All Books'; }).forEach(function(col) { %>
@@ -58,15 +58,15 @@
 
     <button class="sidebar-new-btn" id="sidebarNewCollectionBtn">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      <span class="nav-label">New Collection</span>
+      <span class="nav-label">New Project</span>
     </button>
   </div>
 
   <!-- New Collection Modal -->
   <div class="modal-overlay" id="newCollectionModal" style="display:none;">
     <div class="modal">
-      <h2>New Collection</h2>
-      <input type="text" id="newCollectionTitle" class="modal-input" placeholder="Collection name" maxlength="120" />
+      <h2>New Project</h2>
+      <input type="text" id="newCollectionTitle" class="modal-input" placeholder="Project name" maxlength="120" />
       <textarea id="newCollectionInstructions" class="modal-input" placeholder="AI instructions (optional)" rows="3"></textarea>
       <div class="modal-actions">
         <button class="btn btn-secondary" id="newCollectionCancelBtn">Cancel</button>

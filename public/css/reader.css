@@ -187,24 +187,36 @@
   align-items: center;
   justify-content: space-between;
   height: 48px;
-  padding: 0 1rem;
+  padding: 0 0.75rem;
   background: var(--r-header-bg);
   border-bottom: 1px solid var(--r-header-border);
   z-index: 20;
   position: relative;
+  gap: 0.5rem;
+  min-width: 0;   /* allow children to shrink */
 }
 
-.reader-header-left,
+.reader-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;       /* can shrink */
+  flex: 1 1 auto;
+  overflow: hidden;   /* never push siblings off-screen */
+}
+
 .reader-header-right {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex: 0 0 auto;     /* never shrink — controls must stay visible */
 }
 
 .reader-header-center {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
+  pointer-events: none;  /* no children today; don't block clicks */
 }
 
 .reader-btn {
@@ -233,6 +245,8 @@
   color: var(--r-text);
   margin-left: 0.5rem;
   max-width: 250px;
+  min-width: 0;
+  flex: 0 1 auto;       /* shrink before pushing siblings out */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2156,14 +2170,19 @@ mjx-container {
 
 /* ─── Responsive: Z Fold 7 and narrow phone screens ────── */
 
-@media (max-width: 700px) {
-  .view-settings-menu {
-    min-width: 180px;
-  }
-  .vsm-btn {
-    padding: 0.45rem 0.4rem;
-    font-size: 0.72rem;
-  }
+@media (max-width: 900px) {
+  .view-settings-menu { min-width: 180px; }
+  .vsm-btn { padding: 0.45rem 0.4rem; font-size: 0.72rem; }
   .reader-book-title { display: none; }
   .reader-header-center { display: none; }
+  .reader-page-indicator { font-size: 0.7rem; }
+  .reader-header { padding: 0 0.5rem; }
+}
+
+@media (max-width: 520px) {
+  /* True phone mode — kill the page indicator too, leave just the
+     prev arrow on the left and view-settings + next on the right. */
+  .reader-page-indicator { display: none; }
+  .reader-header-left { gap: 0.25rem; }
+  .reader-header-right { gap: 0.25rem; }
 }
