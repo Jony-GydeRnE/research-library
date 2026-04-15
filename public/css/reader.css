@@ -111,24 +111,37 @@
   color: var(--r-text);
 }
 
-/* Sidebar mode toggle button (inline with hamburger) */
+/* Sidebar mode toggle button (Contents ↔ Projects).
+   Positioned in the middle of the sidebar-top row, slightly right
+   of center, so it reads as a prominent pill rather than a tiny
+   adornment next to the hamburger. Styled with the THEME-CONTRAST
+   accent (warm against cool dark themes) so it pops as a clear
+   action target. */
 .sidebar-mode-btn {
-  padding: 0.25rem 0.6rem;
-  font-size: 0.7rem;
-  font-weight: 500;
-  border: 1px solid var(--app-border, #333);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--app-text-muted, #888);
+  padding: 0.4rem 1.1rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--app-accent-contrast, #ffd166);
+  border-radius: 999px;               /* pill shape */
+  background: var(--app-accent-contrast-dim, rgba(255, 209, 102, 0.18));
+  color: var(--app-accent-contrast, #ffd166);
   cursor: pointer;
   font-family: inherit;
-  transition: all 0.12s ease;
-  margin-left: 0.25rem;
+  transition: all 0.15s ease;
+  /* Push to the middle-right of the sidebar-top row. margin-left:
+     auto shifts it past the hamburger; margin-right gives a bit
+     of breathing room from the right edge so it reads as "middle
+     + slight right" rather than "pinned to right". */
+  margin-left: auto;
+  margin-right: 1.25rem;
+  box-shadow: 0 0 0 0 var(--app-accent-contrast-dim, rgba(255, 209, 102, 0.18));
 }
 
 .sidebar-mode-btn:hover {
-  background: var(--app-surface-hover, #2a2a2e);
-  color: var(--app-text, #d4d2cc);
+  background: var(--app-accent-contrast, #ffd166);
+  color: var(--app-bg, #0b0b18);
+  box-shadow: 0 0 0 4px var(--app-accent-contrast-dim, rgba(255, 209, 102, 0.22));
 }
 
 .app-sidebar.collapsed .sidebar-mode-btn { display: none; }

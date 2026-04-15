@@ -33,6 +33,12 @@
   --app-accent-dim: rgba(168, 151, 240, 0.14);
   --app-danger: #ef6d7e;
   --app-glow: rgba(168, 151, 240, 0.25);
+  /* Warm contrast accent — opposite side of the color wheel from
+     the cool purple --app-accent. Used for prominent CTAs like
+     the Projects button so they POP against the cool dark theme. */
+  --app-accent-contrast: #ffd166;
+  --app-accent-contrast-hover: #ffdd8a;
+  --app-accent-contrast-dim: rgba(255, 209, 102, 0.18);
   --app-backdrop:
     radial-gradient(ellipse 900px 700px at 92% -8%,
       rgba(88, 55, 170, 0.30), transparent 60%),
@@ -57,6 +63,10 @@
   --app-accent-dim: rgba(209, 140, 255, 0.14);
   --app-danger: #ff6b85;
   --app-glow: rgba(209, 140, 255, 0.3);
+  /* Warm amber contrast — opposite the cool pink-magenta base. */
+  --app-accent-contrast: #ffcf5c;
+  --app-accent-contrast-hover: #ffdc80;
+  --app-accent-contrast-dim: rgba(255, 207, 92, 0.18);
   --app-backdrop:
     radial-gradient(ellipse 1000px 700px at 80% -5%,
       rgba(192, 80, 220, 0.28), transparent 60%),
@@ -82,6 +92,10 @@
   --app-accent-dim: rgba(106, 171, 219, 0.12);
   --app-danger: #e66a6a;
   --app-glow: rgba(106, 171, 219, 0.18);
+  /* Warm orange contrast — opposite the cool blue accent. */
+  --app-accent-contrast: #ff9a52;
+  --app-accent-contrast-hover: #ffb47a;
+  --app-accent-contrast-dim: rgba(255, 154, 82, 0.15);
   --app-backdrop: none;
 }
 
