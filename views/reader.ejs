@@ -300,7 +300,15 @@
     // chat split view it starts with the TOC hidden (the user can still
     // open it manually via the hamburger).
     var forceCollapsed = /[?&]sidebar=collapsed(&|$)/.test(window.location.search);
-    if (forceCollapsed || localStorage.getItem(key) === 'collapsed') sidebar.classList.add('collapsed');
+    // Auto-collapse on narrow viewports (Z Fold cover, phones). The
+    // sidebar is 240px wide; on a ~400px viewport it leaves only ~160px
+    // for the reader which is unreadable. User can still open it via
+    // the hamburger. Threshold matches the reader.css responsive
+    // breakpoints.
+    var narrowViewport = window.matchMedia && window.matchMedia('(max-width: 900px)').matches;
+    if (forceCollapsed || narrowViewport || localStorage.getItem(key) === 'collapsed') {
+      sidebar.classList.add('collapsed');
+    }
     btn.addEventListener('click', function() {
       sidebar.classList.toggle('collapsed');
       localStorage.setItem(key, sidebar.classList.contains('collapsed') ? 'collapsed' : 'open');

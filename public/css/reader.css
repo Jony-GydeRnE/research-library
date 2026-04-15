@@ -188,35 +188,50 @@
   justify-content: space-between;
   height: 48px;
   padding: 0 0.75rem;
+  /* Reserve enough right-padding for the absolutely-positioned
+     reader-header-right cluster so flowed left content never
+     collides with it. Bumped on narrow viewports via media query. */
+  padding-right: 110px;
   background: var(--r-header-bg);
   border-bottom: 1px solid var(--r-header-border);
   z-index: 20;
   position: relative;
   gap: 0.5rem;
-  min-width: 0;   /* allow children to shrink */
+  min-width: 0;
+  overflow: hidden;   /* clip left overflow rather than let it push right controls off-screen */
 }
 
 .reader-header-left {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  min-width: 0;       /* can shrink */
+  min-width: 0;
   flex: 1 1 auto;
-  overflow: hidden;   /* never push siblings off-screen */
+  overflow: hidden;
 }
 
+/* Pin the right cluster to the right edge of the header absolutely.
+   This decouples its position from the flex flow of the left cluster
+   so the view-settings button is guaranteed visible regardless of
+   how long the book title is, how wide the sidebar is, or how the
+   browser interprets the viewport. The reader-header's padding-right
+   reserves the flow space. */
 .reader-header-right {
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  flex: 0 0 auto;     /* never shrink — controls must stay visible */
+  z-index: 25;
 }
 
 .reader-header-center {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  pointer-events: none;  /* no children today; don't block clicks */
+  pointer-events: none;
 }
 
 .reader-btn {
@@ -2170,19 +2185,26 @@ mjx-container {
 
 /* ─── Responsive: Z Fold 7 and narrow phone screens ────── */
 
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .view-settings-menu { min-width: 180px; }
   .vsm-btn { padding: 0.45rem 0.4rem; font-size: 0.72rem; }
   .reader-book-title { display: none; }
   .reader-header-center { display: none; }
   .reader-page-indicator { font-size: 0.7rem; }
-  .reader-header { padding: 0 0.5rem; }
+  .reader-header { padding: 0 0.5rem; padding-right: 100px; }
+}
+
+@media (max-width: 700px) {
+  /* Z Fold cover + phones — tighter */
+  .reader-page-indicator { font-size: 0.65rem; }
+  .reader-header { padding-right: 90px; }
+  .reader-header-left { gap: 0.2rem; }
+  .reader-header-right { gap: 0.2rem; right: 0.5rem; }
 }
 
 @media (max-width: 520px) {
-  /* True phone mode — kill the page indicator too, leave just the
-     prev arrow on the left and view-settings + next on the right. */
+  /* True phone mode — kill the page indicator, leave just the prev
+     arrow on the left and view-settings + next on the right. */
   .reader-page-indicator { display: none; }
-  .reader-header-left { gap: 0.25rem; }
-  .reader-header-right { gap: 0.25rem; }
+  .reader-header { padding-right: 82px; }
 }
