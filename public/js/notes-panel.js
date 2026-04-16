@@ -186,6 +186,10 @@
   document.getElementById('notesCloseBtn').addEventListener('click', closeNotesPanel);
   window.__openNotesPanel = openNotesPanel;
   window.__openNotesPanelWithId = openNotesPanelWithId;
+  // Exposed so the global split-panel coordinator in
+  // chat-split-reader.js can close this panel cleanly (resetting
+  // readerMain inline styles) when enforcing the max-2-panes rule.
+  window.__closeNotesPanel = closeNotesPanel;
 
   // ─── DRAGGABLE DIVIDER ─────────────────────────────────────────
 

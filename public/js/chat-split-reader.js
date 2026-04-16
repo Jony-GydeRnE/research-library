@@ -189,23 +189,52 @@
 
   // Close any other side panels / splits that might be visible.
   // Called at the top of open() to enforce the "max 2 panes" rule.
+  //
+  // Each panel module (split-chat.js, metadata-panel.js,
+  // notes-panel.js) sets inline flex/width styles on #readerMain
+  // when it opens, and its own close function is what RESETS those
+  // styles. If we just hide the panel via display:none without
+  // calling its close function, the reader stays squeezed. So this
+  // helper prefers the exposed close functions when available and
+  // falls back to a hard reset of the inline styles for safety.
   function closeOtherPanels() {
-    // In-reader split-chat (split-chat.js)
+    // In-reader split-chat (split-chat.js) — uses the hidden
+    // splitToggleBtn click handler which calls closePanel().
     var chatPanel = document.getElementById('splitChatPanel');
     if (chatPanel && chatPanel.style.display && chatPanel.style.display !== 'none') {
       var chatToggle = document.getElementById('splitToggleBtn');
-      if (chatToggle) chatToggle.click(); // split-chat.js listens and closes
+      if (chatToggle) chatToggle.click();
     }
-    // Metadata side panel (metadata-panel.js)
-    var metaPanel = document.querySelector('.split-chat-panel.metadata-panel');
-    if (metaPanel && metaPanel.style.display !== 'none') {
-      metaPanel.style.display = 'none';
+    // Metadata panel.
+    if (typeof window.__closeMetadataPanel === 'function') {
+      try { window.__closeMetadataPanel(); } catch (e) {}
     }
-    // Notes side panel (notes-panel.js)
-    var notesPanel = document.querySelector('.split-chat-panel.notes-panel');
-    if (notesPanel && notesPanel.style.display !== 'none') {
-      notesPanel.style.display = 'none';
+    // Notes panel.
+    if (typeof window.__closeNotesPanel === 'function') {
+      try { window.__closeNotesPanel(); } catch (e) {}
     }
+    // Defensive hard reset: even if the close functions above
+    // missed something (older cached JS, panel not yet loaded,
+    // etc), wipe the inline styles that would keep readerMain
+    // squeezed. These are the only inline properties any of the
+    // panels set.
+    var readerMain = document.getElementById('readerMain');
+    if (readerMain) {
+      readerMain.style.flex = '';
+      readerMain.style.width = '';
+    }
+    var inputBar = document.querySelector('.reader-wrapper > .input-bar');
+    if (inputBar) inputBar.style.display = '';
+    var divider = document.getElementById('splitDivider');
+    if (divider && divider.style.display !== 'none') divider.style.display = 'none';
+    // Also hide any leftover .split-chat-panel siblings directly
+    // in case their own close() didn't fire.
+    var leftoverPanels = document.querySelectorAll('.split-chat-panel');
+    leftoverPanels.forEach(function (p) {
+      if (p.style.display && p.style.display !== 'none') {
+        p.style.display = 'none';
+      }
+    });
   }
 
   function update(url) {
