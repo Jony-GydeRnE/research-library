@@ -8,6 +8,16 @@ uploads/
 *.jpeg
 .tmp.driveupload/
 
+# Bulk PDF library — Jony's local-only book stash, ~1000 advanced
+# math/physics/nuclear/fusion books. Never commit. Drop PDFs anywhere
+# under pdfs/ at any folder depth and they stay local.
+pdfs/
+
+# Root-level PDFs — catches stray uploads dropped at project root so
+# they can't accidentally be committed. Curated PDFs that DO belong
+# in git (e.g. Rodina notes) live under reports/ and are unaffected.
+/*.pdf
+
 # Debug screenshots — explicitly allowed so other LLMs working
 # in this repo can see UI state across sessions. The bulky
 # archive subfolder stays ignored.
