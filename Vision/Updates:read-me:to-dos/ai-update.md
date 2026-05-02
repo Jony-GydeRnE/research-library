@@ -10,6 +10,44 @@ The full rolling log from 2026-04-06 through 2026-04-13 lives in `update.md` (th
 
 ---
 
+## 2026-05-01 — Cold-start session: executive priorities + EX-0/EX-2/EX-4a shipped, EX-1 in flight
+
+**Session shape:** ~2 weeks since last work. Cold-start "deep dive + take control" ask from Jony, then a follow-up making the goal explicit: **metadata + edges 200% better**. Reordered everything around that. Five tracks of concrete moves planned in `reports/2026-05-01/metadata-edge-quality-2x-plan.md`; executive priorities locked into the top of `ai-to-do.md` as EX-0 → EX-10. Quality-measurement work (judge service + dashboard + edge audit) comes BEFORE Phase A flip because flipping the agent on a low-quality graph amplifies bad edges.
+
+### What shipped this session
+
+**1. EX-0 prep + bug catch.** Started `generateSpansForBook` on the Lagrangians notes book to backfill the 33 pages that were filled by `fill-missing-pages.js` on 2026-04-13 but never had spans/chunks/edges generated. Caught a pre-existing bug live: `services/spanService.js:449` does `await Span.deleteMany({ bookId })` at the start, then line 462 SKIPS pages without source text. The 32 OLD-format pages on this book have `htmlContent` (clean Rodina-voice rewrite) but no `rawText` and no `visionProcessed=true` — so they were silently losing all their spans on every regen. Killed the partial run at 20/65 pages and shipped the fix.
+
+**2. `scripts/repair-rawtext-from-html.js`** (new). Idempotent recovery: derives plain-text `rawText` from existing `Page.htmlContent` for any page where `rawText` is empty. Preserves LaTeX (\(...\) and \[...\]), uses block-tag boundaries as paragraph separators, normalizes whitespace, decodes common HTML entities. On the Lagrangians book: candidates 32, written 32, skipped (already had rawText) 33. After repair, `Source mix: 33 vision, 32 rawText, 0 skipped (empty)` — all 65 pages get spans on the next pass.
+
+**3. .gitignore hardened for the bulk-PDF era.** Added `pdfs/` (any depth) and `/*.pdf` (root-only) so Jony's ~1000-book math/physics/nuclear/fusion stash plus the 6 nuclear/fusion books currently sitting at project root (Duderstadt-Hamilton, Cahn-Goldhaber, Wesson Tokamaks, Lamarsh-Baratta, Krane, Freidberg) can never accidentally be tracked. Curated `reports/` PDFs unaffected. `pdfs/.gitkeep` (also ignored) carries the convention note.
+
+**4. EX-4a — judge rubric written.** `prompts/judge-rating.txt` was a 4-line placeholder; now a full six-axis rubric (specificity / normalization / role accuracy / gap detection / declarative-tag precision / search-class accuracy), each 0-3, total 0-18 mapped to grade 0-9 = total/2. Strict JSON output schema with per-axis scores, total, grade, and a max-6-entry `issues` list. Scoring bands map grades to ship/surface/re-annotate/fail actions. Model-agnostic so we can run it on Opus 4.7 first then downgrade per axis if calibration holds. **This is the load-bearing item for the 200% goal — every other quality move (failure mining, taxonomy proposals, edge audits, dashboards) hangs off this rubric.**
+
+**5. EX-2 — notes-rewrite prompt padded past 1024-token cache threshold.** `prompts/notes-rewrite.txt` went from ~600 tokens to ~2100 tokens with six new sections of hard constraints (LATEX HARDENING with 12 specific rules, CITATION HARDENING with 6 rules, VOICE before/after table with 10 anti-patterns, DEFINITION-FIRST RULE, EQUATION DENSITY, PREREQUISITE PAGES). Two birds: enables Anthropic ephemeral cache (was silently ignored at <1024 tokens) AND tightens quality. Verification plan: run a 3-page test batch and watch `cache_read_input_tokens > 0` on calls 2 and 3.
+
+**6. EX-0 in flight.** Re-running `generateSpansForBook` cleanly with all 65 pages having source text. Source mix at start: `33 vision, 32 rawText, 0 skipped`. Watcher armed for completion (which auto-fires the post-chain note-match per the 8f8a7b7 hook). Live count at last poll: page 59/65, 1698 spans. Pre-run state was 1098 spans / 365 chunks / 1462 edges. Expected after: ~2200+ spans, more chunks, fresh `note-citation` edges from previously-unspanned pages.
+
+### What's queued immediately after EX-0
+
+- **EX-1** — score Tier A loose / Tier B strict / Tier C strict+rel against the 81-item benchmark. Forecast (from 2026-04-11): Tier B 62 → ~71-73, Tier C 20 → ~50+ (validates Fix 2 + Fix 3 which were code-complete but never re-validated because OpenAI quota was hit). Quota verified restored 2026-05-01.
+- **EX-2 verification** — 3-page test batch with cache-hit watch.
+- **EX-3** — Jony manually uploads Rodina notes 14-18 (5 new PDFs). After upload, run Phase 2 pipeline + benchmark + edge counts.
+- **EX-4b/c/d** — judgeService + Quality Dashboard + edge audit script. Track 1 of the 2x plan in earnest.
+
+### Bug landed this session worth flagging
+
+`spanService.generateSpansForBook` is destructive on skip: `Span.deleteMany({ bookId })` then SKIP pages without source text means every pre-existing span on a skipped page is lost on every regen. If the user uploads a book through the OLD pipeline (htmlContent only) and later regens spans, they lose work. The repair script is the workaround; the durable fix would be either (a) only delete spans for pages that WILL be regenerated, or (b) require source text before deletion. Logging as a candidate hardening item.
+
+### Companion docs from this session
+
+- `reports/2026-05-01/session-catchup-and-recommendation.md` — macro picture
+- `reports/2026-05-01/metadata-edge-quality-2x-plan.md` — five tracks, six axes, 2x targets
+- `Vision/Updates:read-me:to-dos/ai-to-do.md` — executive priorities EX-0 to EX-10
+- `Vision/Updates:read-me:to-dos/ui-to-do.md` — UI parallel track EX-UI-1 to EX-UI-3
+
+---
+
 ## 2026-04-14 — Figure judge loop v1 shipped, env-gated behind FIGURE_JUDGE=1
 
 **Session shape:** Jony signed off on the judge-loop spec (`reports/Notes rewrite and vision/figure-judge-loop-spec.md`) after we tuned through v1 → v4 in a single pass. Ships a Sonnet 4.6 vision judge that critiques each crop with structured JSON; a deterministic delta-application loop mechanically adjusts the crop rectangle; no painter LLM in the loop after iteration 1.
