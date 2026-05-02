@@ -117,16 +117,16 @@ PICKER_METHOD: ${edge.method || 'unknown'}
 SOURCE:
   book: ${sourceBook?.title?.slice(0, 80) || '?'}
   page: ${sourceChunk.pageNumber}
-  text: ${(sourceChunk.rawText || '').slice(0, 1200)}
+  text: ${(sourceChunk.sourceText || sourceChunk.rawText || '').slice(0, 1200)}
 
 TARGET:
   book: ${targetBook?.title?.slice(0, 80) || '?'}
   page: ${targetChunk.pageNumber}
-  text: ${(targetChunk.rawText || '').slice(0, 1200)}
+  text: ${(targetChunk.sourceText || targetChunk.rawText || '').slice(0, 1200)}
 `;
 
   const resp = await client.messages.create({
-    model: process.env.AUDIT_MODEL || 'claude-opus-4-7',
+    model: process.env.AUDIT_MODEL || 'claude-opus-4-6',
     max_tokens: 240,
     system: [{ type: 'text', text: loadAuditPrompt(), cache_control: { type: 'ephemeral' } }],
     messages: [{ role: 'user', content: userContent }],
@@ -281,7 +281,7 @@ async function main() {
     `# Edge Audit — ${dateSlug}`,
     '',
     `Sample: ${sample.length} edges (universe ${allEdges.length}).`,
-    `Model: ${process.env.AUDIT_MODEL || 'claude-opus-4-7'}.`,
+    `Model: ${process.env.AUDIT_MODEL || 'claude-opus-4-6'}.`,
     `Duration: ${Math.round((Date.now() - t0) / 1000)}s.`,
     `Input tokens: ${inputTok}, output tokens: ${outputTok}.`,
     `Estimated cost (Opus 4.7 rates): $${((inputTok * 5 + outputTok * 25) / 1e6).toFixed(2)}.`,

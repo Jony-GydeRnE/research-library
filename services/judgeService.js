@@ -29,10 +29,13 @@ const pipeline = require('../config/pipeline');
 
 const client = new Anthropic();
 
-// Default judge model — falls back to pipeline.judgeModel, then Opus 4.7.
+// Default judge model — falls back to pipeline.JUDGE_MODEL, then Opus 4.6.
+// (The repo convention uses Opus 4.6 — see config/pipeline.js JUDGE_MODEL,
+// CHAT_MODEL, QUALITY_SWEEP_MODEL, EDGE_MODEL all set to claude-opus-4-6.)
 const DEFAULT_JUDGE_MODEL = process.env.JUDGE_MODEL
+  || pipeline.JUDGE_MODEL
   || pipeline.judgeModel
-  || 'claude-opus-4-7';
+  || 'claude-opus-4-6';
 
 const RUBRIC_PATH = path.join(__dirname, '..', 'prompts', 'judge-rating.txt');
 let _rubricCache = null;
@@ -78,25 +81,72 @@ function pickRandomSample(arr, n) {
   return out;
 }
 
+function renderSpan(s) {
+  // Phase 2 schema preferred; Phase 1 legacy fields as fallback.
+  const start = s.sentenceStart ?? s.startOffset;
+  const end = s.sentenceEnd ?? s.endOffset;
+  const range = (start != null && end != null && start !== end)
+    ? `${start}-${end}`
+    : (start != null ? `${start}` : '?');
+
+  const contextTags = (s.contextTags && s.contextTags.length ? s.contextTags : (s.tags || []))
+    .filter(Boolean);
+
+  const role = s.role || '';
+
+  // Declarative tags: Phase 2 has structured array, Phase 1 had inline strings.
+  let declStr = '';
+  if (Array.isArray(s.declarativeTags) && s.declarativeTags.length) {
+    declStr = s.declarativeTags
+      .map(d => {
+        const target = (d.targetChunk != null && d.targetTag != null)
+          ? `${d.targetChunk}.${d.targetTag}`
+          : '';
+        return `${d.kind || '?'}${target}`;
+      })
+      .join(' ');
+  }
+
+  // Search class: N is implicit per the spec (never written), L/I/B carry
+  // suffix or gapType, S is bare.
+  let scStr = '';
+  if (s.searchClass && s.searchClass !== 'N') {
+    if (s.searchClass === 'L') {
+      // Typed L preferred (Ld/Lv/Lp); fall back to L+confidence.
+      if (s.gapType === 'definition') scStr = 'Ld';
+      else if (s.gapType === 'derivation') scStr = 'Lv';
+      else if (s.gapType === 'proof') scStr = 'Lp';
+      else if (s.searchConfidence) scStr = `L${s.searchConfidence}`;
+      else scStr = 'L?';
+    } else if (s.searchClass === 'S') {
+      scStr = 'S';
+    } else {
+      scStr = `${s.searchClass}${s.searchConfidence || '?'}`;
+    }
+  }
+
+  const tagsAndDecl = [contextTags.join(' '), role, declStr, scStr]
+    .filter(Boolean)
+    .join(' ');
+
+  return `${range} ${tagsAndDecl}`.trim();
+}
+
 function buildChunkInput(chunk, spans) {
   // Render the chunk text with sentence numbers. spans table follows.
   // Sentences are split on simple punctuation — judge sees rough boundaries
   // not perfect ones; the rubric tolerates that.
-  const text = (chunk.rawText || '').trim();
+  // Phase 2 stores text in sourceText; rawText is the Phase 1 legacy field
+  // and is often empty on chunks generated post-2026-04-13.
+  const text = (chunk.sourceText || chunk.rawText || '').trim();
   const sentenceMatches = text.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) || [text];
   const numbered = sentenceMatches
     .map((s, idx) => `[${idx + 1}] ${s.trim()}`)
     .join('\n');
 
-  const spanLines = spans
-    .map(s => {
-      const range = s.startOffset != null && s.endOffset != null
-        ? `${s.startOffset}-${s.endOffset}`
-        : '?';
-      const tags = (s.tags || []).join(' ');
-      return `${range} ${tags}`.trim();
-    })
-    .join('\n') || '(no spans)';
+  const spanLines = spans.length
+    ? spans.map(renderSpan).filter(Boolean).join('\n')
+    : '(no spans)';
 
   return `CHUNK_TEXT:\n${numbered}\n\nSPANS_EMITTED:\n${spanLines}\n`;
 }
