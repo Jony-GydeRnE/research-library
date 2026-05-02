@@ -7,6 +7,26 @@ Add new items at the bottom of their priority bucket. Cross out and move to "Rec
 
 ---
 
+## 🚀 EXECUTIVE PRIORITIES (UI side, 2026-05-01)
+
+The ranked AI/data-quality executive list lives in `ai-to-do.md`. UI items below run in PARALLEL because they unblock daily use of the app while the data-quality work runs server-side. Companion docs: `reports/2026-05-01/session-catchup-and-recommendation.md`, `reports/2026-05-01/metadata-edge-quality-2x-plan.md`.
+
+### EX-UI-1. Quality Dashboard surface
+Pair to `ai-to-do.md` EX-4c. New page at `/admin/quality` rendering per-book and library-wide quality metrics. Read-only EJS, mostly Mongo aggregations. **Acceptance:** all six quality axes render real numbers from at least one fully-judged book.
+
+### EX-UI-2. Phase A path renderer in `views/chat.ejs`
+Pair to `ai-to-do.md` EX-7. When the chat returns a structured `traversal_path` payload, render it as ordered clickable steps with relationship arrows (spec at `reports/2026-04-12/gyde-agent-tech-spec.md` §6). **Acceptance:** clicking any step opens the reader (or split-reader) at the exact page; no hallucinated book IDs.
+
+### EX-UI-3. Daily-friction fires (already documented below; pulled forward)
+- Metadata button single-use-then-dies
+- Edge-click right-pane morph (don't open a third pane)
+- "Add to collection" kebab silent no-op
+- Mobile single-screen mode (Z-Fold ≤ 520px)
+
+These are NOT new items — they're already detailed below in their priority buckets. Listed here so the parallel UI track stays visible alongside the data-quality executive list.
+
+---
+
 ## 🖼 Reader / split-screen / metadata UI (the 2026-04-13 bucket)
 
 - [ ] 🟡 **Mobile single-screen mode (new 2026-04-14).** On regular handheld phones (viewport ≲ 500px), split-screen shouldn't open at all — instead, clicking an edge should REPLACE the current reader pane with the target book (single-pane toggle). The back/forward buttons then step through the navigation stack. Z Fold 7 and larger devices keep the current two-pane split behavior. Fold the stack per-tab so the user can always get back to where they came from. Detection: use `window.matchMedia('(max-width: 520px)')` or similar. Files: `public/js/chat-split-reader.js` (add mobile detection in `open()` → navigate instead of iframe), `public/js/reader.js` (maintain a nav stack in localStorage keyed by tab), `public/css/reader.css` (hide the split-panel divider on narrow).

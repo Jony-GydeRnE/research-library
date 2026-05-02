@@ -7,6 +7,82 @@ Add new items at the bottom of their priority bucket. Cross out and move to "Rec
 
 ---
 
+## 🚀 EXECUTIVE PRIORITIES (2026-05-01 — these supersede earlier "DO NOW" sequences when in conflict)
+
+Top-line goal Jony stated 2026-05-01: **metadata + edges 200% better**. The order below is calibrated to that goal. Quality measurement comes BEFORE Phase A flip because flipping the agent on a low-quality graph amplifies bad edges. Companion analysis: `reports/2026-05-01/metadata-edge-quality-2x-plan.md`. Macro picture: `reports/2026-05-01/session-catchup-and-recommendation.md`.
+
+Each item carries a one-line acceptance criterion so we know when it ships.
+
+### EX-0. Backfill the 33 Lagrangians-notes pages through Phase 2 (chunks/spans/embeddings/edges)
+- **Action:** `node -e "require('./services/spanService').generateSpansForBook('69d9ce81aa83b8b11c1837dd')"` then re-run note-match.
+- **Acceptance:** notes book span count rises past 1137 (current); edge count to Rodina rises; reprocess does not surface new errors.
+- **Cost / time:** ~5–10 min compute, ~$0.50.
+
+### EX-1. Re-run note→paper match pass to validate Fix 2 + Fix 3
+- **Action:** the resume command in `reports/2026-04-13/data-quality-session-results.md` and `update.md` 2026-04-11 entry. Score Tier A / B / C after.
+- **Acceptance:** Tier B ≥ 85%, Tier C ≥ 50% (forecast from 2026-04-11). Relationship-type histogram no longer 100% `annotates`.
+- **Quota:** verified restored 2026-05-01.
+
+### EX-2. Pad `prompts/notes-rewrite.txt` past 1024 tokens to enable cache hits
+- **Action:** add stricter citation rules + LaTeX rules + grounding rules. Re-run a 3-page test batch and watch `cache_read_input_tokens > 0` on calls 2/3.
+- **Acceptance:** `cr > 0` on subsequent calls within 5-min window; quality not regressed on the rewrite preview.
+
+### EX-3. Ingest Rodina notes 14–18 (Jony manually uploads first, then Phase 2 pipeline)
+- **Action:** Jony uploads the 5 new PDFs (`14. encroaching-locality-proof`, `15. Pattern-Structures in Zeroes-Chords`, `16. Cyclic shifts of zeroes`, `17. Hidden zeroes and non local interactions correspondance`, `18. d subset rigorous proof`) through the `/upload` UI. CC then runs span generation + note matching + benchmark scoring.
+- **Acceptance:** all 5 books appear at status='ready'; new notes contribute outgoing edges to Rodina; benchmark item count grows or coverage improves.
+
+---
+
+### EX-4. Quality measurement infrastructure — Track 1 of `metadata-edge-quality-2x-plan.md`
+
+**This is the load-bearing item for the 2× goal. Without measurement, every other change is a guess.**
+
+- **EX-4a. Populate `prompts/judge-rating.txt`** with the six-axis rubric (tag specificity / normalization / role accuracy / gap detection / declarative-tag precision / search-class accuracy). Each 0–3, total mapped to 0–9 to match `config/pipeline.js qualityThreshold`.
+- **EX-4b. Build `services/judgeService.js`.** Sample N=50 chunks per book per ingestion; write `QualityScore` documents; trigger session-prompt re-injection on threshold breach. Spec already in `Vision.md` §4.2 and `to-do.md` Architecture/Phase 3 bucket.
+- **EX-4c. Build the Quality Dashboard** at `views/admin/quality.ejs` + route. Surfaces six axes per book and library-wide histograms. Detailed spec: §1.3 of the 2× plan.
+- **EX-4d. Edge precision audit script** `scripts/audit-edges.js`. Stratified sample of 200 edges → Opus rates each → precision per confidence bucket. ~$1.50 per run, monthly. Spec: §1.4 of the 2× plan.
+- **Acceptance:** dashboard renders the six axes from real data; judge has scored ≥3 books; edge audit has rated 200 edges with bucket-level precision. Establishes the BASELINE for the 2× targets.
+
+### EX-5. Quality feedback loop — Track 2 of `metadata-edge-quality-2x-plan.md`
+
+- **EX-5a. Failure mining from the 81-item benchmark.** Convert the 25 PARTIAL + WRONG cases into negative examples in `prompts/edge-pick.txt`.
+- **EX-5b. Round-trip validation pass.** Hide relationship letter on existing edges, re-classify, flag disagreements. Output: stale-edges page in admin dashboard.
+- **EX-5c. Promote validated patterns into the prompt** when audit finds consistent wins.
+- **Acceptance:** Tier B improves by ≥ 5pp without dropping precision more than 1pp.
+
+### EX-6. Hidden-defect scans — Track 3 of `metadata-edge-quality-2x-plan.md`
+
+- **EX-6a. Embedding-based tag drift detector.** Tag pairs with mean-cosine > 0.85 propose merges via a new `TaxonomyProposal` queue, human approves in dashboard.
+- **EX-6b. Dead vocabulary report.** Tags on >5 chunks with 0 outgoing edges → backfill / merge / demote.
+- **EX-6c. Coverage gap report.** L-tagged spans across all books with no matching note → crawler queue.
+- **EX-6d. Citation-resolution tracker.** Implement the `JONY MUST READ EDIT` from this file: every citation auto-creates an edge to a chunk OR a null Book record with as much metadata as the bibliography exposes. Track resolved / parked / dropped buckets. Goal: zero in `dropped`.
+- **Acceptance:** taxonomy proposal queue has ≥ 10 actionable merges; coverage report exists; citation `dropped` count ≤ 2% of total citations.
+
+---
+
+### EX-7. Flip Phase A graph tools on for the Rodina collection (per-collection feature flag)
+
+Phase A is already in the codebase, toggled off (`d791cf4`, `32d5e41`). Flip becomes meaningful AFTER EX-4/5/6 because the agent traverses the audited graph, not the raw one.
+
+- **Action:** add a `Collection.useGraphTools` boolean. Gate the tools array in `claudeService.streamResponse`. Build path renderer in `views/chat.ejs` (steps with chunk previews + relationship arrows + click-to-reader). Per-collection toggle in collection settings.
+- **Acceptance:** asking "Why does B factor through c_ij?" in a Rodina-collection chat produces a structured 3-5 step path with all real chunk IDs; UI renders clickable steps; audit confirms zero hallucinated bookIds.
+
+### EX-8. Construct a Rodina-domain Phase A path-quality benchmark
+
+- **Action:** 20 hand-labeled questions with known-correct paths. Compare agent-surfaced paths to ground truth.
+- **Acceptance:** ≥ 80% agreement on first-hop choice; ≥ 60% agreement on full-path content.
+
+### EX-9. Cross-domain validation — Nuclear track
+
+- **Action:** create `Nuclear compliance` collection with custom AI instructions; ingest 5–10 NRC anchor docs; run pipeline; compare per-axis quality dashboard scores against Rodina baseline; identify domain-specific tag types needed (regulatory modalities `shall`/`should`/`may`, design-basis events, CFR section structure).
+- **Acceptance:** quality dashboard scores nuclear corpus within 30% of physics on the six axes; if it does not, build a per-domain taxonomy seed (Track 6.3 of the 2× plan).
+
+### EX-10. (Horizon — do not start until EX-7 is stable) Phase B persistent traversal state + collection workspace
+
+Spec: `reports/2026-04-12/gyde-agent-tech-spec.md` Phase B. Adds the `TraversalSession` model, dead-end logging, and the per-collection workspace where vibes live.
+
+---
+
 ## 🎯 Architecture decisions locked in 2026-04-10 (DO NOW sequence)
 
 Two decisions, locked. Everything else (prompt caching, fine-tuning, specialist agents, full retrieval system) is deferred until edge count proves these work.
