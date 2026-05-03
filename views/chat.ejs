@@ -336,26 +336,31 @@ window.MathJax = {
   }
   function renderCitation(c) {
     var book = booksMap[c.bookId];
-    var title = book ? book.title : 'Book';
+    var safeQuote = c.quote.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Unknown bookId — render an inert pill so the user isn't sent
+    // into a broken /collections redirect when they click. The chat-cite
+    // styling is preserved so the visual rhythm of the message stays
+    // intact, but it's not a link and the source line tells the user
+    // what's wrong (with the offending id for debugging).
+    if (!book) {
+      var safeId = String(c.bookId).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return '<span class="chat-cite chat-cite-missing" title="This book is not in your library (id: ' + safeId + ')">' +
+             '<span class="chat-cite-quote">' + safeQuote + '</span>' +
+             '<span class="chat-cite-source">— Book not in library, p.' + c.page + '</span>' +
+             '</span>';
+    }
+    var title = book.title;
     // Pass up to the first 60 words of the quote as the highlight param.
-    // Earlier this was 20, which starved reader.js's PASS 2 cross-block
-    // detection — 20 words almost always fits inside one <p>, so PASS 2
-    // could never see a match spanning multiple blocks and extras stayed
-    // at 0. 60 words is long enough to cover a heading + its first
-    // sentence (which routinely crosses a block boundary) while still
-    // short enough to keep the URL manageable. The prefix ladder inside
-    // highlightQuoteIn already tries shorter slices (15/10/6/4/3) when
-    // the full prefix doesn't match, so giving it more material never
-    // hurts — it only ever enables more precise placements.
     var highlightWords = c.quote.split(/\s+/).filter(Boolean).slice(0, 60).join(' ');
-    // sidebar=collapsed: when the reader opens inside the chat split view,
-    // the TOC/nav sidebar should be hidden by default so the book fills the
-    // available width. The reader's sidebar script honors this query param.
+    // sidebar=collapsed + embed=1: when the reader opens inside the
+    // chat split panel we want a focused, no-chrome view of just the
+    // book — no inner app sidebar, no inner input bar. embed=1 is read
+    // by reader.ejs to apply .reader-embed body class.
     var url = '/reader/' + encodeURIComponent(c.bookId) +
               '?page=' + encodeURIComponent(c.page) +
               '&sidebar=collapsed' +
+              '&embed=1' +
               '&highlight=' + encodeURIComponent(highlightWords);
-    var safeQuote = c.quote.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     var safeTitle = title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     return '<a class="chat-cite" href="' + url + '" data-cite-url="' + url + '" title="Open ' + safeTitle + ' p.' + c.page + '">' +
            '<span class="chat-cite-quote">' + safeQuote + '</span>' +
@@ -696,6 +701,11 @@ window.MathJax = {
 .chat-cite:hover { background:rgba(255,235,120,0.18); }
 .chat-cite-quote { display:block; font-style:italic; line-height:1.5; }
 .chat-cite-source { display:block; margin-top:0.3rem; font-size:0.72rem; color:var(--app-accent); font-style:normal; }
+/* Inert variant for citations whose bookId is not in the library (likely
+   AI hallucination or stale id). Visually muted, no hover state, no link. */
+.chat-cite.chat-cite-missing { border-left-color:var(--app-border); background:rgba(255,255,255,0.03); cursor:not-allowed; }
+.chat-cite.chat-cite-missing:hover { background:rgba(255,255,255,0.03); }
+.chat-cite.chat-cite-missing .chat-cite-source { color:var(--app-text-muted); }
 </style>
 
 <script src="/js/chat-split-reader.js"></script>

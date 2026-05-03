@@ -11,8 +11,34 @@ exports.showReader = async (req, res) => {
       parseInt(req.query.page, 10) ||
       1;
 
-    const book = await Book.findById(bookId).lean();
-    if (!book) return res.redirect('/collections');
+    // Reject obviously malformed ids early to avoid a Mongoose CastError
+    // (which would 500 the page). Mongo ObjectIds are 24 hex chars.
+    const looksLikeObjectId = /^[a-f0-9]{24}$/i.test(String(bookId || ''));
+    const book = looksLikeObjectId ? await Book.findById(bookId).lean() : null;
+    if (!book) {
+      // Used to redirect to /collections, which dumped the user into the
+      // All Books grid (and, when loaded inside the chat-split iframe,
+      // surfaced an "Instructions" column that has nothing to do with
+      // the cited book). Render a focused "not found" view instead so
+      // the popup stays scoped to the citation.
+      return res.status(404).send(`<!doctype html>
+<html><head><meta charset="utf-8">
+<title>Book not found</title>
+<style>
+  body { margin:0; background:#1a1a1a; color:#ddd; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; height:100vh; display:flex; align-items:center; justify-content:center; padding:1.5rem; box-sizing:border-box; }
+  .card { max-width:420px; text-align:center; }
+  h1 { font-size:1.05rem; margin:0 0 0.5rem; color:#fff; }
+  p { font-size:0.85rem; line-height:1.5; margin:0.4rem 0; color:#aaa; }
+  code { font-size:0.75rem; background:rgba(255,255,255,0.06); padding:0.15rem 0.35rem; border-radius:3px; color:#d8b06b; word-break:break-all; }
+</style>
+</head><body>
+  <div class="card">
+    <h1>Book not found</h1>
+    <p>This citation points to a book that is not in your library.</p>
+    <p>id: <code>${String(bookId).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' }[c]))}</code></p>
+  </div>
+</body></html>`);
+    }
 
     const page = await Page.findOne({ bookId, pageNumber }).lean();
 

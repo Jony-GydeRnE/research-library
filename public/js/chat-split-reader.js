@@ -69,8 +69,17 @@
   }
   function ensureCollapsedQuery(url) {
     if (!url) return url;
-    if (/[?&]sidebar=/.test(url)) return url;
-    return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'sidebar=collapsed';
+    // Ensure both ?sidebar=collapsed and ?embed=1 are present. embed=1
+    // is what reader.ejs reads to add the .reader-embed body class,
+    // which strips the inner app-sidebar + input bar so the popup is
+    // a focused, no-chrome view of just the cited book.
+    if (!/[?&]sidebar=/.test(url)) {
+      url = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'sidebar=collapsed';
+    }
+    if (!/[?&]embed=/.test(url)) {
+      url = url + '&embed=1';
+    }
+    return url;
   }
 
   function ensureCreated() {

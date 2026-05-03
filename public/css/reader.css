@@ -67,6 +67,14 @@
   min-width: 0;
 }
 
+/* Embedded reader (loaded inside the chat-split-reader iframe via
+   ?embed=1). Strip the inner app-sidebar and bottom input bar so the
+   popup is just the book — no duplicate sidebar next to the parent's
+   sidebar, no second input bar competing with the chat input. */
+body.reader-embed .app-sidebar { display: none !important; }
+body.reader-embed .reader-wrapper > .input-bar { display: none !important; }
+body.reader-embed .reader-wrapper { width: 100%; }
+
 /* Reader body row (holds reader-main + split divider + chat panel) */
 .reader-body-row {
   display: flex;

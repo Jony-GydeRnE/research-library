@@ -9,6 +9,16 @@
   <link rel="stylesheet" href="/css/reader.css">
 </head>
 <body class="app-body">
+  <script>
+    // When loaded inside the chat-split-reader iframe (?embed=1) we
+    // strip the duplicate inner app-sidebar and the bottom input bar
+    // so the popup is a focused, no-chrome view of just the cited
+    // book. Done inline before paint so there is no flash of the
+    // sidebar before the class lands.
+    if (/[?&]embed=1(&|$)/.test(window.location.search)) {
+      document.body.classList.add('reader-embed');
+    }
+  </script>
 
   <!-- Single app sidebar with tabs when in reader -->
   <aside class="app-sidebar" id="appSidebar">
