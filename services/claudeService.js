@@ -366,25 +366,54 @@ async function buildContext(chat) {
   const edgesBlock = await getAllCrossBookEdges({ bookIds: edgeScopeBookIds });
   if (edgesBlock) sections.push({ priority: 2, text: edgesBlock });
 
-  // ─── LIBRARY OVERVIEW (always included at lowest priority) ─────
+  // ─── LIBRARY OVERVIEW — RESERVED, not in the budget loop ───────
+  // This block is the canonical list of valid bookIds the model is
+  // allowed to cite. The base prompt explicitly tells the model
+  // "only cite ids that appear verbatim in <library_overview>".
+  // If this section gets dropped (which is what was happening — the
+  // edges block at priority 2 blew the whole budget and the loop
+  // used to `break`, starving everything after it including this),
+  // the model has nothing to ground citations against and starts
+  // fabricating ObjectIds that look real. So we reserve its tokens
+  // up front and prepend it to the system prompt outside the loop.
+  // The library overview for ~6 books is ~1500 tokens — cheap
+  // insurance against the worst failure mode in the system.
   const libraryCtx = await getLibraryOverview();
-  if (libraryCtx) sections.push({ priority: 10, text: libraryCtx });
+  let reserved = '';
+  let reservedTokens = 0;
+  if (libraryCtx) {
+    reserved = '\n\n' + libraryCtx;
+    reservedTokens = estimateTokens(libraryCtx);
+    totalTokens += reservedTokens;
+  }
 
   // ─── ASSEMBLE within budget ────────────────────────────────────
   sections.sort((a, b) => a.priority - b.priority);
 
   let system = BASE_PROMPT;
+  let dropped = 0;
   for (const s of sections) {
     const tokens = estimateTokens(s.text);
     if (totalTokens + tokens > budget) {
-      console.log(`[claudeService] Budget exceeded at priority ${s.priority}, dropping remaining sections`);
-      break;
+      // Skip this section but KEEP TRYING the rest. The loop used
+      // to `break` here, which meant a single oversized section
+      // (typically the edges block) silently dropped every smaller
+      // section after it — including library_overview, which is
+      // exactly what caused the model to fabricate bookIds.
+      console.log(`[claudeService] Budget exceeded by section at priority ${s.priority} (~${tokens} tokens) — skipping it but continuing`);
+      dropped += 1;
+      continue;
     }
     system += '\n\n' + s.text;
     totalTokens += tokens;
   }
 
-  console.log(`[claudeService] Final context: ~${totalTokens} tokens, ${sections.length} sections`);
+  // Append the reserved library overview LAST so it's positioned
+  // close to the user message — recency-biased models read the tail
+  // of the prompt more carefully than the middle.
+  system += reserved;
+
+  console.log(`[claudeService] Final context: ~${totalTokens} tokens, ${sections.length - dropped}/${sections.length} sections (${dropped} dropped, library_overview reserved=${reservedTokens > 0})`);
   return system;
 }
 
@@ -886,12 +915,24 @@ async function getAllCrossBookEdges(opts = {}) {
   const chunkMap = new Map(chunks.map(c => [String(c._id), c]));
   const bookMap = new Map(books.map(b => [String(b._id), b]));
 
-  // Render compact, fixed format the AI can read line-by-line
+  // Render compact, fixed format the AI can read line-by-line.
+  //
+  // Hard size cap: this block previously had no upper bound — at one
+  // point it reached ~56k tokens on a small library and blew the
+  // entire 60k chat budget by itself, which caused the assembly loop
+  // to drop EVERY other section (including library_overview). The
+  // model then fabricated bookIds because it had no grounding list.
+  // Cap is in characters (rough proxy for tokens, ~4 chars/token) so
+  // we don't pay estimateTokens() per iteration.
+  const EDGES_CHAR_BUDGET = 120000; // ~30k tokens, half the chat budget
   const lines = [];
   lines.push(`<cross_book_edges count="${inScope.length}">`);
   lines.push(`This block lists every verified cross-document edge in the user's library. Each edge connects a span in a source book to a chunk in another book. When the user asks about cross-references / citations / connections between books, render edges as [[cite bookId="…" page="…"]]quoted text[[/cite]] tags using the EXACT format described in the BASE_PROMPT. Prefer this block as your source of truth for which edges exist; do not invent edges that are not listed here.`);
   lines.push('');
 
+  let runningChars = lines.reduce((n, l) => n + l.length + 1, 0);
+  let rendered = 0;
+  let truncated = 0;
   let i = 0;
   for (const e of inScope) {
     i++;
@@ -911,12 +952,25 @@ async function getAllCrossBookEdges(opts = {}) {
     const fromTags = (fromSpan?.contextTags || []).slice(0, 4).join(',');
     const toTags = (toChunk.contextTags || []).slice(0, 4).join(',');
 
-    lines.push(`edge #${i}: ${e.relationshipType || 'assumes'} (conf=${e.confidence || '?'}, method=${e.method || '?'})`);
-    lines.push(`  from_book_id="${e.fromBookId}" from_book_title="${fromTitle}" from_page=${fromPage}${fromTags ? ' from_tags=[' + fromTags + ']' : ''}`);
-    lines.push(`  source_text: "${fromText}"`);
-    lines.push(`  to_book_id="${e.toBookId}" to_book_title="${toTitle}" to_page=${toPage} to_type=${toChunk.structuralType || '?'}${toTags ? ' to_tags=[' + toTags + ']' : ''}`);
-    lines.push(`  target_quote: "${toText}"`);
-    lines.push('');
+    const entry = [
+      `edge #${i}: ${e.relationshipType || 'assumes'} (conf=${e.confidence || '?'}, method=${e.method || '?'})`,
+      `  from_book_id="${e.fromBookId}" from_book_title="${fromTitle}" from_page=${fromPage}${fromTags ? ' from_tags=[' + fromTags + ']' : ''}`,
+      `  source_text: "${fromText}"`,
+      `  to_book_id="${e.toBookId}" to_book_title="${toTitle}" to_page=${toPage} to_type=${toChunk.structuralType || '?'}${toTags ? ' to_tags=[' + toTags + ']' : ''}`,
+      `  target_quote: "${toText}"`,
+      '',
+    ];
+    const entryChars = entry.reduce((n, l) => n + l.length + 1, 0);
+    if (runningChars + entryChars > EDGES_CHAR_BUDGET) {
+      truncated = inScope.length - rendered;
+      break;
+    }
+    for (const l of entry) lines.push(l);
+    runningChars += entryChars;
+    rendered += 1;
+  }
+  if (truncated > 0) {
+    lines.push(`... ${truncated} more edges truncated to keep prompt within budget. The rendered ${rendered} edges are a representative sample (preserving method/confidence ranking).`);
   }
   lines.push(`</cross_book_edges>`);
   return lines.join('\n');
