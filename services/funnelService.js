@@ -164,7 +164,9 @@ async function cosineRank(sourceSpan, candidates, k = 20) {
       } catch (err) { /* non-fatal */ }
     }
   }
-  if (!srcEmbed || srcEmbed.length === 0) return candidates.slice(0, k);
+  if (!srcEmbed || srcEmbed.length === 0) {
+    return candidates.slice(0, k).map(chunk => ({ chunk, cosine: null }));
+  }
 
   const scored = [];
   for (const c of candidates) {
@@ -259,8 +261,7 @@ async function nanoRank(sourceSpan, sourceBook, targetBook, rankedCandidates) {
 async function classifyEdge(sourceSpan, sourceBook, targetChunk, targetBook) {
   const client = getAnthropic();
   if (!client) {
-    // Fallback: synthesize a default verdict from cosine
-    return { relationship: 'assumes', confidence: 'k', relevance: 'k', fraction: 0.5, raw: '(no anthropic client)' };
+    return { error: 'No Anthropic client configured for edge classification' };
   }
 
   const userInput = [
@@ -284,8 +285,8 @@ async function classifyEdge(sourceSpan, sourceBook, targetChunk, targetBook) {
 
   const raw = response.content?.[0]?.text || '';
   const decoded = decodeClassification(raw);
-  if (decoded.length === 0) {
-    return { relationship: 'assumes', confidence: 'k', relevance: 'k', fraction: 0.5, raw };
+  if (response.stop_reason === 'max_tokens' || decoded.length !== 1) {
+    return { error: 'Invalid or truncated edge classification', raw };
   }
   return { ...decoded[0], raw };
 }
@@ -311,15 +312,10 @@ const PICK_CANDIDATE_COUNT = 12;
 
 function decodePickVerdict(raw) {
   if (!raw || typeof raw !== 'string') return null;
-  const compact = raw.replace(/[^a-zA-Z]/g, '');
-  if (compact.length < 4) return null;
+  const compact = raw.trim().toLowerCase();
+  if (compact === 'xxxx') return { rejected: true };
+  if (!/^[a-z][pesdcrqmn][a-z]{2}$/.test(compact)) return null;
   const chunkLetter = compact[0].toLowerCase();
-  // Rejection letter: picker says "none of these candidates match".
-  // The contract is that any verdict whose first letter is `x` means
-  // no edge. Accept both `xxxx` (canonical) and `x___` with any
-  // trailing letters — it's cheaper not to fight the model on the
-  // exact format as long as the leading `x` is unambiguous.
-  if (chunkLetter === 'x') return { rejected: true };
   const relLetter = compact[1].toLowerCase();
   const confLetter = compact[2].toLowerCase();
   const relevLetter = compact[3].toLowerCase();
@@ -420,12 +416,10 @@ async function pickAndClassify(sourceSpan, sourceBook, targetBook, candidates) {
   }
 
   const raw = response.choices?.[0]?.message?.content || '';
-  // Find the first 4-letter contiguous letter sequence in the
-  // reply. GPT-4o usually outputs exactly 4 letters at temperature
-  // 0, but occasional preambles get salvaged by the regex.
-  const cleanMatch = raw.match(/^[a-zA-Z]{4}$/m) || raw.match(/[a-zA-Z]{4}/);
-  const cleaned = cleanMatch ? cleanMatch[0] : raw;
-  const decoded = decodePickVerdict(cleaned);
+  if (response.choices?.[0]?.finish_reason === 'length') {
+    return { error: 'Truncated pick verdict', raw };
+  }
+  const decoded = decodePickVerdict(raw);
   // Explicit rejection by picker: no edge, no error — just skip.
   if (decoded && decoded.rejected) {
     return { rejected: true, raw };

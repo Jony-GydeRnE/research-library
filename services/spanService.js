@@ -378,7 +378,7 @@ async function generateSpansForPage(bookId, pageNumber, rawText, preAnnotations,
       console.log(`[spanService] Page ${pageNumber} PASS 3 (low-enrichment retry): ${retryResult.spanData.length} spans parsed, ratio ${retryRatio.toFixed(2)}`);
       // Accept the retry result if it beats the original (even if still
       // below floor — something is better than junk).
-      if (retryRatio > ratio) {
+      if (retryResult.spanData.length > 0 && retryRatio > ratio) {
         spanData = retryResult.spanData;
         dslOutput = retryResult.dslOutput;
       }
@@ -420,6 +420,9 @@ async function generateSpansForPage(bookId, pageNumber, rawText, preAnnotations,
  * @returns {Object} { pagesProcessed, spansCreated, sessionId }
  */
 async function generateSpansForBook(bookId) {
+  // Check prerequisites before destructive work. Missing configuration
+  // must never erase the user's existing annotations.
+  if (!getOpenAI()) throw new Error('OPENAI_API_KEY is required to regenerate spans');
   const pages = await Page.find({ bookId })
     .select('pageNumber rawText htmlContent visionProcessed structuralAnnotations')
     .sort({ pageNumber: 1 });
@@ -526,7 +529,7 @@ async function generateSpansForBook(bookId) {
   try {
     const { ensureCitationSpansForBook } = require('./citationSpanService');
     const csResult = await ensureCitationSpansForBook(bookId);
-    console.log(`[spanService] Citation spans: ${csResult.syntheticCitationSpans} new, ${csResult.existingCitationSpans} promoted`);
+    console.log(`[spanService] Citation spans: ${csResult.syntheticCitationSpans} new, ${csResult.existingCitationSpans} existing`);
     result.citationSpansAdded = csResult.syntheticCitationSpans;
   } catch (err) {
     console.error(`[spanService] Citation-span pass failed: ${err.message}`);

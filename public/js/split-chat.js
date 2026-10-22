@@ -90,6 +90,7 @@
 
     try {
       const res = await fetch('/chat/' + existingChatId + '/api/messages');
+      if (!res.ok) throw new Error('Failed to load chat');
       const data = await res.json();
 
       messagesEl.innerHTML = '';
@@ -97,7 +98,7 @@
         quoteText.textContent = data.highlightText;
         quoteBlock.style.display = '';
       }
-      (data.messages || []).forEach(m => {
+      (data.messages || []).filter(m => m.kind !== 'tool' && typeof m.content === 'string').forEach(m => {
         if (m.role === 'user') {
           addMsg('user', escapeHtml(m.content));
         } else {
@@ -159,7 +160,7 @@
   }
 
   function escapeHtml(s) {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   function formatMsg(text) {
@@ -167,7 +168,7 @@
     return blocks.map(function(b) {
       b = b.trim();
       if (!b) return '';
-      if (/^\\\[/.test(b) && /\\\]$/.test(b)) return '<div style="margin:0.4em 0;text-align:center;">' + b + '</div>';
+      if (/^\\\[/.test(b) && /\\\]$/.test(b)) return '<div style="margin:0.4em 0;text-align:center;">' + escapeHtml(b) + '</div>';
       var lines = b.split('\n').map(function(l) {
         // Preserve LaTeX, escape rest
         var r = '', i = 0;
@@ -175,7 +176,7 @@
           if (l[i] === '\\' && (l[i+1] === '(' || l[i+1] === '[')) {
             var cl = l[i+1] === '(' ? '\\)' : '\\]';
             var end = l.indexOf(cl, i+2);
-            if (end !== -1) { r += l.substring(i, end + cl.length); i = end + cl.length; continue; }
+            if (end !== -1) { r += escapeHtml(l.substring(i, end + cl.length)); i = end + cl.length; continue; }
           }
           if (l[i] === '&') r += '&amp;'; else if (l[i] === '<') r += '&lt;'; else if (l[i] === '>') r += '&gt;'; else r += l[i];
           i++;
@@ -210,7 +211,9 @@
             highlightText: highlightContext || undefined,
           }),
         });
+        if (!res.ok) throw new Error('Failed to create chat');
         var data = await res.json();
+        if (!data.chatId) throw new Error('Missing chat id');
         chatId = data.chatId;
         if (onChatCreatedCallback) onChatCreatedCallback(chatId);
       } catch (e) {
@@ -227,52 +230,34 @@
     }
   }
 
-  function streamResponse(url, method, body) {
+  async function streamResponse(url, method, body) {
     var assistantDiv = addMsg('assistant', '<span style="color:var(--app-text-muted);font-style:italic;">Thinking...</span>');
     var opts = { method: method, headers: { 'Content-Type': 'application/json' } };
     if (body) opts.body = JSON.stringify(body);
-
-    fetch(url, opts).then(function(response) {
-      var reader = response.body.getReader();
-      var decoder = new TextDecoder();
-      var fullText = '';
-      var started = false;
-
-      function read() {
-        reader.read().then(function(result) {
-          if (result.done) {
-            sending = false;
-            chatInput.disabled = false;
-            chatInput.focus();
-            if (window.MathJax && MathJax.typesetPromise) {
-              MathJax.typesetPromise([assistantDiv]).catch(function(){});
-            }
-            return;
-          }
-          decoder.decode(result.value, { stream: true }).split('\n').forEach(function(line) {
-            line = line.trim();
-            if (!line.startsWith('data: ')) return;
-            try {
-              var d = JSON.parse(line.substring(6));
-              if (d.type === 'chunk') {
-                if (!started) { assistantDiv.innerHTML = ''; started = true; }
-                fullText += d.text;
-                assistantDiv.innerHTML = formatMsg(fullText);
-                messagesEl.scrollTop = messagesEl.scrollHeight;
-              } else if (d.type === 'error') {
-                assistantDiv.innerHTML = '<span style="color:#e55;">' + escapeHtml(d.error) + '</span>';
-              }
-            } catch(e) {}
-          });
-          read();
-        });
-      }
-      read();
-    }).catch(function() {
-      assistantDiv.innerHTML = '<span style="color:#e55;">Network error</span>';
+    var fullText = '';
+    try {
+      var response = await fetch(url, opts);
+      await GydeSSE.readJSONEvents(response, function(d) {
+        if (d.type === 'chunk') {
+          fullText += d.text;
+          assistantDiv.innerHTML = formatMsg(fullText);
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        } else if (d.type === 'done') {
+          assistantDiv.innerHTML = formatMsg(typeof d.text === 'string' ? d.text : fullText);
+        } else if (d.type === 'error') {
+          assistantDiv.innerHTML = '<span style="color:#e55;">' + escapeHtml(d.error) + '</span>';
+        }
+      });
+    } catch (err) {
+      assistantDiv.innerHTML = '<span style="color:#e55;">' + escapeHtml(err.message || 'Network error') + '</span>';
+    } finally {
       sending = false;
       chatInput.disabled = false;
-    });
+      chatInput.focus();
+      if (window.MathJax && MathJax.typesetPromise) {
+        MathJax.typesetPromise([assistantDiv]).catch(function(){});
+      }
+    }
   }
 
   chatSendBtn.addEventListener('click', sendMessage);

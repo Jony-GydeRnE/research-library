@@ -83,10 +83,12 @@
   let scrollLoaded = false;
   let pdfScrollLoaded = false;
   let scrollSpyObserver = null;
+  let navigationVersion = 0;
 
   // ─── MODE TOGGLE ───────────────────────────────────────────────
 
   function setMode(newMode) {
+    navigationVersion++; // Invalidate responses for a previously visible mode.
     // If we're LEAVING a metadata mode for a reading mode, carry
     // the currently focused chunk forward as a citation-callout
     // highlight. This makes "I'm on chunk 14, I hit HTML" actually
@@ -429,8 +431,12 @@
   // ─── PAGE NAVIGATION ──────────────────────────────────────────
 
   async function goToPage(num) {
+    if (!Number.isFinite(num)) return;
     num = Math.max(1, Math.min(num, R.totalPages));
-    if (num === R.currentPage && mode !== 'scroll' && mode !== 'pdf-scroll') return;
+    const requestVersion = ++navigationVersion;
+    const requestMode = mode;
+    const staleHtml = mode === 'pages' && content.getAttribute('data-page') !== String(num);
+    if (num === R.currentPage && !staleHtml && mode !== 'scroll' && mode !== 'pdf-scroll') return;
 
     if (mode === 'scroll') {
       const el = document.getElementById(`scroll-page-${num}`);
@@ -460,7 +466,7 @@
       if (window.GydeChunksView) window.GydeChunksView.jumpTo(num);
       updateActiveSectionForPage(num);
       saveBookmark(num);
-      history.replaceState(null, '', `/reader/${R.bookId}/page/${num}`);
+      updatePageUrl(num);
       return;
     }
 
@@ -477,7 +483,7 @@
       }
       updateActiveSectionForPage(num);
       saveBookmark(num);
-      history.replaceState(null, '', `/reader/${R.bookId}/page/${num}`);
+      updatePageUrl(num);
       return;
     }
 
@@ -485,6 +491,7 @@
       const res = await fetch(`/reader/${R.bookId}/api/page/${num}`);
       if (!res.ok) throw new Error('Page not found');
       const data = await res.json();
+      if (requestVersion !== navigationVersion || requestMode !== mode) return;
 
       R.currentPage = num;
       currentPageNum.textContent = num;
@@ -509,7 +516,7 @@
 
       saveBookmark(num);
       readerMain.scrollTop = 0;
-      history.replaceState(null, '', `/reader/${R.bookId}/page/${num}`);
+      updatePageUrl(num);
 
       // Re-apply the citation highlight on the new page if the quote happens
       // to appear there. Silently no-ops otherwise.
@@ -520,6 +527,14 @@
     } catch (err) {
       console.error('Failed to load page:', err);
     }
+  }
+
+  function updatePageUrl(num) {
+    const url = new URL(window.location.href);
+    url.pathname = `/reader/${R.bookId}/page/${num}`;
+    url.searchParams.delete('page');
+    url.searchParams.set('mode', mode);
+    history.replaceState(null, '', url.pathname + url.search + url.hash);
   }
 
   function fixMathJaxErrors() {

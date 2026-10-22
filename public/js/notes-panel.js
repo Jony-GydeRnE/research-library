@@ -54,6 +54,8 @@
   let isOpen = false;
   let currentHighlightId = null;
   let currentNoteId = null;
+  let notePageNumber = R.currentPage;
+  let panelVersion = 0;
   let splitRatio = parseFloat(localStorage.getItem('gyde-notes-ratio')) || 0.6;
 
   const titleInput = document.getElementById('noteTitleInput');
@@ -62,6 +64,7 @@
   const editBtn = document.getElementById('notesEditBtn');
   const latexInline = document.getElementById('notesLatexInline');
   const latexDisplay = document.getElementById('notesLatexDisplay');
+  const saveBtn = document.getElementById('notesSaveBtn');
 
   // ─── MATHJAX RENDER ────────────────────────────────────────────
 
@@ -126,6 +129,9 @@
   // ─── OPEN / CLOSE ─────────────────────────────────────────────
 
   function openNotesPanel(hlText, hlId) {
+    panelVersion++;
+    notePageNumber = R.currentPage;
+    saveBtn.disabled = false;
     currentHighlightId = hlId || null;
     currentNoteId = null;
 
@@ -153,22 +159,33 @@
   async function openNotesPanelWithId(noteId, hlText, hlId) {
     openNotesPanel(hlText, hlId);
     currentNoteId = noteId;
+    const version = panelVersion;
+    let loaded = false;
+    saveBtn.disabled = true;
     textarea.value = 'Loading...';
 
     try {
       var res = await fetch('/api/notes/' + noteId);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
       var note = await res.json();
+      if (version !== panelVersion) return;
+      if (!note || !note._id) throw new Error('Note not found');
       titleInput.value = note.title || '';
       textarea.value = note.content || '';
+      loaded = true;
       // Show rendered preview by default for existing notes
       showPreviewMode();
     } catch (e) {
+      if (version !== panelVersion) return;
       textarea.value = '';
       document.getElementById('notesStatus').textContent = 'Failed to load';
+    } finally {
+      if (version === panelVersion) saveBtn.disabled = !loaded;
     }
   }
 
   function closeNotesPanel() {
+    panelVersion++;
     isOpen = false;
     panel.style.display = 'none';
     divider.style.display = 'none';
@@ -227,12 +244,17 @@
   // ─── TITLE SAVE ────────────────────────────────────────────────
 
   function saveTitle() {
-    if (!currentNoteId) return;
+    if (!currentNoteId || saveBtn.disabled) return;
+    const version = panelVersion;
     fetch('/api/notes/' + currentNoteId, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: titleInput.value.trim() }),
-    }).catch(function(){});
+    }).then(function(res) {
+      if (!res.ok) throw new Error('Title save failed');
+    }).catch(function() {
+      if (version === panelVersion) document.getElementById('notesStatus').textContent = 'Failed to save title';
+    });
   }
 
   titleInput.addEventListener('blur', saveTitle);
@@ -248,6 +270,9 @@
     var status = document.getElementById('notesStatus');
 
     if (!content.trim()) { status.textContent = 'Note is empty'; return; }
+    const version = panelVersion;
+    saveBtn.disabled = true;
+    status.textContent = 'Saving...';
 
     try {
       var res;
@@ -262,32 +287,35 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            bookId: R.bookId, pageNumber: R.currentPage,
+            bookId: R.bookId, pageNumber: notePageNumber,
             content: content, title: title || 'Untitled Note',
             highlightId: currentHighlightId || undefined,
           }),
         });
       }
 
+      if (!res.ok) throw new Error('HTTP ' + res.status);
       var note = await res.json();
-      var isNew = !currentNoteId;
+      if (!note || !note._id) throw new Error('Save returned no note');
+      if (version !== panelVersion) return;
       currentNoteId = note._id;
 
-      if (isNew && currentHighlightId) {
-        fetch('/api/highlights/link-note', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ highlightId: currentHighlightId, noteId: note._id }),
-        }).catch(function(){});
+      // The create endpoint already links the highlight. Do not send
+      // a second request that can race with opening another note.
+      if (textarea.value !== content || titleInput.value.trim() !== title) {
+        status.textContent = 'Earlier draft saved; newer edits are unsaved';
+        return;
       }
 
       status.textContent = 'Saved';
-      setTimeout(function() { status.textContent = ''; }, 2000);
+      setTimeout(function() { if (version === panelVersion && status.textContent === 'Saved') status.textContent = ''; }, 2000);
 
       // Switch to preview mode after saving
       showPreviewMode();
     } catch (err) {
-      status.textContent = 'Failed to save';
+      if (version === panelVersion) status.textContent = 'Failed to save';
+    } finally {
+      if (version === panelVersion) saveBtn.disabled = false;
     }
   });
 })();

@@ -39,6 +39,7 @@
 const Span = require('../models/Span');
 const Chunk = require('../models/Chunk');
 const Book = require('../models/Book');
+const Page = require('../models/Page');
 
 // Match [N], [N-M], [N,M,K] inside running prose. Returns the
 // captured numeric keys. Same logic as edgeResolverService but
@@ -46,169 +47,95 @@ const Book = require('../models/Book');
 function extractCitationKeysFromText(text) {
   if (!text) return [];
   const keys = new Set();
-  const re = /\[(\d+(?:[,\-\s\d]*\d)?)\]/g;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    const inner = m[1];
-    if (/^\d+\-\d+$/.test(inner)) {
-      const [a, b] = inner.split('-').map(Number);
+  for (const match of text.matchAll(/\[([\d,\s–-]+)\]/g)) {
+    for (const part of match[1].split(',')) {
+      const token = part.trim();
+      if (/^\d+$/.test(token)) {
+        keys.add(token);
+        continue;
+      }
+      const range = token.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+      if (!range) continue;
+      const a = Number(range[1]), b = Number(range[2]);
+      // Bound work for malformed references such as [1-999999999999].
+      if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || b < a || b - a > 1000) continue;
       for (let k = a; k <= b; k++) keys.add(String(k));
-    } else if (/[,]/.test(inner)) {
-      inner.split(/[,\s]+/).forEach(k => {
-        if (/^\d+$/.test(k)) keys.add(k);
-      });
-    } else if (/^\d+$/.test(inner)) {
-      keys.add(inner);
     }
   }
-  return Array.from(keys);
+  return [...keys];
 }
 
-// Find the sentence containing a given citation key inside a chunk's
-// source text. Returns { text, sentenceIndex } or null. We split on
-// sentence boundaries (period followed by space, or double newline)
-// to keep this consistent with how spanService numbers sentences.
 function findCitationSentence(sourceText, key) {
   if (!sourceText) return null;
   const sentences = sourceText.split(/(?<=\.)\s+|\n\n+/).filter(s => s.trim());
-  const marker = '[' + key + ']';
-  for (let i = 0; i < sentences.length; i++) {
-    if (sentences[i].includes(marker)) {
-      return { text: sentences[i].trim(), sentenceIndex: i + 1 };
-    }
-    // Also handle ranges/lists that contain this key
-    const re = /\[(\d+(?:[,\-\s\d]*\d)?)\]/g;
-    let m;
-    while ((m = re.exec(sentences[i])) !== null) {
-      const inner = m[1];
-      if (/^\d+\-\d+$/.test(inner)) {
-        const [a, b] = inner.split('-').map(Number);
-        const k = parseInt(key, 10);
-        if (k >= a && k <= b) {
-          return { text: sentences[i].trim(), sentenceIndex: i + 1 };
-        }
-      }
-      if (/[,]/.test(inner)) {
-        const parts = inner.split(/[,\s]+/);
-        if (parts.includes(key)) {
-          return { text: sentences[i].trim(), sentenceIndex: i + 1 };
-        }
-      }
-    }
-  }
-  return null;
+  const index = sentences.findIndex(s => extractCitationKeysFromText(s).includes(String(key)));
+  return index < 0 ? null : { text: sentences[index].trim(), sentenceIndex: index + 1 };
 }
 
 /**
- * Ensure every [N] citation in every chunk of a book has a
- * dedicated role=citation, searchClass=S span. Idempotent: existing
- * citation spans are preserved. Returns a summary { chunksScanned,
- * existingCitationSpans, syntheticCitationSpans }.
+ * Add a citation annotation for every cited sentence. Citations overlay
+ * proof/definition annotations: they must not overwrite their roles or gaps.
+ * Sentence coordinates are one-based within the PAGE, not the chunk.
  */
 async function ensureCitationSpansForBook(bookId) {
   const chunks = await Chunk.find({ bookId })
-    .select('_id chunkIndex pageNumber sourceText spanIds')
-    .lean();
-  let scanned = 0;
-  let existing = 0;
-  let created = 0;
+    .select('_id chunkIndex pageNumber sentenceStart sourceText spanIds').lean();
+  let scanned = 0, existing = 0, created = 0, skippedUnanchoredChunks = 0;
 
   for (const chunk of chunks) {
     if (!chunk.sourceText) continue;
     scanned++;
-    const keys = extractCitationKeysFromText(chunk.sourceText);
-    if (keys.length === 0) continue;
+    if (!extractCitationKeysFromText(chunk.sourceText).length) continue;
+    if (!Number.isInteger(chunk.sentenceStart) || chunk.sentenceStart < 1) {
+      skippedUnanchoredChunks++;
+      continue; // Never invent a page position for a legacy/unanchored chunk.
+    }
+    const existingSpans = await Span.find({ chunkId: chunk._id, role: 'citation' })
+      .select('_id spanText sentenceStart sentenceEnd searchClass resolved').lean();
+    const sentences = chunk.sourceText.split(/(?<=\.)\s+|\n\n+/).filter(s => s.trim());
+    const citationIds = [];
+    let hasUnresolvedCitation = false;
 
-    // Pull every existing span in this chunk so we can detect which
-    // citation keys are already covered by a span (any span, not
-    // just role=citation — what we care about is "does the span
-    // text reference this citation key").
-    const existingSpans = await Span.find({ chunkId: chunk._id })
-      .select('_id spanText role searchClass searchConfidence')
-      .lean();
-
-    // Pre-compute the set of citation keys covered by each existing
-    // span using the SAME extractor we use for the chunk text. This
-    // correctly handles ranges like [22-25] and comma-lists like
-    // [22, 23, 24] — a literal substring search for "[22]" misses
-    // them and falsely creates duplicate synthetic spans.
-    const existingSpanKeys = existingSpans.map(s => ({
-      span: s,
-      keys: new Set(extractCitationKeysFromText(s.spanText)),
-    }));
-
-    const newSpanIds = [];
-
-    // Group keys by the sentence they appear in. ONE synthetic span
-    // per sentence — not one per citation key. If a sentence cites
-    // [15], [22], and [23], we want a single span tagged with all
-    // three references, not three duplicate spans with the same
-    // text. Otherwise the edge resolver iterates each duplicate
-    // and creates multiple identical edges to the same target.
-    const sentenceToKeys = new Map();
-    for (const key of keys) {
-      // Skip if any existing span already covers this key — handle
-      // promotion below. Use the precomputed key set, NOT a literal
-      // substring search.
-      const matching = existingSpanKeys.filter(e => e.keys.has(key)).map(e => e.span);
-      if (matching.length > 0) {
-        const target = matching.find(s => s.role !== 'citation') || matching[0];
-        const update = {};
-        if (target.role !== 'citation') update.role = 'citation';
+    for (let i = 0; i < sentences.length; i++) {
+      const keys = extractCitationKeysFromText(sentences[i]);
+      if (!keys.length) continue;
+      const position = chunk.sentenceStart + i;
+      const target = existingSpans.find(s =>
+        s.sentenceStart <= position && s.sentenceEnd >= position &&
+        keys.every(k => extractCitationKeysFromText(s.spanText).includes(k)));
+      if (target) {
         if (target.searchClass !== 'S') {
-          update.searchClass = 'S';
-          update.searchConfidence = null;
+          await Span.findByIdAndUpdate(target._id, { searchClass: 'S', searchConfidence: null });
         }
-        if (Object.keys(update).length > 0) {
-          await Span.findByIdAndUpdate(target._id, update);
-        }
+        citationIds.push(target._id);
+        if (!target.resolved) hasUnresolvedCitation = true;
         existing++;
         continue;
       }
-      // Find the sentence in the chunk text that contains this key.
-      const sentence = findCitationSentence(chunk.sourceText, key);
-      if (!sentence) continue;
-      // Group by sentenceIndex so we create one span per unique
-      // sentence regardless of how many keys it contains.
-      const k = sentence.sentenceIndex;
-      if (!sentenceToKeys.has(k)) {
-        sentenceToKeys.set(k, { sentence, keys: [] });
-      }
-      sentenceToKeys.get(k).keys.push(key);
-    }
-
-    // Create one synthetic span per grouped sentence.
-    for (const [, { sentence, keys: sKeys }] of sentenceToKeys) {
-      const tags = sKeys.map(k => 'citation_to_ref_' + k);
-      tags.push('auto_citation_span');
-      const newSpan = await Span.create({
-        bookId,
-        pageNumber: chunk.pageNumber,
-        chunkId: chunk._id,
-        sentenceStart: sentence.sentenceIndex,
-        sentenceEnd: sentence.sentenceIndex,
-        role: 'citation',
-        searchClass: 'S',
-        searchConfidence: null,
-        contextTags: tags,
-        declarativeTags: [],
-        regexFlags: ['synthetic_citation_span'],
-        spanText: sentence.text,
-        createdAt: new Date(),
+      const span = await Span.create({
+        bookId, pageNumber: chunk.pageNumber, chunkId: chunk._id,
+        sentenceStart: position, sentenceEnd: position,
+        role: 'citation', searchClass: 'S', searchConfidence: null,
+        contextTags: [...keys.map(k => 'citation_to_ref_' + k), 'auto_citation_span'],
+        declarativeTags: [], regexFlags: ['synthetic_citation_span'],
+        spanText: sentences[i].trim(),
       });
-      newSpanIds.push(newSpan._id);
+      citationIds.push(span._id);
+      hasUnresolvedCitation = true;
       created++;
     }
-
-    if (newSpanIds.length > 0) {
-      // Append to chunk.spanIds without disturbing existing order.
+    if (citationIds.length) {
       await Chunk.findByIdAndUpdate(chunk._id, {
-        $push: { spanIds: { $each: newSpanIds } },
+        $addToSet: { spanIds: { $each: citationIds }, searchClasses: 'S' },
+        ...(hasUnresolvedCitation ? { $set: { hasUnresolvedSpans: true } } : {}),
+      });
+      await Page.findOneAndUpdate({ bookId, pageNumber: chunk.pageNumber }, {
+        $addToSet: { spanIds: { $each: citationIds } },
       });
     }
   }
-
-  return { chunksScanned: scanned, existingCitationSpans: existing, syntheticCitationSpans: created };
+  return { chunksScanned: scanned, existingCitationSpans: existing,
+    syntheticCitationSpans: created, skippedUnanchoredChunks };
 }
 
 /**

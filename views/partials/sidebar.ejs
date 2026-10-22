@@ -98,10 +98,10 @@
       </div>
       <div class="settings-section">
         <label class="settings-label">Chat grounding mode</label>
-        <p class="settings-desc">When enabled, Gyde only shows responses grounded in your library. Unverified citations are blocked and you're asked before any general-knowledge answer is shown.</p>
+        <p class="settings-desc">Ask Gyde to prioritize your library and label outside knowledge. Citations and inferred connections are not automatically verified; check the linked source.</p>
         <label class="settings-toggle">
           <input type="checkbox" id="groundingModeToggle" checked onchange="localStorage.setItem('gyde-grounding-strict', this.checked ? '1' : '0')">
-          <span class="toggle-label">Strict grounding (recommended)</span>
+          <span class="toggle-label">Prioritize library sources</span>
         </label>
       </div>
       <div class="modal-actions">
