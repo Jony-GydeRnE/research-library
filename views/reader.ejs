@@ -172,7 +172,7 @@
     <div class="reader-body-row">
     <main class="reader-main" id="readerMain">
       <!-- Pages mode -->
-      <div class="reader-content" id="readerContent">
+      <div class="reader-content" id="readerContent" data-page="<%= pageNumber %>">
         <% if (page && page.htmlContent) { %>
           <%- page.htmlContent %>
         <% } else if (page && (page.rawTextLegacy || page.rawText)) { %>
@@ -294,6 +294,7 @@
   <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
   <script src="/js/reader.js"></script>
   <script src="/js/highlights.js"></script>
+  <script src="/js/sse.js"></script>
   <script src="/js/split-chat.js"></script>
   <script src="/js/notes-panel.js"></script>
   <script src="/js/metadata-panel.js"></script>

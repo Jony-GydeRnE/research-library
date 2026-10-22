@@ -366,14 +366,18 @@ async function get_path({ from_chunk, to_chunk, max_depth }, _session) {
   if (String(from_chunk) === String(to_chunk)) {
     return { found: true, length: 0, path: [], note: 'same chunk' };
   }
-  const depthCap = Math.max(1, Math.min(10, max_depth || 6));
+  const depthCap = Number.isFinite(max_depth) ? Math.max(1, Math.min(10, Math.floor(max_depth))) : 6;
 
   // Dijkstra with a simple sorted-array priority queue. At our
   // scale (≤ low thousands of edges per traversal) this is fine.
   const dist = new Map();
-  const prev = new Map();    // chunk_id → { prevChunk, edge }
-  dist.set(String(from_chunk), 0);
-  const frontier = [{ id: String(from_chunk), d: 0, depth: 0 }];
+  // Distance must include hops used: a cheaper but longer route to a
+  // node cannot displace a shorter route that can still reach the goal.
+  const stateKey = (id, depth) => `${id}:${depth}`;
+  const prev = new Map();
+  const startKey = stateKey(String(from_chunk), 0);
+  dist.set(startKey, 0);
+  const frontier = [{ id: String(from_chunk), key: startKey, d: 0, depth: 0 }];
 
   let found = false;
   let visited = 0;
@@ -381,9 +385,9 @@ async function get_path({ from_chunk, to_chunk, max_depth }, _session) {
   while (frontier.length > 0) {
     frontier.sort((a, b) => a.d - b.d);
     const cur = frontier.shift();
-    if (cur.id === String(to_chunk)) { found = true; break; }
+    if (cur.d !== dist.get(cur.key)) continue;
+    if (cur.id === String(to_chunk)) { found = cur; break; }
     if (cur.depth >= depthCap) continue;
-    if (cur.d !== dist.get(cur.id)) continue; // stale entry
     visited++;
 
     const edges = await Edge.find({
@@ -399,10 +403,11 @@ async function get_path({ from_chunk, to_chunk, max_depth }, _session) {
       if (!neighbor || neighbor === 'undefined') continue;
       const w = confidenceWeight(e.confidence);
       const alt = cur.d + w;
-      if (!dist.has(neighbor) || alt < dist.get(neighbor)) {
-        dist.set(neighbor, alt);
-        prev.set(neighbor, { prevChunk: cur.id, edge: e });
-        frontier.push({ id: neighbor, d: alt, depth: cur.depth + 1 });
+      const key = stateKey(neighbor, cur.depth + 1);
+      if (!dist.has(key) || alt < dist.get(key)) {
+        dist.set(key, alt);
+        prev.set(key, { prevKey: cur.key, prevChunk: cur.id, edge: e });
+        frontier.push({ id: neighbor, key, d: alt, depth: cur.depth + 1 });
       }
     }
   }
@@ -414,15 +419,16 @@ async function get_path({ from_chunk, to_chunk, max_depth }, _session) {
       to: String(to_chunk),
       visited,
       max_depth_reached: depthCap,
-      note: 'no path within max_depth; consider this the frontier of the current graph',
+      note: 'No path found within max_depth. Longer paths may exist; this is not evidence of a missing mathematical connection.',
     };
   }
 
   // Reconstruct path from to_chunk back to from_chunk.
   const steps = [];
   let node = String(to_chunk);
-  while (node !== String(from_chunk)) {
-    const p = prev.get(node);
+  let key = found.key;
+  while (key !== startKey) {
+    const p = prev.get(key);
     if (!p) break;
     steps.unshift({
       from_chunk_id: String(p.prevChunk),
@@ -430,8 +436,12 @@ async function get_path({ from_chunk, to_chunk, max_depth }, _session) {
       edge_id: String(p.edge._id),
       relationship: p.edge.relationshipType,
       confidence: p.edge.confidence,
+      edge_from_chunk_id: String(p.edge.fromChunkId),
+      edge_to_chunk_id: String(p.edge.toChunkId),
+      traversed_reverse: String(p.edge.fromChunkId) !== String(p.prevChunk),
     });
     node = String(p.prevChunk);
+    key = p.prevKey;
   }
 
   // Enrich path with book titles and previews for each node.
@@ -458,7 +468,7 @@ async function get_path({ from_chunk, to_chunk, max_depth }, _session) {
   return {
     found: true,
     length: steps.length,
-    total_weight: dist.get(String(to_chunk)),
+    total_weight: found.d,
     nodes: nodeIds.map(enrichNode),
     edges: steps,
     visited,
@@ -472,7 +482,7 @@ async function get_path({ from_chunk, to_chunk, max_depth }, _session) {
 // and case for robustness; the intent is to catch the agent
 // paraphrasing vs the text literally containing the claim.
 async function verify_quote({ chunk_id, claimed_text }, _session) {
-  if (!chunk_id || !claimed_text) {
+  if (!chunk_id || typeof claimed_text !== 'string' || !claimed_text.trim()) {
     return { error: 'chunk_id and claimed_text are required' };
   }
   const c = await Chunk.findById(chunk_id)
@@ -568,7 +578,7 @@ const TOOL_DEFINITIONS = [
   {
     name: 'get_path',
     description:
-      'Confidence-weighted shortest path between two chunks through the edge graph. Treats the graph as undirected — finds the chain connecting two ideas regardless of edge direction, preferring paths through high-confidence edges. If no path exists within max_depth the tool returns found=false, and that IS an answer: it means the library does not yet connect these two concepts.',
+      'Confidence-weighted shortest path between two chunks through the stored edge graph, treating edges as undirected. Inspect edge_from_chunk_id, edge_to_chunk_id and traversed_reverse before interpreting a relationship: traversing a proves edge backward is not a proof in the reverse direction. Scores are model estimates, not verified truth. found=false means no path was found within max_depth; longer paths or unrecorded connections may exist.',
     input_schema: {
       type: 'object',
       properties: {

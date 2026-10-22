@@ -200,6 +200,27 @@ async function remapHighlights(bookId, pageNumber, newRawText) {
 
 // ─── JOB DEFINITIONS ─────────────────────────────────────────────
 
+async function assertVisionComplete(book) {
+  const expected = book.pageCount;
+  if (!Number.isInteger(expected) || expected < 1) {
+    const error = new Error('Vision incomplete: expected page count is missing');
+    error.code = 'VISION_INCOMPLETE';
+    throw error;
+  }
+  const pages = await Page.find({ bookId: book._id }).select('pageNumber visionProcessed htmlContent').lean();
+  const complete = new Set(pages.filter(p => p.visionProcessed && p.htmlContent && p.htmlContent.trim()).map(p => p.pageNumber));
+  const missing = [];
+  for (let n = 1; n <= expected; n++) if (!complete.has(n)) missing.push(n);
+  if (missing.length) {
+    book.visionProgress = `${expected - missing.length}/${expected} pages`;
+    book.processingProgress = 25 + Math.round(((expected - missing.length) / expected) * 75);
+    await book.save();
+    const error = new Error(`Vision incomplete: ${missing.length} page(s) missing or failed (${missing.slice(0, 20).join(', ')})`);
+    error.code = 'VISION_INCOMPLETE';
+    throw error;
+  }
+}
+
 function defineJobs() {
 
   // ─── EXTRACT PDF ───────────────────────────────────────────────
@@ -311,7 +332,7 @@ function defineJobs() {
       // reported case is a sleep-killed job that left half the
       // book mid-vision. Re-running from scratch is wasted work
       // AND wasted dollars.
-      const pages = allPages.filter(p => !p.visionProcessed);
+      const pages = allPages.filter(p => !p.visionProcessed || !p.htmlContent || !p.htmlContent.trim());
       let alreadyDone = totalPages - pages.length;
 
       const pdfBuffer = await getPdfBuffer(book.s3Key);
@@ -404,6 +425,10 @@ function defineJobs() {
         console.warn(`  [reconcile] failed: ${recErr.message}`);
       }
 
+      // PNG enumeration cannot detect pages whose renderer never produced
+      // an image. Check against the PDF's expected page count as well.
+      await assertVisionComplete(book);
+
       // Run regex pre-annotation (Step 2 — zero cost)
       console.log(`  Running regex pre-annotation...`);
       await annotateBook(bookId);
@@ -422,7 +447,7 @@ function defineJobs() {
       book.status = 'ready';
       book.processingProgress = 100;
       book.processingStatus = 'complete';
-      book.visionProgress = `${totalPages}/${totalPages} pages`;
+      book.visionProgress = `${book.pageCount}/${book.pageCount} pages`;
       book.readyAt = new Date();
       await book.save();
 
@@ -439,7 +464,7 @@ function defineJobs() {
       jobDoc.error = err.message;
       jobDoc.completedAt = new Date();
       await jobDoc.save();
-      await Book.findByIdAndUpdate(bookId, { status: 'error' });
+      await Book.findByIdAndUpdate(bookId, { status: 'error', processingStatus: err.code === 'VISION_INCOMPLETE' ? 'vision-incomplete' : 'processing-failed', readyAt: null });
       await ErrorLog.create({ bookId, jobType: 'generate-html', message: err.message, stack: err.stack });
     }
   });
@@ -462,6 +487,7 @@ function defineJobs() {
       if (!book) throw new Error('Book not found');
       if (!isVisionAvailable()) throw new Error('OPENAI_API_KEY not configured');
 
+      book.status = 'processing';
       book.processingStatus = 'vision-processing';
       await book.save();
 
@@ -516,8 +542,12 @@ function defineJobs() {
 
       if (fs.existsSync(pdfTmpPath)) fs.unlinkSync(pdfTmpPath);
 
+      await assertVisionComplete(book);
+      book.status = 'ready';
+      book.processingProgress = 100;
+      book.readyAt = new Date();
       book.processingStatus = 'complete';
-      book.visionProgress = `${totalPages}/${totalPages} pages`;
+      book.visionProgress = `${book.pageCount}/${book.pageCount} pages`;
       await book.save();
 
       if (jobDoc) {
@@ -537,6 +567,7 @@ function defineJobs() {
         jobDoc.completedAt = new Date();
         await jobDoc.save();
       }
+      await Book.findByIdAndUpdate(bookId, { status: 'error', processingStatus: err.code === 'VISION_INCOMPLETE' ? 'vision-incomplete' : 'processing-failed', readyAt: null });
       await ErrorLog.create({ bookId, jobType: 'reprocess-vision', message: err.message, stack: err.stack });
     }
   });

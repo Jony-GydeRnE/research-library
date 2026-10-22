@@ -47,10 +47,8 @@
  *     Example: "epz" = "extends, confidence p (~62%), relevance z (100%)"
  *     Or with multiple targets: "epz cdm" = two pairs in one call.
  *
- * The decoder is forgiving: it strips whitespace, ignores unknown
- * characters, and accepts both lowercase and uppercase. This means
- * the LLM can stutter or include explanatory text and we still
- * extract the verdict.
+ * Decoders accept the compact contract, not explanatory prose.
+ * Invalid output must not silently become an asserted relationship.
  */
 
 // ─── Letter ↔ index ──────────────────────────────────────────────
@@ -61,7 +59,7 @@
  * either truncating to 26 candidates or starting a new session.
  */
 function indexToLetter(idx) {
-  if (typeof idx !== 'number' || !Number.isFinite(idx)) return null;
+  if (!Number.isInteger(idx)) return null;
   if (idx < 1 || idx > 26) return null;
   return String.fromCharCode('a'.charCodeAt(0) + idx - 1);
 }
@@ -204,7 +202,8 @@ function encodeRanking(entries) {
  */
 function decodeClassification(s) {
   if (!s || typeof s !== 'string') return [];
-  const compact = s.replace(/[^a-zA-Z]/g, '');
+  const compact = s.replace(/[\s,]/g, '').toLowerCase();
+  if (!/^(?:[pesdcrqmn][a-z]{2})+$/.test(compact)) return [];
   const out = [];
   for (let i = 0; i + 3 <= compact.length; i += 3) {
     const relLetter = compact[i].toLowerCase();

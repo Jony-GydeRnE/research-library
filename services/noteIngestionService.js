@@ -164,17 +164,13 @@ async function matchNotesToSourceBooks(notesBookId) {
   // anything throws before the commit step, the existing edges in
   // the DB are untouched.
   const pendingEdges = [];
-  // Safety rails: track pickAndClassify attempts and errors so we
-  // can refuse to commit a run that hit a wall of API failures.
-  // "Success" means the loop completed AND the error rate stayed
-  // under MAX_PICK_ERROR_RATE. If it blows past that, throw before
-  // the delete/insert step so the existing edges stay intact.
+  // Until publication is transactional/versioned, an incomplete run
+  // must not replace the previous graph. Model rejection is a valid
+  // result; provider errors and malformed output are not.
   let pickAttempts = 0;
   let pickErrors = 0;
   let pickRejections = 0;
   let skippedCosine = 0;
-  const MAX_PICK_ERROR_RATE = 0.10;
-  const MIN_ATTEMPTS_BEFORE_RATE_CHECK = 20;
   const COSINE_FLOOR = 0.25;
 
   // Pre-compute per-page tag context for the notes book. For each
@@ -334,8 +330,8 @@ async function matchNotesToSourceBooks(notesBookId) {
         console.warn('[noteIngestionService] pickAndClassify threw:', err.message);
         continue;
       }
-      if (pickResult.rejected) { pickRejections++; continue; }
-      if (pickResult.error || !pickResult.chunk) continue;
+      if (pickResult && pickResult.rejected) { pickRejections++; continue; }
+      if (!pickResult || pickResult.error || !pickResult.chunk) { pickErrors++; continue; }
 
       // Floor: drop weak matches (confidence or relevance below 'f')
       const cf = pickResult.confidence || 'a';
@@ -418,8 +414,8 @@ async function matchNotesToSourceBooks(notesBookId) {
         console.warn('[noteIngestionService] pickAndClassify threw:', err.message);
         continue;
       }
-      if (pickResult.rejected) { pickRejections++; continue; }
-      if (pickResult.error || !pickResult.chunk) continue;
+      if (pickResult && pickResult.rejected) { pickRejections++; continue; }
+      if (!pickResult || pickResult.error || !pickResult.chunk) { pickErrors++; continue; }
       const cf = pickResult.confidence || 'a';
       const rv = pickResult.relevance || 'a';
       if (cf < 'f' || rv < 'f') continue;
@@ -472,12 +468,10 @@ async function matchNotesToSourceBooks(notesBookId) {
     });
   }
 
-  // Safety rail check: refuse to commit if the API throw rate was
-  // too high. A quota outage, a bad key, or a flaky connection
-  // would otherwise silently destroy the previous good run.
-  const errorRate = pickAttempts > 0 ? pickErrors / pickAttempts : 0;
-  if (pickAttempts >= MIN_ATTEMPTS_BEFORE_RATE_CHECK && errorRate > MAX_PICK_ERROR_RATE) {
-    const msg = `[noteIngestionService] aborting commit: pickAndClassify error rate ${(errorRate*100).toFixed(1)}% over ${pickAttempts} attempts exceeds ${(MAX_PICK_ERROR_RATE*100).toFixed(0)}% threshold. Existing edges preserved.`;
+  // Small runs need the same protection as large ones. Count returned
+  // errors as well as exceptions; strict decoders use the former.
+  if (pickErrors > 0) {
+    const msg = `[noteIngestionService] aborting commit: ${pickErrors} of ${pickAttempts} picker attempts failed. Existing edges preserved.`;
     console.error(msg);
     return {
       notesBookId,

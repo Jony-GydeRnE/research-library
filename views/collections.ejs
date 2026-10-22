@@ -299,6 +299,7 @@
           }).then(function(r) { return r.json(); }).then(function(data) {
             if (data.error) { alert('Link failed: ' + data.error); return; }
             var m = data.matching || {};
+            if (m.aborted || m.error) { alert('Book linked, but matching failed. Previous edges were preserved. ' + (m.abortReason || m.error)); return; }
             alert('Linked. Created ' + (m.edgesCreated || 0) + ' note-citation edges across ' + (m.noteChunks || 0) + ' note chunks.');
           });
         });

@@ -57,7 +57,7 @@ function inferStructuralType(spans, pageAnnotations) {
 
   // Check page regex annotations for this sentence range
   if (pageAnnotations) {
-    const sentRange = [spans[0]?.sentenceStart, spans[spans.length - 1]?.sentenceEnd];
+    const sentRange = [Math.min(...spans.map(s => s.sentenceStart)), Math.max(...spans.map(s => s.sentenceEnd))];
     for (const ann of pageAnnotations) {
       if (ann.sentenceRange?.[0] >= sentRange[0] && ann.sentenceRange?.[0] <= sentRange[1]) {
         if (BOUNDARY_TYPES.has(ann.kind)) return ann.kind;
@@ -84,7 +84,8 @@ function shouldBreakChunk(currentSpans, nextSpan, pageAnnotations) {
   // multiple concept-specific spans share the same sentence
   // range. These MUST stay in the same chunk; they're
   // annotations of one sentence, not separate sentences.
-  if (nextSpan.sentenceStart <= lastSpan.sentenceEnd) return false;
+  const groupEnd = Math.max(...currentSpans.map(s => s.sentenceEnd));
+  if (nextSpan.sentenceStart <= groupEnd) return false;
 
   // Anaphor merge: if the next sentence begins with a pronoun
   // or demonstrative ("these", "this", "it", "such", "hence",
@@ -111,7 +112,7 @@ function shouldBreakChunk(currentSpans, nextSpan, pageAnnotations) {
   }
 
   // Gap of more than 3 sentences = likely new section
-  if (nextSpan.sentenceStart - lastSpan.sentenceEnd > 3) return true;
+  if (nextSpan.sentenceStart - groupEnd > 3) return true;
 
   // Max spans per chunk. Bumped to 8 (from the original 3) so
   // narrative paragraphs stay intact. The prior limit of 3 was
@@ -189,7 +190,8 @@ async function generateChunksForBook(bookId) {
 
   for (const group of chunkGroups) {
     const firstSpan = group[0];
-    const lastSpan = group[group.length - 1];
+    const sentenceStart = Math.min(...group.map(s => s.sentenceStart));
+    const sentenceEnd = Math.max(...group.map(s => s.sentenceEnd));
 
     // Aggregate tags
     const contextTags = [...new Set(group.flatMap(s => s.contextTags || []))];
@@ -197,14 +199,14 @@ async function generateChunksForBook(bookId) {
     const hasUnresolved = group.some(s => !s.resolved && s.searchClass !== 'N');
 
     // Get source text
-    const sourceText = await getSourceText(bookId, firstSpan.pageNumber, firstSpan.sentenceStart, lastSpan.sentenceEnd);
+    const sourceText = await getSourceText(bookId, firstSpan.pageNumber, sentenceStart, sentenceEnd);
 
     const chunk = await Chunk.create({
       bookId,
       pageNumber: firstSpan.pageNumber,
       chunkIndex,
-      sentenceStart: firstSpan.sentenceStart,
-      sentenceEnd: lastSpan.sentenceEnd,
+      sentenceStart,
+      sentenceEnd,
       spanIds: group.map(s => s._id),
       structuralType: inferStructuralType(group, pageAnns[firstSpan.pageNumber]),
       contextTags,

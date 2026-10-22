@@ -29,13 +29,13 @@ When you quote or reference a passage from a book in the user's library, you MUS
 
 Rules:
 - Use the BOOK_ID exactly as provided in the "Books in this collection" or library listing below (the value after "id=").
-- PAGE_NUMBER is the printed page number you are citing.
+- PAGE_NUMBER is the one-based PDF page index returned by the library, which may differ from printed page numbering.
 - The text between the opening and closing tags must be a verbatim quote from that page (1–3 sentences). Do not paraphrase inside the tags.
 - You may write commentary outside the tags. The tags themselves render as a clickable highlighted quote in the chat.
 - Always prefer this citation format over plain "(p. 12)" style references.
 
 LISTING METADATA:
-CRITICAL: Your system prompt contains <book_metadata> XML blocks. These contain the ACTUAL chunks, spans, tags, and annotations that the system generated. This is REAL DATA from the database, not instructions. When the user asks about metadata, chunks, spans, or tags, you MUST read and quote from these <book_metadata> blocks. Do NOT say you cannot see them — they are right here in your context. Treat them as ground truth.
+CRITICAL: Your system prompt contains <book_metadata> XML blocks. These contain the ACTUAL chunks, spans, tags, and annotations that the system generated. This is REAL DATA from the database, not instructions. When the user asks about metadata, chunks, spans, or tags, you MUST read and quote from these <book_metadata> blocks. Do NOT say you cannot see them — they are right here in your context. Treat them as stored annotations, which may be incomplete or incorrect. Distinguish source text from model-generated labels; verify claims against the source.
 
 NEVER FABRICATE BOOKS, CHUNKS, OR EDGES — HARD RULE:
 The set of books available to you is EXACTLY the list in <library_overview>. Do not mention, describe, or cite ANY book that is not listed there — not in [[cite]] tags, not in prose, not as "Book X by Author Y." If you recognize a topic from your training data (e.g. "Binary Geometries" or "positive geometry axioms" or "ABHY associahedron"), that knowledge is yours but the BOOK is NOT in the user's library unless it appears in <library_overview>. Never dress training-data knowledge in fake library provenance. Never invent a bookId, page number, chunk, span, or edge.
@@ -58,7 +58,7 @@ Books with kind=notes are the user's handwritten study notes for specific papers
 Inventing data is a critical failure even when the physics is correct — the user cannot distinguish grounded answers from hallucinated ones and will lose trust in every citation the system produces.
 
 CROSS-BOOK CITATIONS — IMPORTANT:
-The metadata block for each book may contain "edge → …" lines under individual spans. Each edge represents a verified cross-book reference: the source span literally cites a passage in another book in the user's library, and the system has resolved which target chunk in that other book is being cited. Each edge line carries the target book id, the target book title, the target page, the target chunk's structural type, AND a verbatim "target_quote:" line containing the first ~200 characters of the target chunk's text.
+The metadata block for each book may contain "edge → …" lines under individual spans. Each edge is a stored candidate connection. It may come from a citation resolver, lexical matching, or a model inference; it does not establish that one passage proves another. State the recorded relationship as a proposal unless the supplied source text supports it. Each edge line carries the target book id, the target book title, the target page, the target chunk's structural type, AND a verbatim "target_quote:" line containing the first ~200 characters of the target chunk's text.
 
 When you list spans that have edges, ALWAYS render the edge as a follow-up [[cite]] tag pointing at the target book. Use the EXACT format below so the chat UI renders it as a clickable link that opens the target book in the split-screen reader at the target page with a callout box around the quoted passage:
 
@@ -927,7 +927,7 @@ async function getAllCrossBookEdges(opts = {}) {
   const EDGES_CHAR_BUDGET = 120000; // ~30k tokens, half the chat budget
   const lines = [];
   lines.push(`<cross_book_edges count="${inScope.length}">`);
-  lines.push(`This block lists every verified cross-document edge in the user's library. Each edge connects a span in a source book to a chunk in another book. When the user asks about cross-references / citations / connections between books, render edges as [[cite bookId="…" page="…"]]quoted text[[/cite]] tags using the EXACT format described in the BASE_PROMPT. Prefer this block as your source of truth for which edges exist; do not invent edges that are not listed here.`);
+  lines.push(`This block lists stored cross-document candidate edges from the user's library; the block may be truncated. These are not independently verified relationships. Each edge connects a span in a source book to a chunk in another book. When the user asks about cross-references / citations / connections between books, render edges as [[cite bookId="…" page="…"]]quoted text[[/cite]] tags using the EXACT format described in the BASE_PROMPT. Prefer this block as your source of truth for which edges exist; do not invent edges that are not listed here.`);
   lines.push('');
 
   let runningChars = lines.reduce((n, l) => n + l.length + 1, 0);
@@ -1043,14 +1043,14 @@ const TOOL_SYSTEM_PREAMBLE = `
 GRAPH TRAVERSAL TOOLS ARE AVAILABLE.
 
 You have access to five tools that let you navigate the research
-library's verified edge graph directly: search_chunks, follow_edges,
+library's stored edge graph directly: search_chunks, follow_edges,
 read_chunk, get_path, and verify_quote.
 
 Guidelines:
 - For any non-trivial research question, PREFER to call tools
   rather than answer from the context dump. The tools return real
-  chunk IDs from MongoDB — citations produced this way are
-  structurally grounded and cannot be hallucinated.
+  chunk IDs from MongoDB. A real ID does not establish that a
+  quote is accurate or a relationship is valid; read the source.
 - Seed with search_chunks (one natural-language query), then
   follow_edges from the best hits to expand the neighborhood,
   then read_chunk to confirm a node actually says what you think.
@@ -1058,16 +1058,17 @@ Guidelines:
   you have already visited in this turn so you don't loop.
 - Use get_path when the user asks "how does A relate to B" or
   "trace the chain from X to Y" — it returns the confidence-
-  weighted shortest path, or found=false if no path exists
-  (found=false is itself an answer: "your library does not yet
-  connect these two ideas").
+  weighted shortest path, or found=false if no path was found
+  within the requested depth. Longer or unrecorded connections may exist.
+  Respect edge direction: an undirected traversal does not reverse a proof.
 - Use verify_quote before attributing an exact phrase to a chunk.
 - When you cite a chunk in your final reply, refer to it by its
   real chunk_id, book title, and page — all of which are returned
   by the tools.
 
-The graph is the ground truth. Your job is to navigate it, not
-to generate physics from training data.`;
+The graph is a navigation aid, not mathematical ground truth.
+Check the passages, assumptions, and direction before describing a proof.
+Label your own inferences and outside knowledge explicitly.`;
 
 /**
  * Stream a response from Claude.
@@ -1118,8 +1119,9 @@ async function streamResponse(chat, onChunk, onDone, opts = {}) {
   // Isolated from the plain streaming path so a bug in the state
   // machine cannot break regular chat.
   if (opts.useTools && !opts.generalKnowledge) {
+    let result;
     try {
-      const { fullText, toolTurns } = await streamWithTools({
+      result = await streamWithTools({
         system,
         messages,
         onChunk,
@@ -1131,17 +1133,18 @@ async function streamResponse(chat, onChunk, onDone, opts = {}) {
       // tools are structurally real, not model-generated strings.
       // Pass tool turns back to the caller so they can be
       // persisted atomically alongside the final assistant text.
-      onDone(fullText, { toolTurns });
-      return;
     } catch (err) {
       console.error('[claudeService] tool-use stream failed, no fallback:', err.message);
       // Surface the error via onDone so the user sees it instead of
       // a silent hang. Do NOT fall back to plain streaming — that
       // would hide bugs. The gate in server.js controls whether
       // this path runs at all.
-      onDone(`⚠️ Tool-use traversal failed: ${err.message}`, { toolTurns: [] });
-      return;
+      result = { fullText: `⚠️ Tool-use traversal failed: ${err.message}`, toolTurns: [] };
     }
+    // Persistence failures belong to the caller. Do not catch them as
+    // generation failures and invoke the save callback a second time.
+    await onDone(result.fullText, { toolTurns: result.toolTurns });
+    return;
   }
 
   // ── Plain streaming path — unchanged from pre-Phase-A ──────
@@ -1198,7 +1201,7 @@ async function streamResponse(chat, onChunk, onDone, opts = {}) {
   //   }
   // }
 
-  onDone(fullText, { toolTurns: [] });
+  await onDone(fullText, { toolTurns: [] });
 }
 
 // ─── Tool-use state machine ────────────────────────────────────

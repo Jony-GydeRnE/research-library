@@ -107,11 +107,12 @@ window.MathJax = {
   </div>
 </div>
 
+<script src="/js/sse.js"></script>
 <script>
 (function() {
   var chatId = '<%= chat._id %>';
   var collectionIdAtLoad = '<%= chat.collectionId || "" %>';
-  var booksMap = <%- JSON.stringify(_booksMap) %>;
+  var booksMap = <%- JSON.stringify(_booksMap).replace(/</g, '\\u003c') %>;
   var messagesEl = document.getElementById('chatMessages');
   var input = document.getElementById('chatInput');
   var sendBtn = document.getElementById('chatSendBtn');
@@ -135,7 +136,7 @@ window.MathJax = {
   }
 
   // Render existing assistant messages with markdown+MathJax
-  var existingMsgs = <%- JSON.stringify((chat.messages || []).filter(m => m.role === 'assistant' && m.kind !== 'tool').map(m => m.content)) %>;
+  var existingMsgs = <%- JSON.stringify((chat.messages || []).filter(m => m.role === 'assistant' && m.kind !== 'tool').map(m => m.content)).replace(/</g, '\\u003c') %>;
   var assistantDivs = messagesEl.querySelectorAll('.chat-message-assistant .chat-message-content');
   existingMsgs.forEach(function(text, i) {
     if (assistantDivs[i]) {
@@ -236,56 +237,49 @@ window.MathJax = {
     };
   }
 
-  function streamFrom(url, method, body) {
+  async function streamFrom(url, method, body) {
     var assistantDiv = addMessage('assistant', '<span class="typing-indicator">Thinking...</span>');
     var contentDiv = assistantDiv.querySelector('.chat-message-content');
     var typesetSoon = makeThrottledTypeset(contentDiv);
     var opts = { method: method, headers: { 'Content-Type': 'application/json' } };
     if (body) opts.body = JSON.stringify(body);
-
-    fetch(url, opts).then(function(response) {
-      var reader = response.body.getReader();
-      var decoder = new TextDecoder();
-      var fullText = '';
-      var started = false;
-
-      function read() {
-        reader.read().then(function(result) {
-          if (result.done) { finishStream(contentDiv); return; }
-          var chunk = decoder.decode(result.value, { stream: true });
-          chunk.split('\n').forEach(function(line) {
-            line = line.trim();
-            if (!line.startsWith('data: ')) return;
-            try {
-              var data = JSON.parse(line.substring(6));
-              if (data.type === 'chunk') {
-                if (!started) { contentDiv.innerHTML = ''; started = true; }
-                fullText += data.text;
-                contentDiv.innerHTML = formatResponse(fullText);
-                scrollToBottom();
-                typesetSoon();
-              } else if (data.type === 'done' && data.text && data.text.indexOf('[[GYDE_ASK_GENERAL_KNOWLEDGE]]') !== -1) {
-                var cleanContent = data.text.replace('[[GYDE_ASK_GENERAL_KNOWLEDGE]]', '');
-                contentDiv.innerHTML = formatResponse(cleanContent);
-                var btnRow = document.createElement('div');
-                btnRow.className = 'gyde-confirm-row';
-                btnRow.innerHTML = '<button class="gyde-btn-confirm-yes" onclick="gydeRequestGeneralKnowledge()">\u2713 Yes, answer from general knowledge</button>' +
-                  '<button class="gyde-btn-confirm-no" onclick="this.closest(\'.gyde-confirm-row\').remove()">\u2717 No thanks</button>';
-                contentDiv.appendChild(btnRow);
-                scrollToBottom();
-              } else if (data.type === 'error') {
-                contentDiv.innerHTML = '<span style="color:#e55;">Error: ' + escapeHtml(data.error) + '</span>';
-              }
-            } catch(e) {}
-          });
-          read();
-        });
-      }
-      read();
-    }).catch(function() {
-      contentDiv.innerHTML = '<span style="color:#e55;">Network error</span>';
+    var fullText = '';
+    try {
+      var response = await fetch(url, opts);
+      await GydeSSE.readJSONEvents(response, function(data) {
+        if (data.type === 'chunk') {
+          fullText += data.text;
+          contentDiv.innerHTML = formatResponse(fullText);
+          scrollToBottom();
+          typesetSoon();
+        } else if (data.type === 'done') {
+          var finalText = typeof data.text === 'string' ? data.text : fullText;
+          var marker = '[[GYDE_ASK_GENERAL_KNOWLEDGE]]';
+          contentDiv.innerHTML = formatResponse(finalText.replace(marker, ''));
+          if (finalText.indexOf(marker) !== -1) {
+            var btnRow = document.createElement('div');
+            btnRow.className = 'gyde-confirm-row';
+            var yes = document.createElement('button');
+            yes.className = 'gyde-btn-confirm-yes';
+            yes.textContent = 'Yes, answer from general knowledge';
+            yes.addEventListener('click', gydeRequestGeneralKnowledge);
+            var no = document.createElement('button');
+            no.className = 'gyde-btn-confirm-no';
+            no.textContent = 'No thanks';
+            no.addEventListener('click', function() { btnRow.remove(); });
+            btnRow.append(yes, no);
+            contentDiv.appendChild(btnRow);
+          }
+          scrollToBottom();
+        } else if (data.type === 'error') {
+          contentDiv.innerHTML = '<span style="color:#e55;">Error: ' + escapeHtml(data.error) + '</span>';
+        }
+      });
+    } catch (err) {
+      contentDiv.innerHTML = '<span style="color:#e55;">' + escapeHtml(err.message || 'Network error') + '</span>';
+    } finally {
       finishStream(contentDiv);
-    });
+    }
   }
 
   function send(overrideOpts) {
@@ -311,15 +305,14 @@ window.MathJax = {
 
   function gydeRequestGeneralKnowledge() {
     document.querySelectorAll('.gyde-confirm-row').forEach(function(el) { el.remove(); });
-    var lastUserMsgs = document.querySelectorAll('.chat-message[data-role="user"]');
-    var lastUserMsg = lastUserMsgs.length ? (lastUserMsgs[lastUserMsgs.length - 1].querySelector('.message-content') || {}).innerText || '' : '';
+    var lastUserMsgs = document.querySelectorAll('.chat-message-user');
+    var lastUserMsg = lastUserMsgs.length ? (lastUserMsgs[lastUserMsgs.length - 1].querySelector('.chat-message-content') || {}).innerText || '' : '';
     if (!lastUserMsg) return;
-    addMessage('assistant', '<span style="opacity:0.5">Thinking...</span>');
     send({ message: lastUserMsg, generalKnowledge: true });
   }
 
   function escapeHtml(s) {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   // Replace [[cite bookId="X" page="N"]]quoted text[[/cite]] with placeholder tokens
@@ -335,18 +328,21 @@ window.MathJax = {
     });
   }
   function renderCitation(c) {
-    var book = booksMap[c.bookId];
+    var book = Object.prototype.hasOwnProperty.call(booksMap, c.bookId) ? booksMap[c.bookId] : null;
+    var page = Number(c.page);
+    var validPage = /^\d+$/.test(c.page) && Number.isSafeInteger(page) && page > 0;
+    var safePage = escapeHtml(c.page).replace(/"/g, '&quot;');
     var safeQuote = c.quote.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     // Unknown bookId — render an inert pill so the user isn't sent
     // into a broken /collections redirect when they click. The chat-cite
     // styling is preserved so the visual rhythm of the message stays
     // intact, but it's not a link and the source line tells the user
     // what's wrong (with the offending id for debugging).
-    if (!book) {
-      var safeId = String(c.bookId).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      return '<span class="chat-cite chat-cite-missing" title="This book is not in your library (id: ' + safeId + ')">' +
+    if (!book || !validPage) {
+      var safeId = escapeHtml(c.bookId).replace(/"/g, '&quot;');
+      return '<span class="chat-cite chat-cite-missing" title="Unavailable or invalid citation (id: ' + safeId + ')">' +
              '<span class="chat-cite-quote">' + safeQuote + '</span>' +
-             '<span class="chat-cite-source">— Book not in library, p.' + c.page + '</span>' +
+             '<span class="chat-cite-source">— Unavailable citation, p.' + safePage + '</span>' +
              '</span>';
     }
     var title = book.title;
@@ -361,10 +357,10 @@ window.MathJax = {
               '&sidebar=collapsed' +
               '&embed=1' +
               '&highlight=' + encodeURIComponent(highlightWords);
-    var safeTitle = title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    return '<a class="chat-cite" href="' + url + '" data-cite-url="' + url + '" title="Open ' + safeTitle + ' p.' + c.page + '">' +
+    var safeTitle = escapeHtml(title).replace(/"/g, '&quot;');
+    return '<a class="chat-cite" href="' + url + '" data-cite-url="' + url + '" title="Open ' + safeTitle + ' p.' + safePage + '">' +
            '<span class="chat-cite-quote">' + safeQuote + '</span>' +
-           '<span class="chat-cite-source">— ' + safeTitle + ', p.' + c.page + '</span>' +
+           '<span class="chat-cite-source">— ' + safeTitle + ', p.' + safePage + '</span>' +
            '</a>';
   }
   function reinsertCitations(html) {
@@ -384,7 +380,7 @@ window.MathJax = {
 
       // Display math blocks: \[ ... \]
       if (/^\\\[/.test(block) && /\\\]$/.test(block)) {
-        return '<div class="chat-math-display">' + block + '</div>';
+        return '<div class="chat-math-display">' + escapeHtml(block) + '</div>';
       }
 
       // Headers: # / ## / ### — run processInline on the heading text so
@@ -420,7 +416,7 @@ window.MathJax = {
         var close = text[i+1] === '(' ? '\\)' : '\\]';
         var end = text.indexOf(close, i+2);
         if (end !== -1) {
-          result += text.substring(i, end + close.length);
+          result += escapeHtml(text.substring(i, end + close.length));
           i = end + close.length;
           continue;
         }

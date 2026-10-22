@@ -28,7 +28,7 @@ const chunkSchema = new mongoose.Schema({
   spanIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Span' }],
   structuralType: {
     type: String,
-    enum: ['theorem', 'definition', 'proof', 'example', 'remark',
+    enum: ['theorem', 'lemma', 'proposition', 'corollary', 'definition', 'proof', 'example', 'remark',
            'narrative', 'notation', 'equation', 'unknown']
   },
   contextTags: [String],                    // union of all span context tags
